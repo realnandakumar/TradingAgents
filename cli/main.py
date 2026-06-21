@@ -1310,6 +1310,30 @@ def analyze(
     run_analysis(checkpoint=checkpoint, reddit_market=reddit_market)
 
 
+@app.command()
+def sync():
+    """Push the current paper book to the Supabase-backed dashboard.
+
+    Useful after positions close (e.g. from a scheduled mark-to-market) without
+    re-running a full screen. No-op if Supabase credentials aren't set."""
+    from tradingagents.paper.book import PaperBook
+    from tradingagents.sync import SupabaseSync, paper_snapshot
+
+    client = SupabaseSync()
+    if not client.configured:
+        console.print(
+            "[yellow]Supabase not configured.[/yellow] Set SUPABASE_URL and "
+            "SUPABASE_SERVICE_KEY (see dashboard/SETUP.md) to enable the dashboard."
+        )
+        raise typer.Exit()
+
+    book = PaperBook(DEFAULT_CONFIG.copy())
+    book.mark_to_market()
+    ok = client.push("paper", paper_snapshot(book))
+    console.print("[green]Synced paper book to dashboard.[/green]" if ok
+                  else "[red]Sync failed — check logs.[/red]")
+
+
 @app.callback(invoke_without_command=True)
 def _default(ctx: typer.Context):
     """Run the interactive single-ticker analysis when no subcommand is given.
@@ -1425,6 +1449,15 @@ def paper():
     book = PaperBook(DEFAULT_CONFIG.copy())
     summary = book.mark_to_market()  # value + close matured positions first
     stats = book.stats()
+
+    # Keep the dashboard's paper snapshot fresh (best-effort, no-op without creds).
+    try:
+        from tradingagents.sync import SupabaseSync, paper_snapshot
+        client = SupabaseSync()
+        if client.configured:
+            client.push("paper", paper_snapshot(book))
+    except Exception:  # noqa: BLE001
+        pass
 
     open_positions = [p for p in book.positions if p["status"] == "open"]
     closed = [p for p in book.positions if p["status"] == "closed"]

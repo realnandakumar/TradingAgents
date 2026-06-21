@@ -161,4 +161,14 @@ def run_screen(
 
     # Refresh summary after opening new positions.
     run.paper_summary = book.mark_to_market()
+
+    # Publish results to Supabase for the dashboard (best-effort, no-op without creds).
+    try:
+        from tradingagents.sync import sync_results
+
+        if sync_results(config, trade_date, top, run.opened, book):
+            _log("Synced results to dashboard")
+    except Exception as e:  # noqa: BLE001 - sync must never break a run
+        logger.warning("Dashboard sync failed: %s", e)
+
     return run

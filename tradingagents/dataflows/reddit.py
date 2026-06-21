@@ -25,6 +25,7 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from tradingagents.dataflows.tool_response_logging import log_tool_response
+from tradingagents.dataflows.utils import ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ def _fetch_subreddit_json(
     url = _JSON_API.format(sub=sub, qs=qs)
     req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with urlopen(req, timeout=timeout, context=ssl_context()) as resp:
             payload = json.loads(resp.read())
     except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
         logger.info("Reddit JSON fetch failed for r/%s · %s: %s", sub, ticker, exc)
@@ -144,7 +145,7 @@ def _fetch_subreddit_rss(
         },
     )
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with urlopen(req, timeout=timeout, context=ssl_context()) as resp:
             payload = resp.read()
         root = ElementTree.fromstring(payload)
     except (HTTPError, URLError, ElementTree.ParseError, TimeoutError) as exc:

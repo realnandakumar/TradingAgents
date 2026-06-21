@@ -21,6 +21,15 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_STOCKTWIST_MARKET":     "stocktwits_market",
     "TRADINGAGENTS_STOCKTWITS_MARKET":     "stocktwits_market",
     "TRADINGAGENTS_TOOL_RESPONSE_LOGGING_ENABLED": "tool_response_logging_enabled",
+    # India RS screener + paper-trading knobs
+    "TRADINGAGENTS_SCREEN_UNIVERSE_CSV":  "screen_universe_csv",
+    "TRADINGAGENTS_SCREEN_BENCHMARK":     "screen_benchmark",
+    "TRADINGAGENTS_SCREEN_TOP_N":         "screen_top_n",
+    "TRADINGAGENTS_SCREEN_RS_MIN_PCT":    "screen_rs_min_percentile",
+    "TRADINGAGENTS_SCREEN_HISTORY_PERIOD": "screen_history_period",
+    "TRADINGAGENTS_PAPER_CAPITAL":        "paper_capital",
+    "TRADINGAGENTS_PAPER_MAX_POSITIONS":  "paper_max_positions",
+    "TRADINGAGENTS_PAPER_HOLDING_DAYS":   "paper_holding_days",
 }
 
 
@@ -125,6 +134,20 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # so the reflection label keeps reading "Alpha vs SPY" for US tickers
     # while non-US tickers get their regional index automatically.
     "benchmark_ticker": None,
+    # --- India Relative-Strength screener + paper-trading ---
+    # Universe: None -> live NSE Nifty 500 download (cached) with a bundled
+    # fallback list; set a CSV path (or TRADINGAGENTS_SCREEN_UNIVERSE_CSV) to
+    # pin an exact list.
+    "screen_universe_csv": None,
+    "screen_benchmark": "^NSEI",          # Nifty 50 — market baseline for RS
+    "screen_history_period": "1y",        # yfinance lookback for screening
+    "screen_rs_min_percentile": 50.0,     # gate: keep top X% by relative strength
+    "screen_top_n": 10,                   # how many to deep-analyze with the AI
+    # Paper book (no real money): used to measure reliability of the calls.
+    "paper_capital": 1_000_000.0,         # virtual ₹ portfolio size
+    "paper_max_positions": 20,            # equal-weight sizing divisor
+    "paper_holding_days": 20,             # trading days to hold before scoring
+    "paper_benchmark": "^NSEI",           # alpha baseline for paper trades
     "benchmark_map": {
         ".NS":  "^NSEI",    # NSE India (Nifty 50)
         ".BO":  "^BSESN",   # BSE India (Sensex)

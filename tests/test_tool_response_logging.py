@@ -115,7 +115,7 @@ class _FakeResponse:
 
 
 def test_stocktwits_fetch_logs_response(monkeypatch, log_dir):
-    def fake_urlopen(req, timeout):
+    def fake_urlopen(req, timeout, context=None):
         return _FakeResponse(
             {
                 "messages": [
@@ -141,7 +141,7 @@ def test_stocktwits_fetch_logs_response(monkeypatch, log_dir):
 
 def test_stocktwits_logs_placeholder_when_no_messages(monkeypatch, log_dir):
     monkeypatch.setattr(
-        stocktwits, "urlopen", lambda req, timeout: _FakeResponse({"messages": []})
+        stocktwits, "urlopen", lambda req, timeout, context=None: _FakeResponse({"messages": []})
     )
 
     output = stocktwits.fetch_stocktwits_messages("AAPL", market="us")

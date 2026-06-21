@@ -43,10 +43,13 @@ create policy "public read snapshots"
   using (true);
 ```
 
-4. Open **Project Settings → API** and copy three values:
+4. Open **Project Settings → API keys** and copy three values:
    - **Project URL** (e.g. `https://abcd.supabase.co`)
-   - **anon public** key
-   - **service_role** key (secret — keep it off the browser)
+   - **publishable** key (`sb_publishable_...`) — safe for the browser
+   - **secret** key (`sb_secret_...`) — keep it off the browser; Python-side only
+
+   (On older projects these are called **anon** and **service_role** — both
+   names still work.)
 
 ---
 
@@ -56,7 +59,7 @@ Add to the repo-root `.env` (the same file holding `OPENAI_API_KEY`):
 
 ```bash
 SUPABASE_URL=https://abcd.supabase.co
-SUPABASE_SERVICE_KEY=your-service_role-key
+SUPABASE_SECRET_KEY=sb_secret_your-secret-key   # (legacy SUPABASE_SERVICE_KEY also works)
 ```
 
 Now publish results:
@@ -83,7 +86,7 @@ npm run dev                        # http://localhost:3000
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://abcd.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-publishable-key
 ```
 
 ---
@@ -95,7 +98,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 3. **Important:** set **Root Directory** to `dashboard`.
 4. Under **Environment Variables**, add:
    - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 5. **Deploy.** You get a public URL like `https://your-app.vercel.app` — send it
    to your brother. It updates automatically whenever you run a screen.
 

@@ -35,7 +35,12 @@ class SupabaseSync:
     def __init__(self, url: Optional[str] = None, service_key: Optional[str] = None,
                  table: str = "snapshots"):
         self.url = (url or os.getenv("SUPABASE_URL") or "").rstrip("/")
-        self.service_key = service_key or os.getenv("SUPABASE_SERVICE_KEY")
+        # Accept the new secret key name (sb_secret_...) or the legacy service_role key.
+        self.service_key = (
+            service_key
+            or os.getenv("SUPABASE_SECRET_KEY")
+            or os.getenv("SUPABASE_SERVICE_KEY")
+        )
         self.table = table
 
     @property

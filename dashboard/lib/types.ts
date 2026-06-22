@@ -26,6 +26,9 @@ export interface Position {
   rating: string;
   signals: string[];
   entry_date: string;
+  order_time?: string | null;       // ISO, when the screen placed the order
+  execution_time?: string | null;   // ISO, when a real fill would occur
+  execution_deferred?: boolean;     // true if order was placed outside market hours
   entry_price: number;
   shares: number;
   alloc: number;

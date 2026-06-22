@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time as dt_time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -28,6 +28,29 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 _DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
+
+# NSE regular session, IST (India has no DST so a fixed offset is safe).
+IST = timezone(timedelta(hours=5, minutes=30))
+_NSE_OPEN = dt_time(9, 15)
+_NSE_CLOSE = dt_time(15, 30)
+
+
+def _next_execution(order_dt: datetime) -> datetime:
+    """When a market order placed at ``order_dt`` would actually fill.
+
+    During the NSE session it fills immediately; otherwise it fills at the next
+    session's open (09:15 IST the next trading day). Holidays are not modelled,
+    so a holiday fill time may be a day early -- close enough for paper trades.
+    """
+    t = order_dt.timetz().replace(tzinfo=None)
+    if order_dt.weekday() < 5 and _NSE_OPEN <= t <= _NSE_CLOSE:
+        return order_dt  # market open now
+    if order_dt.weekday() < 5 and t < _NSE_OPEN:
+        return order_dt.replace(hour=9, minute=15, second=0, microsecond=0)
+    nxt = order_dt + timedelta(days=1)
+    while nxt.weekday() >= 5:  # skip Sat/Sun
+        nxt += timedelta(days=1)
+    return nxt.replace(hour=9, minute=15, second=0, microsecond=0)
 
 
 class PaperBook:
@@ -89,11 +112,17 @@ class PaperBook:
             return None
         alloc = self.capital / max(self.max_positions, 1)
         shares = alloc / entry_price
+        order_dt = datetime.now(IST)
+        exec_dt = _next_execution(order_dt)
         pos = {
             "ticker": ticker,
             "rating": rating,
             "signals": signals or [],
             "entry_date": entry_date,
+            # When the screen placed the order vs when a real fill would occur.
+            "order_time": order_dt.isoformat(timespec="minutes"),
+            "execution_time": exec_dt.isoformat(timespec="minutes"),
+            "execution_deferred": exec_dt > order_dt,
             "entry_price": round(entry_price, 2),
             "shares": round(shares, 4),
             "alloc": round(alloc, 2),

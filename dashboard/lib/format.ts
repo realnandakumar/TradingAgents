@@ -51,6 +51,22 @@ export function shortSymbol(sym: string): string {
   return sym.replace(/\.NS$/, "");
 }
 
+// Format an ISO timestamp in IST (so all viewers see market-local time),
+// e.g. "21 Jun, 8:36 PM". Returns "—" for null/invalid input.
+export function dateTimeIST(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+}
+
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
   const mins = Math.round((Date.now() - then) / 60000);

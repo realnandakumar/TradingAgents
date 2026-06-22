@@ -1,7 +1,7 @@
 "use client";
 
 import { RatingBadge, SignalList } from "@/components/Badges";
-import { inr, pct, qty, shortSymbol } from "@/lib/format";
+import { dateTimeIST, inr, pct, qty, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { Position } from "@/lib/types";
 
@@ -47,6 +47,8 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               <th className="text-right font-medium py-2 pr-3">Qty</th>
               <th className="text-right font-medium py-2 pr-3">Entry</th>
               <th className="text-right font-medium py-2 pr-3">Cost</th>
+              <th className="text-left font-medium py-2 pr-3">Ordered</th>
+              <th className="text-left font-medium py-2 pr-3">Executes</th>
               <th className="text-right font-medium py-2 pr-3">Live</th>
               <th className="text-right font-medium py-2 pr-3">Value</th>
               <th className="text-right font-medium py-2 pr-3">Since entry</th>
@@ -62,6 +64,15 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{qty(p.shares)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.entry_price)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.alloc)}</td>
+                <td className="py-2.5 pr-3 text-muted text-xs whitespace-nowrap">
+                  {p.order_time ? dateTimeIST(p.order_time) : p.entry_date}
+                </td>
+                <td className="py-2.5 pr-3 text-xs whitespace-nowrap">
+                  {p.execution_time ? dateTimeIST(p.execution_time) : "—"}
+                  {p.execution_deferred && (
+                    <span className="block text-[10px] text-accent">next open</span>
+                  )}
+                </td>
                 <td className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap">{live != null ? inr(live) : "—"}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap">{live != null ? inr(live * p.shares) : "—"}</td>
                 <td className={`py-2.5 pr-3 text-right tabular-nums whitespace-nowrap ${ sincePct == null ? "text-muted" : sincePct >= 0 ? "text-bull" : "text-bear"}`}>

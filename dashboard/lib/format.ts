@@ -21,6 +21,11 @@ export function inr(v: number | null | undefined): string {
   }).format(v);
 }
 
+export function qty(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(v);
+}
+
 export function signalLabel(s: string): string {
   return s
     .split("_")

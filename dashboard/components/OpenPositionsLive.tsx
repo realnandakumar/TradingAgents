@@ -1,7 +1,7 @@
 "use client";
 
 import { RatingBadge, SignalList } from "@/components/Badges";
-import { inr, pct, shortSymbol } from "@/lib/format";
+import { inr, pct, qty, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { Position } from "@/lib/types";
 
@@ -44,8 +44,11 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
             <tr className="text-muted text-xs uppercase tracking-wide border-b border-border">
               <th className="text-left font-medium py-2 pr-3">Ticker</th>
               <th className="text-left font-medium py-2 pr-3">Rating</th>
+              <th className="text-right font-medium py-2 pr-3">Qty</th>
               <th className="text-right font-medium py-2 pr-3">Entry</th>
+              <th className="text-right font-medium py-2 pr-3">Cost</th>
               <th className="text-right font-medium py-2 pr-3">Live</th>
+              <th className="text-right font-medium py-2 pr-3">Value</th>
               <th className="text-right font-medium py-2 pr-3">Since entry</th>
               <th className="text-right font-medium py-2 pr-3">P&amp;L</th>
               <th className="text-left font-medium py-2">Signals</th>
@@ -56,8 +59,11 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               <tr key={`${p.ticker}-${p.entry_date}`} className="border-b border-border/50 last:border-0">
                 <td className="py-2.5 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
                 <td className="py-2.5 pr-3"><RatingBadge rating={p.rating} /></td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{qty(p.shares)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{inr(p.entry_price)}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{inr(p.alloc)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums">{live != null ? inr(live) : "—"}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums">{live != null ? inr(live * p.shares) : "—"}</td>
                 <td className={`py-2.5 pr-3 text-right tabular-nums ${ sincePct == null ? "text-muted" : sincePct >= 0 ? "text-bull" : "text-bear"}`}>
                   {sincePct == null ? "—" : pct(sincePct)}
                 </td>

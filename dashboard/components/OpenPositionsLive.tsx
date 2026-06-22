@@ -59,15 +59,15 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               <tr key={`${p.ticker}-${p.entry_date}`} className="border-b border-border/50 last:border-0">
                 <td className="py-2.5 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
                 <td className="py-2.5 pr-3"><RatingBadge rating={p.rating} /></td>
-                <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{qty(p.shares)}</td>
-                <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{inr(p.entry_price)}</td>
-                <td className="py-2.5 pr-3 text-right tabular-nums text-muted">{inr(p.alloc)}</td>
-                <td className="py-2.5 pr-3 text-right tabular-nums">{live != null ? inr(live) : "—"}</td>
-                <td className="py-2.5 pr-3 text-right tabular-nums">{live != null ? inr(live * p.shares) : "—"}</td>
-                <td className={`py-2.5 pr-3 text-right tabular-nums ${ sincePct == null ? "text-muted" : sincePct >= 0 ? "text-bull" : "text-bear"}`}>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{qty(p.shares)}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.entry_price)}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.alloc)}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap">{live != null ? inr(live) : "—"}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap">{live != null ? inr(live * p.shares) : "—"}</td>
+                <td className={`py-2.5 pr-3 text-right tabular-nums whitespace-nowrap ${ sincePct == null ? "text-muted" : sincePct >= 0 ? "text-bull" : "text-bear"}`}>
                   {sincePct == null ? "—" : pct(sincePct)}
                 </td>
-                <td className={`py-2.5 pr-3 text-right tabular-nums ${ pnl == null ? "text-muted" : pnl >= 0 ? "text-bull" : "text-bear"}`}>
+                <td className={`py-2.5 pr-4 text-right tabular-nums whitespace-nowrap min-w-[90px] ${ pnl == null ? "text-muted" : pnl >= 0 ? "text-bull" : "text-bear"}`}>
                   {pnl == null ? "—" : inr(pnl)}
                 </td>
                 <td className="py-2.5"><SignalList signals={p.signals} /></td>

@@ -76,7 +76,7 @@ export default async function OverviewPage() {
           )}
         </div>
         {screen && screen.data.candidates.length > 0 ? (
-          <CandidatesTable candidates={screen.data.candidates} />
+          <CandidatesTable candidates={screen.data.candidates} live />
         ) : (
           <EmptyState
             title="No screens yet"

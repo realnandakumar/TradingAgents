@@ -1,7 +1,8 @@
-import { RatingBadge, SignalList } from "@/components/Badges";
+import { SignalList } from "@/components/Badges";
+import { OpenPositionsLive } from "@/components/OpenPositionsLive";
 import { SetupNotice, EmptyState } from "@/components/SetupNotice";
 import { getLatestPaper } from "@/lib/data";
-import { inr, pctFromFraction, shortSymbol } from "@/lib/format";
+import { pctFromFraction, shortSymbol } from "@/lib/format";
 import { isConfigured } from "@/lib/supabase";
 import type { Position } from "@/lib/types";
 
@@ -30,34 +31,7 @@ export default async function PositionsPage() {
         <>
           <section className="card p-5">
             <h2 className="font-medium mb-3">Open ({open.length})</h2>
-            {open.length === 0 ? (
-              <p className="text-muted text-sm">No open positions.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-muted text-xs uppercase tracking-wide border-b border-border">
-                      <th className="text-left font-medium py-2 pr-3">Ticker</th>
-                      <th className="text-left font-medium py-2 pr-3">Rating</th>
-                      <th className="text-left font-medium py-2 pr-3">Entry date</th>
-                      <th className="text-right font-medium py-2 pr-3">Entry</th>
-                      <th className="text-left font-medium py-2">Signals</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {open.map((p) => (
-                      <tr key={p.ticker} className="border-b border-border/50 last:border-0">
-                        <td className="py-2.5 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
-                        <td className="py-2.5 pr-3"><RatingBadge rating={p.rating} /></td>
-                        <td className="py-2.5 pr-3 text-muted">{p.entry_date}</td>
-                        <td className="py-2.5 pr-3 text-right tabular-nums">{inr(p.entry_price)}</td>
-                        <td className="py-2.5"><SignalList signals={p.signals} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <OpenPositionsLive positions={open} />
           </section>
 
           <section className="card p-5">

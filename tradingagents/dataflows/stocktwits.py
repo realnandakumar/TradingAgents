@@ -20,6 +20,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from tradingagents.dataflows.tool_response_logging import log_tool_response
+from tradingagents.dataflows.utils import ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def fetch_stocktwits_messages(
     url = _API.format(ticker=stocktwits_symbol)
     req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with urlopen(req, timeout=timeout, context=ssl_context()) as resp:
             data = json.loads(resp.read())
     except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
         logger.warning(

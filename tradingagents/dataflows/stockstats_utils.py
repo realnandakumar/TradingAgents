@@ -1,5 +1,6 @@
 import time
 import logging
+import tempfile
 
 import pandas as pd
 import yfinance as yf
@@ -11,6 +12,30 @@ from .config import get_config
 from .utils import safe_ticker_component
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_csv(data: pd.DataFrame, data_file: str) -> None:
+    """Write ``data`` to ``data_file`` atomically using a *unique* temp file.
+
+    A shared ``{data_file}.tmp`` name caused a race: when two tool calls for
+    the same symbol fetched concurrently (the ToolNode can run get_stock_data
+    and get_indicators in parallel), both wrote the same temp path and the
+    second ``os.replace`` hit ``FileNotFoundError`` after the first consumed
+    it. ``mkstemp`` gives each writer its own temp file in the same directory,
+    keeping the final replace atomic and collision-free.
+    """
+    directory = os.path.dirname(data_file) or "."
+    fd, tmp_file = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    os.close(fd)
+    try:
+        data.to_csv(tmp_file, index=False, encoding="utf-8")
+        os.replace(tmp_file, data_file)
+    except BaseException:
+        try:
+            os.remove(tmp_file)
+        except OSError:
+            pass
+        raise
 
 
 def yf_retry(func, max_retries=3, base_delay=2.0):
@@ -94,9 +119,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             data = data.reset_index()
             if "Date" not in data.columns and "index" in data.columns:
                 data = data.rename(columns={"index": "Date"})
-            tmp_file = f"{data_file}.tmp"
-            data.to_csv(tmp_file, index=False, encoding="utf-8")
-            os.replace(tmp_file, data_file)
+            _atomic_write_csv(data, data_file)
     else:
         data = yf_retry(lambda: yf.download(
             symbol,
@@ -109,9 +132,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         data = data.reset_index()
         if "Date" not in data.columns and "index" in data.columns:
             data = data.rename(columns={"index": "Date"})
-        tmp_file = f"{data_file}.tmp"
-        data.to_csv(tmp_file, index=False, encoding="utf-8")
-        os.replace(tmp_file, data_file)
+        _atomic_write_csv(data, data_file)
 
     data = _clean_dataframe(data)
 

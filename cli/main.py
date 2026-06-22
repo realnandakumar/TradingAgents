@@ -1310,5 +1310,225 @@ def analyze(
     run_analysis(checkpoint=checkpoint, reddit_market=reddit_market)
 
 
+@app.command()
+def sync():
+    """Push the current paper book to the Supabase-backed dashboard.
+
+    Useful after positions close (e.g. from a scheduled mark-to-market) without
+    re-running a full screen. No-op if Supabase credentials aren't set."""
+    from tradingagents.paper.book import PaperBook
+    from tradingagents.sync import SupabaseSync, paper_snapshot
+
+    client = SupabaseSync()
+    if not client.configured:
+        console.print(
+            "[yellow]Supabase not configured.[/yellow] Set SUPABASE_URL and "
+            "SUPABASE_SERVICE_KEY (see dashboard/SETUP.md) to enable the dashboard."
+        )
+        raise typer.Exit()
+
+    book = PaperBook(DEFAULT_CONFIG.copy())
+    book.mark_to_market()
+    ok = client.push("paper", paper_snapshot(book))
+    console.print("[green]Synced paper book to dashboard.[/green]" if ok
+                  else "[red]Sync failed — check logs.[/red]")
+
+
+@app.callback(invoke_without_command=True)
+def _default(ctx: typer.Context):
+    """Run the interactive single-ticker analysis when no subcommand is given.
+
+    Preserves the original ``tradingagents`` behaviour (bare command launches
+    the interactive analysis) now that the app has multiple subcommands.
+    """
+    if ctx.invoked_subcommand is None:
+        run_analysis()
+
+
+def _screen_config(top: Optional[int], universe: Optional[str], min_pct: Optional[float]) -> dict:
+    config = DEFAULT_CONFIG.copy()
+    if top is not None:
+        config["screen_top_n"] = top
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if min_pct is not None:
+        config["screen_rs_min_percentile"] = min_pct
+    return config
+
+
+def _render_candidates(candidates, analyzed: bool):
+    table = Table(box=box.SIMPLE_HEAD, title="Screened candidates")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold")
+    table.add_column("RS %", justify="right")
+    table.add_column("Score", justify="right")
+    if analyzed:
+        table.add_column("AI rating", style="bold")
+    table.add_column("Signals fired")
+    for i, c in enumerate(candidates, 1):
+        row = [
+            str(i),
+            c.symbol,
+            f"{c.rs.rs_percentile:.0f}",
+            f"{c.composite:.2f}",
+        ]
+        if analyzed:
+            rating = c.decision_rating or "-"
+            colour = "green" if rating in ("Buy", "Overweight") else (
+                "red" if rating in ("Sell", "Underweight") else "yellow")
+            row.append(f"[{colour}]{rating}[/{colour}]")
+        row.append(c.pattern.summary())
+        table.add_row(*row)
+    console.print(table)
+
+
+@app.command()
+def screen(
+    top: Optional[int] = typer.Option(None, "--top", help="How many top-ranked stocks to deep-analyze with the AI."),
+    universe: Optional[str] = typer.Option(None, "--universe", help="Path to a CSV of NSE tickers to screen (overrides the live/fallback list)."),
+    min_pct: Optional[float] = typer.Option(None, "--min-rs", help="Keep only stocks at/above this relative-strength percentile (0-100)."),
+    preview: bool = typer.Option(False, "--preview", help="Only screen and show the ranked picks — no AI analysis, no token cost."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the cost-confirmation prompt (for non-interactive / automated runs)."),
+):
+    """Screen Indian (NSE) stocks by relative strength + chart patterns, then
+    deep-analyze the top names and paper-trade the bullish calls."""
+    from tradingagents.screening.batch_runner import run_screen
+
+    config = _screen_config(top, universe, min_pct)
+    n = config["screen_top_n"]
+
+    console.print(Panel.fit(
+        "[bold]India RS + pattern screen[/bold]\n"
+        f"Universe: {'custom CSV' if config.get('screen_universe_csv') else 'NSE Nifty 500 (live/fallback)'}\n"
+        f"RS gate: top {100 - config['screen_rs_min_percentile']:.0f}% by strength\n"
+        f"Deep-analyze: top {n}"
+        + ("" if preview else f"\nEstimated: ~{n * 12} LLM calls, real token cost"),
+        title="Screen",
+    ))
+
+    if not preview and not yes:
+        if not questionary.confirm(
+            f"This will run the full AI pipeline on {n} stocks (real OpenAI cost). Continue?",
+            default=False,
+        ).ask():
+            console.print("[yellow]Aborted. Use --preview to see picks for free.[/yellow]")
+            raise typer.Exit()
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        run = run_screen(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            analyze=not preview,
+        )
+
+    console.print()
+    _render_candidates(run.candidates, analyzed=not preview)
+
+    if preview:
+        console.print("\n[dim]Preview only — no positions opened. Drop --preview to analyze + paper-trade.[/dim]")
+    else:
+        if run.opened:
+            console.print(f"\n[green]Opened {len(run.opened)} paper position(s):[/green] {', '.join(run.opened)}")
+        else:
+            console.print("\n[yellow]No bullish calls — no paper positions opened.[/yellow]")
+        ps = run.paper_summary
+        console.print(
+            f"[dim]Paper book: {ps.get('open_positions', 0)} open, "
+            f"{ps.get('closed_now', 0)} closed this run. "
+            f"Run [bold]tradingagents paper[/bold] for full P&L.[/dim]"
+        )
+
+
+@app.command()
+def paper():
+    """Show the paper-trading portfolio: open positions, P&L, and the
+    reliability stats (win rate / avg return / avg alpha vs Nifty), including a
+    per-signal breakdown of which patterns actually produced winners."""
+    from tradingagents.paper.book import PaperBook
+
+    book = PaperBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()  # value + close matured positions first
+    stats = book.stats()
+
+    # Keep the dashboard's paper snapshot fresh (best-effort, no-op without creds).
+    try:
+        from tradingagents.sync import SupabaseSync, paper_snapshot
+        client = SupabaseSync()
+        if client.configured:
+            client.push("paper", paper_snapshot(book))
+    except Exception:  # noqa: BLE001
+        pass
+
+    open_positions = [p for p in book.positions if p["status"] == "open"]
+    closed = [p for p in book.positions if p["status"] == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No paper trades yet. Run [bold]tradingagents screen[/bold] to generate some.",
+            title="Paper book",
+        ))
+        raise typer.Exit()
+
+    # Open positions
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title="Open paper positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Rating")
+        t.add_column("Entry date")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Signals")
+        for p in open_positions:
+            t.add_row(p["ticker"], p["rating"], p["entry_date"],
+                      f"{p['entry_price']:.2f}", ", ".join(p.get("signals", [])) or "-")
+        console.print(t)
+        console.print(f"[dim]Unrealized P&L (open): ₹{summary.get('unrealized_pnl', 0):,.0f}[/dim]\n")
+
+    # Closed trades
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed paper trades")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Held", justify="right")
+        for p in closed:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"],
+                f"[{rc}]{ret * 100:+.1f}%[/{rc}]" if ret is not None else "-",
+                f"[{ac}]{alpha * 100:+.1f}%[/{ac}]" if alpha is not None else "-",
+                f"{p.get('holding_days_actual', '-')}d",
+            )
+        console.print(t)
+
+    # Reliability stats
+    o = stats["overall"]
+    if o["trades"]:
+        console.print(Panel.fit(
+            f"Closed trades: [bold]{o['trades']}[/bold]\n"
+            f"Win rate: [bold]{o['win_rate']}%[/bold]\n"
+            f"Avg return: [bold]{o['avg_return']:+}%[/bold]\n"
+            f"Avg alpha vs Nifty: [bold]{o['avg_alpha'] if o['avg_alpha'] is not None else 'n/a'}%[/bold]\n"
+            f"Realized P&L: [bold]₹{o['total_pnl']:,.0f}[/bold]",
+            title="Reliability (overall)",
+        ))
+        if stats["per_signal"]:
+            t = Table(box=box.SIMPLE_HEAD, title="Reliability by signal")
+            t.add_column("Signal", style="bold")
+            t.add_column("Trades", justify="right")
+            t.add_column("Win rate", justify="right")
+            t.add_column("Avg return", justify="right")
+            t.add_column("Avg alpha", justify="right")
+            for name, s in stats["per_signal"].items():
+                t.add_row(name, str(s["trades"]), f"{s['win_rate']}%",
+                          f"{s['avg_return']:+}%",
+                          f"{s['avg_alpha']:+}%" if s["avg_alpha"] is not None else "n/a")
+            console.print(t)
+    else:
+        console.print("[yellow]No closed trades yet — reliability stats appear once positions reach their holding period.[/yellow]")
+
+
 if __name__ == "__main__":
     app()

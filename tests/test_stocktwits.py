@@ -46,7 +46,7 @@ def test_normalize_stocktwits_symbol_preserves_us_symbols():
 def test_fetch_stocktwits_messages_uses_normalized_india_symbol(monkeypatch):
     seen_urls = []
 
-    def fake_urlopen(req, timeout):
+    def fake_urlopen(req, timeout, context=None):
         seen_urls.append(req.full_url)
         return _FakeResponse(
             {
@@ -73,7 +73,7 @@ def test_fetch_stocktwits_messages_uses_normalized_india_symbol(monkeypatch):
 def test_fetch_stocktwits_messages_leaves_ns_symbol_unchanged_in_us_mode(monkeypatch):
     seen_urls = []
 
-    def fake_urlopen(req, timeout):
+    def fake_urlopen(req, timeout, context=None):
         seen_urls.append(req.full_url)
         return _FakeResponse({"messages": []})
 
@@ -88,7 +88,7 @@ def test_fetch_stocktwits_messages_leaves_ns_symbol_unchanged_in_us_mode(monkeyp
 def test_fetch_stocktwits_messages_returns_placeholder_on_http_error(monkeypatch):
     seen_urls = []
 
-    def fake_urlopen(req, timeout):
+    def fake_urlopen(req, timeout, context=None):
         seen_urls.append(req.full_url)
         raise HTTPError(req.full_url, 404, "Not Found", hdrs=None, fp=None)
 

@@ -185,6 +185,43 @@ An interface will appear showing results as they load, letting you track the age
   <img src="assets/cli/cli_transaction.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>
 
+## India RS Screener + Paper Trading
+
+Beyond analyzing a single ticker, you can automatically **screen the NSE universe
+for high relative-strength stocks**, deep-analyze the best ones, and **paper-trade
+the bullish calls** (no real money) to measure how reliable the system actually is.
+
+The funnel: `Nifty 500 → relative strength vs Nifty → technical pattern engine
+(RSI breakout, breakout-soon squeeze, ascending triangle, cup-and-handle,
+pullback-in-uptrend) → composite rank → deep AI analysis on the top N →
+paper-trade & track P&L + alpha`.
+
+```bash
+# Preview the picks for free (no LLM calls):
+tradingagents screen --preview
+
+# Run the full funnel: screen, analyze the top N, open paper positions:
+tradingagents screen --top 10
+
+# View the paper portfolio: open positions, P&L, win rate, and a
+# per-signal reliability breakdown (which patterns produced winners):
+tradingagents paper
+```
+
+Run `screen` periodically; each run also marks open paper positions to market and
+closes any that have reached their holding period, scoring return and alpha vs
+Nifty. Reliability stats become meaningful after a few weeks of runs.
+
+Configuration (see `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars):
+`screen_universe_csv`, `screen_benchmark`, `screen_top_n`, `screen_rs_min_percentile`,
+`paper_capital`, `paper_max_positions`, `paper_holding_days`. The universe loads
+from (1) a CSV you provide, (2) a live NSE Nifty-500 download, or (3) a bundled
+fallback list.
+
+> Pattern detection (especially cup-and-handle and ascending triangle) is heuristic
+> and approximate. The paper-trading layer exists precisely to measure which
+> signals are worth trusting. Research only — not financial advice.
+
 ## TradingAgents Package
 
 ### Implementation Details

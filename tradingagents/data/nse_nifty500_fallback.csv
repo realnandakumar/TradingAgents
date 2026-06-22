@@ -1,0 +1,219 @@
+symbol,name
+RELIANCE.NS,Reliance Industries
+TCS.NS,Tata Consultancy Services
+HDFCBANK.NS,HDFC Bank
+ICICIBANK.NS,ICICI Bank
+INFY.NS,Infosys
+HINDUNILVR.NS,Hindustan Unilever
+ITC.NS,ITC
+SBIN.NS,State Bank of India
+BHARTIARTL.NS,Bharti Airtel
+KOTAKBANK.NS,Kotak Mahindra Bank
+LT.NS,Larsen & Toubro
+AXISBANK.NS,Axis Bank
+BAJFINANCE.NS,Bajaj Finance
+ASIANPAINT.NS,Asian Paints
+MARUTI.NS,Maruti Suzuki
+HCLTECH.NS,HCL Technologies
+SUNPHARMA.NS,Sun Pharmaceutical
+TITAN.NS,Titan Company
+ULTRACEMCO.NS,UltraTech Cement
+WIPRO.NS,Wipro
+NESTLEIND.NS,Nestle India
+ONGC.NS,Oil & Natural Gas Corp
+NTPC.NS,NTPC
+POWERGRID.NS,Power Grid Corp
+M&M.NS,Mahindra & Mahindra
+TATAMOTORS.NS,Tata Motors
+TATASTEEL.NS,Tata Steel
+JSWSTEEL.NS,JSW Steel
+ADANIENT.NS,Adani Enterprises
+ADANIPORTS.NS,Adani Ports
+COALINDIA.NS,Coal India
+BAJAJFINSV.NS,Bajaj Finserv
+HDFCLIFE.NS,HDFC Life Insurance
+SBILIFE.NS,SBI Life Insurance
+TECHM.NS,Tech Mahindra
+GRASIM.NS,Grasim Industries
+INDUSINDBK.NS,IndusInd Bank
+DRREDDY.NS,Dr Reddy's Laboratories
+CIPLA.NS,Cipla
+BRITANNIA.NS,Britannia Industries
+DIVISLAB.NS,Divi's Laboratories
+EICHERMOT.NS,Eicher Motors
+HEROMOTOCO.NS,Hero MotoCorp
+BAJAJ-AUTO.NS,Bajaj Auto
+HINDALCO.NS,Hindalco Industries
+TATACONSUM.NS,Tata Consumer Products
+APOLLOHOSP.NS,Apollo Hospitals
+BPCL.NS,Bharat Petroleum
+IOC.NS,Indian Oil Corp
+SHRIRAMFIN.NS,Shriram Finance
+LTIM.NS,LTIMindtree
+ADANIGREEN.NS,Adani Green Energy
+ADANIPOWER.NS,Adani Power
+DLF.NS,DLF
+VEDL.NS,Vedanta
+GAIL.NS,GAIL India
+PIDILITIND.NS,Pidilite Industries
+SIEMENS.NS,Siemens
+GODREJCP.NS,Godrej Consumer Products
+DABUR.NS,Dabur India
+HAVELLS.NS,Havells India
+AMBUJACEM.NS,Ambuja Cements
+BANKBARODA.NS,Bank of Baroda
+ICICIPRULI.NS,ICICI Prudential Life
+ICICIGI.NS,ICICI Lombard
+PNB.NS,Punjab National Bank
+TVSMOTOR.NS,TVS Motor
+ETERNAL.NS,Eternal (formerly Zomato)
+DMART.NS,Avenue Supermarts
+BEL.NS,Bharat Electronics
+TRENT.NS,Trent
+HAL.NS,Hindustan Aeronautics
+NAUKRI.NS,Info Edge
+CHOLAFIN.NS,Cholamandalam Investment
+SRF.NS,SRF
+TORNTPHARM.NS,Torrent Pharmaceuticals
+BERGEPAINT.NS,Berger Paints
+MARICO.NS,Marico
+COLPAL.NS,Colgate-Palmolive India
+BOSCHLTD.NS,Bosch
+INDIGO.NS,InterGlobe Aviation
+MOTHERSON.NS,Samvardhana Motherson
+PGHH.NS,Procter & Gamble Hygiene
+PAGEIND.NS,Page Industries
+JINDALSTEL.NS,Jindal Steel & Power
+NMDC.NS,NMDC
+SAIL.NS,Steel Authority of India
+UPL.NS,UPL
+AUROPHARMA.NS,Aurobindo Pharma
+LUPIN.NS,Lupin
+BIOCON.NS,Biocon
+ALKEM.NS,Alkem Laboratories
+MUTHOOTFIN.NS,Muthoot Finance
+BANDHANBNK.NS,Bandhan Bank
+IDFCFIRSTB.NS,IDFC First Bank
+AUBANK.NS,AU Small Finance Bank
+FEDERALBNK.NS,Federal Bank
+GODREJPROP.NS,Godrej Properties
+OBEROIRLTY.NS,Oberoi Realty
+PHOENIXLTD.NS,Phoenix Mills
+LODHA.NS,Macrotech Developers
+PERSISTENT.NS,Persistent Systems
+COFORGE.NS,Coforge
+MPHASIS.NS,Mphasis
+TATAPOWER.NS,Tata Power
+TATACOMM.NS,Tata Communications
+PETRONET.NS,Petronet LNG
+PIIND.NS,PI Industries
+DEEPAKNTR.NS,Deepak Nitrite
+AARTIIND.NS,Aarti Industries
+BALKRISIND.NS,Balkrishna Industries
+ASHOKLEY.NS,Ashok Leyland
+BHARATFORG.NS,Bharat Forge
+CUMMINSIND.NS,Cummins India
+ABB.NS,ABB India
+POLYCAB.NS,Polycab India
+DIXON.NS,Dixon Technologies
+ASTRAL.NS,Astral
+SUPREMEIND.NS,Supreme Industries
+JUBLFOOD.NS,Jubilant FoodWorks
+INDHOTEL.NS,Indian Hotels
+ZYDUSLIFE.NS,Zydus Lifesciences
+MANKIND.NS,Mankind Pharma
+MAXHEALTH.NS,Max Healthcare
+FORTIS.NS,Fortis Healthcare
+LICI.NS,Life Insurance Corp of India
+IRCTC.NS,Indian Railway Catering
+IRFC.NS,Indian Railway Finance Corp
+RECLTD.NS,REC
+PFC.NS,Power Finance Corp
+CANBK.NS,Canara Bank
+UNIONBANK.NS,Union Bank of India
+IDEA.NS,Vodafone Idea
+YESBANK.NS,Yes Bank
+GMRAIRPORT.NS,GMR Airports
+NHPC.NS,NHPC
+SJVN.NS,SJVN
+OIL.NS,Oil India
+HINDPETRO.NS,Hindustan Petroleum
+ABCAPITAL.NS,Aditya Birla Capital
+ABFRL.NS,Aditya Birla Fashion
+NYKAA.NS,FSN E-Commerce (Nykaa)
+POLICYBZR.NS,PB Fintech
+PAYTM.NS,One97 Communications (Paytm)
+DALBHARAT.NS,Dalmia Bharat
+ACC.NS,ACC
+SHREECEM.NS,Shree Cement
+JKCEMENT.NS,JK Cement
+RAMCOCEM.NS,Ramco Cements
+APLAPOLLO.NS,APL Apollo Tubes
+JSWENERGY.NS,JSW Energy
+TORNTPOWER.NS,Torrent Power
+CGPOWER.NS,CG Power & Industrial
+THERMAX.NS,Thermax
+KPITTECH.NS,KPIT Technologies
+TATAELXSI.NS,Tata Elxsi
+LTTS.NS,L&T Technology Services
+OFSS.NS,Oracle Financial Services
+SONACOMS.NS,Sona BLW Precision
+ESCORTS.NS,Escorts Kubota
+MRF.NS,MRF
+APOLLOTYRE.NS,Apollo Tyres
+CEATLTD.NS,CEAT
+EXIDEIND.NS,Exide Industries
+GUJGASLTD.NS,Gujarat Gas
+IGL.NS,Indraprastha Gas
+MGL.NS,Mahanagar Gas
+CONCOR.NS,Container Corp of India
+GICRE.NS,General Insurance Corp
+NIACL.NS,New India Assurance
+STARHEALTH.NS,Star Health Insurance
+LICHSGFIN.NS,LIC Housing Finance
+PEL.NS,Piramal Enterprises
+M&MFIN.NS,Mahindra & Mahindra Financial
+SUNDARMFIN.NS,Sundaram Finance
+BAJAJHLDNG.NS,Bajaj Holdings
+HDFCAMC.NS,HDFC Asset Management
+NAM-INDIA.NS,Nippon Life India AMC
+UBL.NS,United Breweries
+RADICO.NS,Radico Khaitan
+VBL.NS,Varun Beverages
+GLAND.NS,Gland Pharma
+IPCALAB.NS,IPCA Laboratories
+GLAXO.NS,GlaxoSmithKline Pharma
+ABBOTINDIA.NS,Abbott India
+LAURUSLABS.NS,Laurus Labs
+SUVENPHAR.NS,Suven Pharmaceuticals
+SYNGENE.NS,Syngene International
+METROPOLIS.NS,Metropolis Healthcare
+LALPATHLAB.NS,Dr Lal PathLabs
+INDUSTOWER.NS,Indus Towers
+HONAUT.NS,Honeywell Automation
+SCHAEFFLER.NS,Schaeffler India
+SKFINDIA.NS,SKF India
+TIINDIA.NS,Tube Investments of India
+KAJARIACER.NS,Kajaria Ceramics
+CROMPTON.NS,Crompton Greaves Consumer
+WHIRLPOOL.NS,Whirlpool of India
+VOLTAS.NS,Voltas
+BLUESTARCO.NS,Blue Star
+RELAXO.NS,Relaxo Footwears
+BATAINDIA.NS,Bata India
+GODREJIND.NS,Godrej Industries
+EMAMILTD.NS,Emami
+GILLETTE.NS,Gillette India
+HONASA.NS,Honasa Consumer
+MEDANTA.NS,Global Health (Medanta)
+KIMS.NS,Krishna Institute of Medical Sciences
+RVNL.NS,Rail Vikas Nigam
+NBCC.NS,NBCC India
+IRB.NS,IRB Infrastructure
+KEC.NS,KEC International
+KALYANKJIL.NS,Kalyan Jewellers
+TITAGARH.NS,Titagarh Rail Systems
+BDL.NS,Bharat Dynamics
+MAZDOCK.NS,Mazagon Dock Shipbuilders
+COCHINSHIP.NS,Cochin Shipyard
+GESHIP.NS,Great Eastern Shipping

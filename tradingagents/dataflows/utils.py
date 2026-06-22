@@ -1,11 +1,33 @@
 import os
 import re
 import json
+import ssl
 import pandas as pd
 from datetime import date, timedelta, datetime
 from typing import Annotated
 
 SavePathType = Annotated[str, "File path to save data. If None, data is not saved."]
+
+_SSL_CONTEXT = None
+
+
+def ssl_context():
+    """Return a shared SSL context that verifies certificates via certifi.
+
+    Python's default ``urlopen`` uses the OS trust store, which is frequently
+    missing or stale on macOS, producing ``CERTIFICATE_VERIFY_FAILED`` for
+    HTTPS fetches (StockTwits, Reddit, news). Pinning certifi's CA bundle makes
+    these fetches work without disabling verification. Falls back to the
+    default context if certifi is unavailable."""
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        try:
+            import certifi
+
+            _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+        except Exception:  # noqa: BLE001 - fall back to platform defaults
+            _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
 
 # Tickers can contain letters, digits, dot, dash, underscore, and caret
 # (for index symbols like ^GSPC). Anything else is rejected so the value

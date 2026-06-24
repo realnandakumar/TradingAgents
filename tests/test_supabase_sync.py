@@ -17,10 +17,15 @@ pytestmark = pytest.mark.unit
 def _candidate():
     rs = NS(rs_percentile=100.0, rs_score=0.18, close=4200.0)
     return NS(symbol="LT.NS", rs=rs, composite=2.27,
-              fired_signals=["rsi_breakout"], decision_rating="Buy")
+              fired_signals=["rsi_breakout"], decision_rating="Buy",
+              levels={"stoploss": 4000.0, "target": 4600.0,
+                      "stop_pct": -4.8, "target_pct": 9.5})
 
 
-def test_unconfigured_is_noop():
+def test_unconfigured_is_noop(monkeypatch):
+    # Clear any ambient creds (a developer .env may set these).
+    for var in ("SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_KEY"):
+        monkeypatch.delenv(var, raising=False)
     c = SupabaseSync(url=None, service_key=None)
     assert c.configured is False
     assert c.push("paper", {"x": 1}) is False   # must not raise
@@ -41,6 +46,8 @@ def test_screen_snapshot_shape():
     assert cand["rating"] == "Buy"
     assert cand["opened"] is True
     assert cand["signals"] == ["rsi_breakout"]
+    assert cand["stoploss"] == 4000.0
+    assert cand["target"] == 4600.0
 
 
 def test_paper_snapshot_shape():

@@ -26,6 +26,7 @@ import pandas as pd
 # Higher weight = more trusted signal. Tunable.
 WEIGHTS: Dict[str, float] = {
     "rsi_breakout": 1.0,
+    "volume_surge": 1.0,
     "breakout_soon": 1.0,
     "ascending_triangle": 0.8,
     "cup_and_handle": 0.8,
@@ -100,6 +101,24 @@ def rsi_breakout(df: pd.DataFrame, period: int = 14, level: float = 60.0,
     fired = bool(crossed.any()) and now < 80.0
     detail = f"RSI={now:.0f} crossed up through {level:.0f}" if fired else ""
     return Signal("rsi_breakout", fired, detail)
+
+
+def volume_surge(df: pd.DataFrame, mult: float = 1.5, lookback: int = 5,
+                 base: int = 50) -> Signal:
+    """High volume confirming the move: recent average volume (last ``lookback``
+    days) is at least ``mult``x the longer ``base``-day average. Volume backing
+    a breakout is a classic confirmation signal."""
+    if "Volume" not in df.columns or len(df) < base + lookback:
+        return Signal("volume_surge", False)
+    vol = df["Volume"].astype(float)
+    recent = float(vol.iloc[-lookback:].mean())
+    baseline = float(vol.iloc[-base:].mean())
+    if baseline <= 0:
+        return Signal("volume_surge", False)
+    ratio = recent / baseline
+    fired = ratio >= mult
+    detail = f"recent volume {ratio:.1f}x the {base}-day average" if fired else ""
+    return Signal("volume_surge", fired, detail)
 
 
 def breakout_soon(df: pd.DataFrame, near_pct: float = 0.04,
@@ -218,6 +237,7 @@ def pullback_in_uptrend(df: pd.DataFrame, dip_min: float = 0.04,
 
 _DETECTORS: List[Callable[[pd.DataFrame], Signal]] = [
     rsi_breakout,
+    volume_surge,
     breakout_soon,
     ascending_triangle,
     cup_and_handle,

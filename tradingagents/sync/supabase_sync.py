@@ -102,6 +102,10 @@ def screen_snapshot(trade_date: str, candidates: List, opened: Optional[List[str
                 "signals": c.fired_signals,
                 "rating": c.decision_rating,
                 "opened": c.symbol in opened,
+                "stoploss": (c.levels or {}).get("stoploss"),
+                "target": (c.levels or {}).get("target"),
+                "stop_pct": (c.levels or {}).get("stop_pct"),
+                "target_pct": (c.levels or {}).get("target_pct"),
             }
             for i, c in enumerate(candidates)
         ],

@@ -47,6 +47,7 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               <th className="text-right font-medium py-2 pr-3">Qty</th>
               <th className="text-right font-medium py-2 pr-3">Entry</th>
               <th className="text-right font-medium py-2 pr-3">Cost</th>
+              <th className="text-right font-medium py-2 pr-3">Stop / Target</th>
               <th className="text-left font-medium py-2 pr-3">Ordered</th>
               <th className="text-left font-medium py-2 pr-3">Executes</th>
               <th className="text-right font-medium py-2 pr-3">Live</th>
@@ -64,6 +65,16 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{qty(p.shares)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.entry_price)}</td>
                 <td className="py-2.5 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.alloc)}</td>
+                <td className="py-2.5 pr-3 text-right text-xs whitespace-nowrap">
+                  {p.stoploss != null ? (
+                    <>
+                      <div className="text-bear">{inr(p.stoploss)}{p.stop_pct != null && ` (${pct(p.stop_pct)})`}</div>
+                      <div className="text-bull">{inr(p.target)}{p.target_pct != null && ` (${pct(p.target_pct)})`}</div>
+                    </>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
                 <td className="py-2.5 pr-3 text-muted text-xs whitespace-nowrap">
                   {p.order_time ? dateTimeIST(p.order_time) : p.entry_date}
                 </td>

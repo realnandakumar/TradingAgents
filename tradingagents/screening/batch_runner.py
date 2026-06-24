@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
+from .levels import compute_levels
 from .patterns import PatternScore, score_patterns
 from .prices import download_history
 from .relative_strength import RSResult, compute_relative_strength
@@ -33,6 +34,7 @@ class Candidate:
     rs: RSResult
     pattern: PatternScore
     composite: float                 # ranking score: pattern weight + RS bonus
+    levels: Optional[dict] = None    # entry / stoploss / target (ATR-based)
     # Filled by run_screen after AI analysis:
     decision_rating: Optional[str] = None
     report: Optional[str] = None
@@ -82,7 +84,15 @@ def screen_candidates(config: dict, progress: Optional[Callable[[str], None]] = 
             continue
         ps = score_patterns(r.symbol, df)
         composite = ps.score + r.rs_percentile / 100.0
-        candidates.append(Candidate(symbol=r.symbol, rs=r, pattern=ps, composite=composite))
+        levels = compute_levels(
+            df,
+            entry=r.close,
+            stop_atr_mult=float(config.get("levels_stop_atr_mult", 2.0)),
+            target_rr=float(config.get("levels_target_rr", 2.0)),
+        )
+        candidates.append(
+            Candidate(symbol=r.symbol, rs=r, pattern=ps, composite=composite, levels=levels)
+        )
 
     candidates.sort(key=lambda c: c.composite, reverse=True)
     return candidates
@@ -154,6 +164,7 @@ def run_screen(
                 entry_price=cand.rs.close,
                 entry_date=trade_date,
                 signals=cand.fired_signals,
+                levels=cand.levels,
             )
             if pos is not None:
                 run.opened.append(cand.symbol)

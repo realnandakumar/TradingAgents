@@ -103,6 +103,7 @@ class PaperBook:
         entry_price: float,
         entry_date: str,
         signals: Optional[List[str]] = None,
+        levels: Optional[dict] = None,
     ) -> Optional[dict]:
         """Record a simulated buy. No-op (returns None) if a position for this
         ticker is already open or inputs are invalid."""
@@ -126,6 +127,11 @@ class PaperBook:
             "entry_price": round(entry_price, 2),
             "shares": round(shares, 4),
             "alloc": round(alloc, 2),
+            # ATR-based trade levels (target & stoploss) for the buy list.
+            "stoploss": (levels or {}).get("stoploss"),
+            "target": (levels or {}).get("target"),
+            "stop_pct": (levels or {}).get("stop_pct"),
+            "target_pct": (levels or {}).get("target_pct"),
             "status": "open",
             "exit_date": None,
             "exit_price": None,

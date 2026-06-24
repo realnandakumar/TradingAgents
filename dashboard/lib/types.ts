@@ -32,6 +32,10 @@ export interface Position {
   entry_price: number;
   shares: number;
   alloc: number;
+  stoploss?: number | null;
+  target?: number | null;
+  stop_pct?: number | null;       // negative %, downside to stop
+  target_pct?: number | null;     // positive %, upside to target
   status: "open" | "closed";
   exit_date: string | null;
   exit_price: number | null;

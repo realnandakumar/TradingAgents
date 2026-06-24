@@ -227,6 +227,13 @@ class OpenAIClient(BaseLLMClient):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
 
+        # Bound every request so a stalled connection fails fast and retries
+        # instead of hanging the whole run forever (previously unbounded — a
+        # single stuck call could freeze a batch screen indefinitely).
+        # Generous enough for high-effort reasoning; overridable by the caller.
+        llm_kwargs.setdefault("timeout", 300)      # seconds per request
+        llm_kwargs.setdefault("max_retries", 3)
+
         # Native OpenAI: use Responses API for consistent behavior across
         # all model families. Third-party providers use Chat Completions.
         if self.provider == "openai":

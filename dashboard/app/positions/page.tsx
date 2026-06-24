@@ -63,7 +63,7 @@ export default async function PositionsPage() {
                         <td className="py-2.5 pr-3 text-right tabular-nums text-muted">
                           {p.holding_days_actual != null ? `${p.holding_days_actual}d` : "—"}
                         </td>
-                        <td className="py-2.5"><SignalList signals={p.signals} /></td>
+                        <td className="py-2.5"><SignalList signals={p.signals} abbrev /></td>
                       </tr>
                     ))}
                   </tbody>

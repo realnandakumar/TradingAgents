@@ -62,7 +62,7 @@ export function CandidatesTable({
                   </td>
                 )}
                 <td className="py-2.5 pr-3">
-                  <SignalList signals={c.signals} />
+                  <SignalList signals={c.signals} abbrev />
                 </td>
                 <td className="py-2.5">
                   <RatingBadge rating={c.rating} />

@@ -35,10 +35,21 @@ export function signalLabel(s: string): string {
 
 export const SIGNAL_TONE: Record<string, "reliable" | "approx"> = {
   rsi_breakout: "reliable",
+  volume_surge: "reliable",
   breakout_soon: "reliable",
   ascending_triangle: "approx",
   cup_and_handle: "approx",
   pullback_in_uptrend: "approx",
+};
+
+// Short chips so the signals column stays one line; full name shown on hover.
+export const SIGNAL_ABBREV: Record<string, string> = {
+  rsi_breakout: "RSI",
+  volume_surge: "Vol",
+  breakout_soon: "Sqz",
+  ascending_triangle: "Tri",
+  cup_and_handle: "Cup",
+  pullback_in_uptrend: "Pull",
 };
 
 export function ratingTone(rating: string | null): "bull" | "bear" | "neutral" {

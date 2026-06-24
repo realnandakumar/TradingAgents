@@ -1,4 +1,4 @@
-import { ratingTone, SIGNAL_TONE, signalLabel } from "@/lib/format";
+import { ratingTone, SIGNAL_ABBREV, SIGNAL_TONE, signalLabel } from "@/lib/format";
 
 export function RatingBadge({ rating }: { rating: string | null }) {
   if (!rating) return <span className="text-muted">—</span>;
@@ -16,28 +16,29 @@ export function RatingBadge({ rating }: { rating: string | null }) {
   );
 }
 
-export function SignalBadge({ signal }: { signal: string }) {
+export function SignalBadge({ signal, abbrev = false }: { signal: string; abbrev?: boolean }) {
   const tone = SIGNAL_TONE[signal] ?? "approx";
   const cls =
     tone === "reliable"
       ? "bg-accent/12 text-accent border-accent/25"
       : "bg-surface-2 text-muted border-border";
+  const text = abbrev ? SIGNAL_ABBREV[signal] ?? signalLabel(signal) : signalLabel(signal);
   return (
     <span
-      className={`inline-block px-2 py-0.5 rounded-md text-[11px] border ${cls}`}
-      title={tone === "reliable" ? "Reliable signal" : "Approximate / heuristic pattern"}
+      className={`inline-block px-1.5 py-0.5 rounded text-[11px] leading-none border ${cls}`}
+      title={`${signalLabel(signal)} — ${tone === "reliable" ? "reliable signal" : "approximate / heuristic pattern"}`}
     >
-      {signalLabel(signal)}
+      {text}
     </span>
   );
 }
 
-export function SignalList({ signals }: { signals: string[] }) {
+export function SignalList({ signals, abbrev = false }: { signals: string[]; abbrev?: boolean }) {
   if (!signals || signals.length === 0) return <span className="text-muted text-xs">none</span>;
   return (
     <div className="flex flex-wrap gap-1">
       {signals.map((s) => (
-        <SignalBadge key={s} signal={s} />
+        <SignalBadge key={s} signal={s} abbrev={abbrev} />
       ))}
     </div>
   );

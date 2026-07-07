@@ -1,5 +1,6 @@
 from typing import Optional
 import datetime
+import json
 import typer
 import questionary
 from pathlib import Path
@@ -1242,6 +1243,21 @@ def run_analysis(checkpoint: bool = False, reddit_market: Optional[str] = None):
             final_state.update(chunk)
         decision = graph.process_signal(final_state["final_trade_decision"])
 
+        try:
+            from tradingagents.swing import SwingPositionBook
+            from tradingagents.momentum import MomentumPositionBook
+            from tradingagents.screening.universe import _normalise_symbol
+
+            ticker_ns = _normalise_symbol(selections["ticker"])
+            swing_book = SwingPositionBook(DEFAULT_CONFIG.copy())
+            if swing_book.set_ai_rating(ticker_ns, decision):
+                console.print(f"[dim]Swing book AI rating saved:[/dim] {decision}")
+            momentum_book = MomentumPositionBook(DEFAULT_CONFIG.copy())
+            if momentum_book.set_ai_rating(ticker_ns, decision):
+                console.print(f"[dim]Momentum book AI rating saved:[/dim] {decision}")
+        except Exception:  # noqa: BLE001
+            pass
+
         # Update all agent statuses to completed
         for agent in message_buffer.agent_status:
             message_buffer.update_agent_status(agent, "completed")
@@ -1528,6 +1544,1555 @@ def paper():
             console.print(t)
     else:
         console.print("[yellow]No closed trades yet — reliability stats appear once positions reach their holding period.[/yellow]")
+
+
+def _render_swing_picks(picks):
+    table = Table(box=box.SIMPLE_HEAD, title="Swing screener — top picks (manual AI selection)")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold green")
+    table.add_column("Stock")
+    table.add_column("Entry ₹", justify="right")
+    table.add_column("Stop ₹", justify="right")
+    table.add_column("Stop%", justify="right")
+    table.add_column("T1 ₹", justify="right")
+    table.add_column("T1%", justify="right")
+    table.add_column("T2 ₹", justify="right")
+    table.add_column("T2%", justify="right")
+    table.add_column("R:R", justify="right")
+    table.add_column("RSI", justify="right")
+    table.add_column("ADX", justify="right")
+    table.add_column("Vol%", justify="right")
+    for i, p in enumerate(picks, 1):
+        table.add_row(
+            str(i),
+            p.symbol.replace(".NS", ""),
+            p.stock_name[:22],
+            f"{p.entry_price:.2f}",
+            f"{p.stop_loss:.2f}",
+            f"{p.stop_loss_pct:.1f}%",
+            f"{p.target_1:.2f}",
+            f"+{p.target_1_pct:.1f}%",
+            f"{p.target_2:.2f}",
+            f"+{p.target_2_pct:.1f}%",
+            f"{p.risk_reward_ratio:.1f}:{p.risk_reward_ratio_2:.1f}",
+            f"{p.rsi:.1f}",
+            f"{p.adx:.1f}",
+            f"{p.volume_spike_pct:+.0f}%",
+        )
+    console.print(table)
+
+
+def _export_swing_csv(path: str, picks) -> None:
+    import csv
+
+    fields = [
+        "symbol", "stock_name", "sector", "entry_price", "stop_loss",
+        "stop_loss_pct", "target_1", "target_1_pct", "target_2", "target_2_pct",
+        "risk_reward_ratio", "risk_reward_ratio_2", "supertrend_status",
+        "rsi", "adx", "volume_spike_pct", "relative_volume",
+        "market_cap_cr", "avg_traded_value_cr",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for p in picks:
+            writer.writerow({
+                "symbol": p.symbol,
+                "stock_name": p.stock_name,
+                "sector": p.sector,
+                "entry_price": p.entry_price,
+                "stop_loss": p.stop_loss,
+                "stop_loss_pct": p.stop_loss_pct,
+                "target_1": p.target_1,
+                "target_1_pct": p.target_1_pct,
+                "target_2": p.target_2,
+                "target_2_pct": p.target_2_pct,
+                "risk_reward_ratio": p.risk_reward_ratio,
+                "risk_reward_ratio_2": p.risk_reward_ratio_2,
+                "supertrend_status": p.supertrend_status,
+                "rsi": p.rsi,
+                "adx": p.adx,
+                "volume_spike_pct": p.volume_spike_pct,
+                "relative_volume": p.relative_volume,
+                "market_cap_cr": p.market_cap_cr,
+                "avg_traded_value_cr": p.avg_traded_value_cr,
+            })
+
+
+@app.command()
+def swing(
+    universe: Optional[str] = typer.Option(
+        None, "--universe", help="CSV of NSE tickers (overrides live/fallback list).",
+    ),
+    top: Optional[int] = typer.Option(
+        None, "--top", help="How many ranked picks to show (default 10).",
+    ),
+    save: bool = typer.Option(
+        True, "--save/--no-save",
+        help="Save picks to the swing_trade_positional book (default: save).",
+    ),
+    export: Optional[str] = typer.Option(
+        None, "--export", help="Write results to a CSV file at this path.",
+    ),
+):
+    """Screen NSE stocks for early swing setups (20-day hold style).
+
+    Supertrend flip within 3 sessions, RSI 50–65, close > EMA20,
+    volume ≥120%, ADX>15, liquidity gates. Shows a ranked shortlist only —
+    pick tickers yourself for AI analysis via ``tradingagents analyze``."""
+    from tradingagents.screening.swing_screener import screen_swing
+    from tradingagents.swing import STRATEGY_NAME, SwingPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["swing_top_n"] = top
+
+    console.print(Panel.fit(
+        "[bold]India swing screener[/bold] (early entry · 20-day hold)\n"
+        "ST (10,3) Sell→Buy within 3 sessions · RSI 50–65 (trend confirm)\n"
+        "Close > EMA20 · Volume ≥120% · ADX>15\n"
+        "MCap>₹5,000 Cr · Traded value>₹10 Cr · No 52-week lows\n"
+        f"Top [bold]{config['swing_top_n']}[/bold] by rel. volume → ADX → RSI (50–65)\n"
+        "[dim]No AI calls — review list, then run analyze on your picks.[/dim]",
+        title="Swing",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_swing(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+        )
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No stocks matched all swing criteria today.[/yellow]")
+        raise typer.Exit()
+
+    _render_swing_picks(picks)
+    console.print(
+        f"\n[dim]{len(picks)} pick(s). Entry/stop/targets = latest close + Supertrend line.[/dim]"
+    )
+    console.print(
+        f"[dim]Analyze a pick:[/dim] [bold]tradingagents analyze TICKER[/bold]  "
+        f"[dim](e.g. {picks[0].symbol.replace('.NS', '')})[/dim]"
+    )
+
+    if save:
+        book = SwingPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} position(s) to swing_trade_positional[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents swing-positions[/bold]")
+
+    if export:
+        _export_swing_csv(export, picks)
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("swing-positions")
+def swing_positions():
+    """Show saved swing_trade_positional positions and closed-trade stats."""
+    from tradingagents.swing import STRATEGY_NAME, SwingPositionBook
+
+    book = SwingPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No swing positions yet. Run [bold]tradingagents swing[/bold] to screen and save picks.",
+            title="swing_trade_positional",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T1%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("R:R", justify="right")
+        t.add_column("Phase")
+        t.add_column("Rem%", justify="right")
+        t.add_column("Trail ₹", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:22],
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"{p.get('risk_reward_ratio', 0):.1f}:{p.get('risk_reward_ratio_2', 0):.1f}",
+                p.get("phase", "initial"),
+                f"{p.get('remaining_pct', 100):.0f}",
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+                f"{p.get('rsi', 0):.1f}",
+                f"{p.get('adx', 0):.1f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed swing positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print(
+            "[yellow]No closed swing trades yet — stats appear after the 20-day hold.[/yellow]"
+        )
+
+
+@app.command("swing-daily")
+def swing_daily(
+    force: bool = typer.Option(
+        False, "--force", help="Run even on weekends (for testing).",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Auto-approve replacement proposals (foreclosure). Default: ask permission.",
+    ),
+):
+    """Daily swing portfolio job (9:30 / 11:45 / 14:30 IST on trading days).
+
+    Screens on daily (1D) charts, processes stop/T2 partial/trail/time exits,
+    opens new picks (max 20), and queues replacement proposals when full."""
+    from tradingagents.swing import PortfolioPaperTradeManager, ReplacementProposal, run_swing_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]Swing daily run...", spinner="dots") as status:
+        report = run_swing_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]swing_trade_positional daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="Swing daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents swing-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents swing-report[/bold]")
+
+
+@app.command("swing-approve")
+def swing_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+):
+    """Approve pending portfolio replacement proposals (foreclosure)."""
+    from tradingagents.screening.swing_screener import screen_swing
+    from tradingagents.swing import PortfolioPaperTradeManager
+
+    manager = PortfolioPaperTradeManager(DEFAULT_CONFIG.copy())
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[green]No pending replacement proposals.[/green]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_swing(DEFAULT_CONFIG.copy())}
+    approved = 0
+    for prop in pending:
+        pick = picks.get(prop.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = True
+        else:
+            ok = questionary.confirm(
+                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
+                default=False,
+            ).ask() or False
+        if ok and manager.approve_replacement(prop.id, pick):
+            approved += 1
+            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
+
+    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+
+
+@app.command("swing-report")
+def swing_report():
+    """Show the latest swing daily portfolio report."""
+    from tradingagents.swing import PortfolioPaperTradeManager
+
+    manager = PortfolioPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if not report:
+        console.print("[yellow]No daily reports yet. Run tradingagents swing-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"Date: {report.get('date')} · timeframe: {report.get('chart_timeframe', '1d')}\n"
+        f"Picks: {report.get('screener_picks')} · Open: {report.get('open_positions')}",
+        title="Latest swing daily report",
+    ))
+    console.print(json.dumps(report, indent=2))
+
+
+def _render_momentum_picks(picks):
+    table = Table(box=box.SIMPLE_HEAD, title="Momentum screener — top picks (manual AI selection)")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold green")
+    table.add_column("Stock")
+    table.add_column("Entry ₹", justify="right")
+    table.add_column("Stop%", justify="right")
+    table.add_column("T2%", justify="right")
+    table.add_column("RSI", justify="right")
+    table.add_column("ADX", justify="right")
+    table.add_column("MACD", justify="right")
+    table.add_column("Vol5/20", justify="right")
+    table.add_column("Ext%", justify="right")
+    table.add_column("ADX↑", justify="right")
+    for i, p in enumerate(picks, 1):
+        table.add_row(
+            str(i),
+            p.symbol.replace(".NS", ""),
+            p.stock_name[:22],
+            f"{p.entry_price:.2f}",
+            f"{p.stop_loss_pct:.1f}%",
+            f"+{p.target_2_pct:.1f}%",
+            f"{p.rsi:.1f}",
+            f"{p.adx:.1f}",
+            f"{p.macd:.2f}",
+            f"{p.volume_ratio_5_20:.2f}x",
+            f"{p.extension_pct:.1f}%",
+            "Y" if p.adx_rising else "—",
+        )
+    console.print(table)
+
+
+def _export_momentum_csv(path: str, picks) -> None:
+    import csv
+
+    fields = [
+        "symbol", "stock_name", "sector", "entry_price", "stop_loss",
+        "stop_loss_pct", "target_1", "target_1_pct", "target_2", "target_2_pct",
+        "risk_reward_ratio", "risk_reward_ratio_2", "supertrend_status",
+        "rsi", "adx", "macd", "macd_signal", "volume_ratio_5_20",
+        "extension_pct", "adx_rising", "market_cap_cr", "avg_traded_value_cr",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for p in picks:
+            writer.writerow({
+                "symbol": p.symbol,
+                "stock_name": p.stock_name,
+                "sector": p.sector,
+                "entry_price": p.entry_price,
+                "stop_loss": p.stop_loss,
+                "stop_loss_pct": p.stop_loss_pct,
+                "target_1": p.target_1,
+                "target_1_pct": p.target_1_pct,
+                "target_2": p.target_2,
+                "target_2_pct": p.target_2_pct,
+                "risk_reward_ratio": p.risk_reward_ratio,
+                "risk_reward_ratio_2": p.risk_reward_ratio_2,
+                "supertrend_status": p.supertrend_status,
+                "rsi": p.rsi,
+                "adx": p.adx,
+                "macd": p.macd,
+                "macd_signal": p.macd_signal,
+                "volume_ratio_5_20": p.volume_ratio_5_20,
+                "extension_pct": p.extension_pct,
+                "adx_rising": p.adx_rising,
+                "market_cap_cr": p.market_cap_cr,
+                "avg_traded_value_cr": p.avg_traded_value_cr,
+            })
+
+
+@app.command()
+def momentum(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="How many ranked picks to show."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save picks to momentum book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen NSE stocks for momentum continuation setups (30–90 day hold).
+
+    EMA50>EMA200, ST Buy, ADX>25, RSI 55–65, MACD bullish, vol 5d>20d,
+    HH after EMA pullback. Ranked shortlist — run analyze on your picks."""
+    from tradingagents.screening.momentum_screener import screen_momentum
+    from tradingagents.momentum import MomentumPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["momentum_top_n"] = top
+
+    console.print(Panel.fit(
+        "[bold]India momentum screener[/bold] (continuation · 30–90 day hold)\n"
+        "Close > EMA50 > EMA200 · ST Buy ≥4 sessions (no recent flip)\n"
+        "ADX>20 · RSI 50–65 · MACD > signal · Vol 5d ≥ 20d\n"
+        "10d HH after EMA pullback · ext <15% · excludes swing early-entry zone\n"
+        "MCap>₹5,000 Cr · Traded value>₹10 Cr · No 52-week lows\n"
+        f"Top [bold]{config['momentum_top_n']}[/bold] by ADX rising → ADX → vol → RSI\n"
+        "[dim]No AI calls — review list, then run analyze on your picks.[/dim]",
+        title="Momentum",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_momentum(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No stocks matched all momentum criteria today.[/yellow]")
+        raise typer.Exit()
+
+    _render_momentum_picks(picks)
+    console.print(f"\n[dim]{len(picks)} pick(s). Hold window 30–90 trading days.[/dim]")
+
+    if save:
+        book = MomentumPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} position(s) to momentum_trade_positional[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents momentum-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/momentum[/bold]")
+
+    if export:
+        _export_momentum_csv(export, picks)
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("momentum-positions")
+def momentum_positions():
+    """Show momentum_trade_positional positions and stats."""
+    from tradingagents.momentum import STRATEGY_NAME, MomentumPositionBook
+
+    book = MomentumPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No momentum positions yet. Run [bold]tradingagents momentum[/bold] to screen and save.",
+            title="momentum_trade_positional",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Rem%", justify="right")
+        t.add_column("Trail ₹", justify="right")
+        t.add_column("RSI", justify="right")
+        t.add_column("ADX", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:22],
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('remaining_pct', 100):.0f}",
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+                f"{p.get('rsi', 0):.1f}",
+                f"{p.get('adx', 0):.1f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed momentum positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed momentum trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents momentum-report[/bold]")
+
+
+@app.command("momentum-daily")
+def momentum_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily momentum portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.momentum import MomentumPaperTradeManager, ReplacementProposal, run_momentum_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]Momentum daily run...", spinner="dots") as status:
+        report = run_momentum_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]momentum_trade_positional daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="Momentum daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents momentum-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents momentum-report[/bold]")
+
+
+@app.command("momentum-approve")
+def momentum_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+):
+    """Approve pending momentum portfolio replacement proposals."""
+    from tradingagents.screening.momentum_screener import screen_momentum
+    from tradingagents.momentum import MomentumPaperTradeManager
+
+    manager = MomentumPaperTradeManager(DEFAULT_CONFIG.copy())
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[green]No pending replacement proposals.[/green]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_momentum(DEFAULT_CONFIG.copy())}
+    approved = 0
+    for prop in pending:
+        pick = picks.get(prop.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
+            continue
+        ok = yes or (
+            questionary.confirm(
+                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
+                default=False,
+            ).ask()
+            or False
+        )
+        if ok and manager.approve_replacement(prop.id, pick):
+            approved += 1
+            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
+
+    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+
+
+@app.command("momentum-report")
+def momentum_report():
+    """Show the latest momentum daily portfolio report."""
+    from tradingagents.momentum import MomentumPaperTradeManager
+
+    manager = MomentumPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if not report:
+        console.print("[yellow]No daily reports yet. Run tradingagents momentum-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"Date: {report.get('date')} · timeframe: {report.get('chart_timeframe', '1d')}\n"
+        f"Picks: {report.get('screener_picks')} · Open: {report.get('open_positions')}",
+        title="Latest momentum daily report",
+    ))
+    console.print(json.dumps(report, indent=2))
+
+
+def _render_nss_picks(picks):
+    table = Table(box=box.SIMPLE_HEAD, title="NSS screener — top picks (structure-first)")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold green")
+    table.add_column("Stock")
+    table.add_column("Score", justify="right")
+    table.add_column("Conf")
+    table.add_column("Entry ₹", justify="right")
+    table.add_column("Stop%", justify="right")
+    table.add_column("T2%", justify="right")
+    table.add_column("RSI", justify="right")
+    table.add_column("ADX", justify="right")
+    table.add_column("Vol", justify="right")
+    table.add_column("Range%", justify="right")
+    table.add_column("Reason")
+    for i, p in enumerate(picks, 1):
+        table.add_row(
+            str(i),
+            p.symbol.replace(".NS", ""),
+            p.stock_name[:20],
+            f"{p.composite_score:.0f}",
+            p.confidence[:4] if p.confidence else "—",
+            f"{p.entry_price:.2f}",
+            f"{p.stop_loss_pct:.1f}%",
+            f"+{p.target_2_pct:.1f}%",
+            f"{p.rsi:.1f}",
+            f"{p.adx:.1f}",
+            f"{p.relative_volume:.2f}x",
+            f"{p.range_pct:.1f}%",
+            (p.primary_reason or "")[:28],
+        )
+    console.print(table)
+
+
+def _export_nss_csv(path: str, picks) -> None:
+    import csv
+
+    fields = [
+        "symbol", "stock_name", "sector", "composite_score", "confidence", "primary_reason",
+        "entry_price", "stop_loss", "stop_loss_pct", "target_1", "target_1_pct", "target_2",
+        "target_2_pct", "risk_reward_ratio", "risk_reward_ratio_2", "rsi", "adx",
+        "relative_volume", "range_pct", "atr_ratio", "risk_pct", "market_cap_cr",
+        "avg_traded_value_cr",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for p in picks:
+            writer.writerow({
+                "symbol": p.symbol,
+                "stock_name": p.stock_name,
+                "sector": p.sector,
+                "composite_score": p.composite_score,
+                "confidence": p.confidence,
+                "primary_reason": p.primary_reason,
+                "entry_price": p.entry_price,
+                "stop_loss": p.stop_loss,
+                "stop_loss_pct": p.stop_loss_pct,
+                "target_1": p.target_1,
+                "target_1_pct": p.target_1_pct,
+                "target_2": p.target_2,
+                "target_2_pct": p.target_2_pct,
+                "risk_reward_ratio": p.risk_reward_ratio,
+                "risk_reward_ratio_2": p.risk_reward_ratio_2,
+                "rsi": p.rsi,
+                "adx": p.adx,
+                "relative_volume": p.relative_volume,
+                "range_pct": p.range_pct,
+                "atr_ratio": p.atr_ratio,
+                "risk_pct": p.risk_pct,
+                "market_cap_cr": p.market_cap_cr,
+                "avg_traded_value_cr": p.avg_traded_value_cr,
+            })
+
+
+@app.command()
+def nss(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="How many ranked picks to show."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save picks to NSS book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen NSE stocks for NSS structure-first swing setups (30–90 day hold).
+
+    Consolidation + breakout scoring with explainable stages. Top 20 by composite score."""
+    from tradingagents.screening.nss_screener import screen_nss
+    from tradingagents.nss import NSSPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["nss_top_n"] = top
+
+    console.print(Panel.fit(
+        "[bold]NANDA Swing Scanner (NSS)[/bold] · structure-first · 30–90 day hold\n"
+        "EMA50>EMA200 · consolidation + ATR contraction · fresh breakout\n"
+        "Vol ≥1.5× 20d · RSI 45–65 · ADX≥15 · risk ≤8%\n"
+        "Excludes swing early-entry & momentum continuation zones\n"
+        f"Top [bold]{config['nss_top_n']}[/bold] by composite score (min {config['nss_min_score']})\n"
+        "[dim]No AI calls — review list, then run analyze on your picks.[/dim]",
+        title="NSS",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_nss(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No stocks matched NSS criteria today.[/yellow]")
+        raise typer.Exit()
+
+    _render_nss_picks(picks)
+    console.print(f"\n[dim]{len(picks)} pick(s). Hold window 30–90 trading days.[/dim]")
+
+    if save:
+        book = NSSPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} position(s) to nanda_swing_scanner[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents nss-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/nss[/bold]")
+
+    if export:
+        _export_nss_csv(export, picks)
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("nss-positions")
+def nss_positions():
+    """Show nanda_swing_scanner positions and stats."""
+    from tradingagents.nss import STRATEGY_NAME, NSSPositionBook
+
+    book = NSSPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No NSS positions yet. Run [bold]tradingagents nss[/bold] to screen and save.",
+            title="nanda_swing_scanner",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Score", justify="right")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Rem%", justify="right")
+        t.add_column("Trail ₹", justify="right")
+        t.add_column("RSI", justify="right")
+        t.add_column("ADX", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                f"{p.get('composite_score', 0):.0f}",
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('remaining_pct', 100):.0f}",
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+                f"{p.get('rsi', 0):.1f}",
+                f"{p.get('adx', 0):.1f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed NSS positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed NSS trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents nss-report[/bold]")
+
+
+@app.command("nss-daily")
+def nss_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily NSS portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.nss import NSSPaperTradeManager, ReplacementProposal, run_nss_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]NSS daily run...", spinner="dots") as status:
+        report = run_nss_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]nanda_swing_scanner daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="NSS daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents nss-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents nss-report[/bold]")
+
+
+@app.command("nss-approve")
+def nss_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+):
+    """Approve pending NSS portfolio replacement proposals."""
+    from tradingagents.screening.nss_screener import screen_nss
+    from tradingagents.nss import NSSPaperTradeManager
+
+    manager = NSSPaperTradeManager(DEFAULT_CONFIG.copy())
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[green]No pending replacement proposals.[/green]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_nss(DEFAULT_CONFIG.copy())}
+    approved = 0
+    for prop in pending:
+        pick = picks.get(prop.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
+            continue
+        ok = yes or (
+            questionary.confirm(
+                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
+                default=False,
+            ).ask()
+            or False
+        )
+        if ok and manager.approve_replacement(prop.id, pick):
+            approved += 1
+            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
+
+    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+
+
+@app.command("nss-report")
+def nss_report():
+    """Show the latest NSS daily portfolio report."""
+    from tradingagents.nss import NSSPaperTradeManager
+
+    manager = NSSPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if not report:
+        console.print("[yellow]No daily reports yet. Run tradingagents nss-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"Date: {report.get('date')} · timeframe: {report.get('chart_timeframe', '1d')}\n"
+        f"Picks: {report.get('screener_picks')} · Open: {report.get('open_positions')}",
+        title="Latest NSS daily report",
+    ))
+    console.print(json.dumps(report, indent=2))
+
+
+def _render_nss_waterfall(waterfall):
+    t = Table(box=box.SIMPLE_HEAD, title="NSS scanner waterfall (v1.1)")
+    t.add_column("Stage")
+    t.add_column("In", justify="right")
+    t.add_column("Out", justify="right", style="bold cyan")
+    t.add_column("Rejected", justify="right", style="red")
+    t.add_column("Rej%", justify="right")
+    for step in waterfall:
+        t.add_row(
+            step.label,
+            str(step.input_count),
+            str(step.output_count),
+            str(step.rejection_count) if step.rejection_count else "—",
+            f"{step.rejection_pct:.1f}%" if step.rejection_pct else "—",
+        )
+    console.print(t)
+
+
+def _render_nss_near_misses(near_misses):
+    if not near_misses:
+        console.print("[yellow]No near-miss candidates.[/yellow]")
+        return
+    t = Table(box=box.SIMPLE_HEAD, title="Near miss — top rejected")
+    t.add_column("#", justify="right")
+    t.add_column("Ticker", style="bold")
+    t.add_column("Partial", justify="right")
+    t.add_column("Gap", justify="right")
+    t.add_column("Failed at")
+    t.add_column("Required")
+    t.add_column("Actual")
+    t.add_column("Distance")
+    t.add_column("Action")
+    for n in near_misses[:20]:
+        t.add_row(
+            str(n.rank),
+            n.symbol.replace(".NS", ""),
+            f"{n.partial_score:.1f}",
+            f"{n.score_gap:.1f}",
+            n.failure_stage,
+            n.threshold_required or "—",
+            n.threshold_actual or "—",
+            n.threshold_distance or "—",
+            (n.watch_action or "")[:40],
+        )
+    console.print(t)
+
+
+def _render_ticker_diagnostic(diag):
+    title = f"{diag.symbol.replace('.NS', '')} — {'PICKED' if diag.status == 'picked' else 'REJECTED'}"
+    gran = getattr(diag, "granular_failure_stage", None)
+    if gran or diag.failure_stage:
+        title += f" @ {gran or diag.failure_stage}"
+    console.print(Panel.fit(
+        f"{title}\n"
+        f"Rating: [bold]{getattr(diag, 'overall_rating', '—')}[/bold] · "
+        f"Confidence: {getattr(diag, 'overall_confidence', '—')} · "
+        f"Composite: {diag.partial_score:.1f}",
+        title="NSS explain (v1.1)",
+    ))
+
+    if diag.status == "picked" and getattr(diag, "selection_reason", ""):
+        console.print(f"[green]Why selected:[/green] {diag.selection_reason}")
+    if diag.failure_reason:
+        console.print(f"[dim]Rejection:[/dim] {diag.failure_reason}")
+
+    modules = getattr(diag, "modules", {}) or {}
+    if modules:
+        t = Table(box=box.SIMPLE_HEAD, title="Module scores")
+        t.add_column("Module")
+        t.add_column("Pass", justify="center")
+        t.add_column("Score", justify="right")
+        t.add_column("Conf")
+        t.add_column("Explanation")
+        for m in modules.values():
+            if m.name.endswith("_overlap") and m.name != "overlap":
+                continue
+            mark = "[green]Y[/green]" if m.passed else "[red]N[/red]"
+            t.add_row(m.name, mark, f"{m.score:.1f}", m.confidence, (m.explanation or "")[:50])
+            for sub in (m.submodules or {}).values():
+                sm = "[green]Y[/green]" if sub.passed else "[red]N[/red]"
+                t.add_row(f"  {sub.name}", sm, f"{sub.score:.1f}", sub.confidence, (sub.explanation or "")[:48])
+        console.print(t)
+
+    if diag.score_components:
+        sc = diag.score_components
+        console.print(
+            "[bold]Weighted components:[/bold] "
+            f"Trend {sc.get('trend', 0):.1f} · Consol {sc.get('consolidation', 0):.1f} · "
+            f"Break {sc.get('breakout', 0):.1f} · Vol {sc.get('volume', 0):.1f} · "
+            f"Mom {sc.get('momentum', 0):.1f} · Risk {sc.get('risk', 0):.1f} · "
+            f"[bold]Composite {sc.get('composite', 0):.1f}[/bold]"
+        )
+    if diag.market_cap_cr is not None:
+        console.print(f"[dim]MCap {diag.market_cap_cr} Cr · Avg traded {diag.avg_traded_value_cr} Cr[/dim]")
+
+
+@app.command("nss-diagnostics")
+def nss_diagnostics(
+    near_miss: int = typer.Option(50, "--near-miss", help="How many near-miss names to show."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write full JSON report."),
+    rejections: bool = typer.Option(False, "--rejections", help="Print every rejection reason."),
+):
+    """NSS scanner diagnostics: waterfall funnel, near misses, rejection breakdown."""
+    from tradingagents.screening.nss_diagnostics import run_scan_diagnostics
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status("[bold green]Running NSS diagnostics...", spinner="dots") as status:
+        report = run_scan_diagnostics(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            near_miss_limit=near_miss,
+        )
+
+    console.print()
+    console.print(Panel.fit(
+        f"Universe: {report.universe_size} · Picks: {len(report.picks)} · "
+        f"Rejected: {report.rejected_count}",
+        title="NSS diagnostics",
+    ))
+    _render_nss_waterfall(report.waterfall)
+
+    if report.rejection_by_stage:
+        t = Table(box=box.SIMPLE_HEAD, title="Rejections by stage")
+        t.add_column("Stage", style="bold")
+        t.add_column("Count", justify="right")
+        for stage, count in sorted(report.rejection_by_stage.items(), key=lambda x: -x[1]):
+            t.add_row(stage, str(count))
+        console.print(t)
+
+    _render_nss_near_misses(report.near_misses)
+
+    if report.market_health:
+        h = report.market_health
+        console.print(
+            f"\n[bold]Market health[/bold] ({h.get('date')}): "
+            f"trend {h.get('trend_stocks')} · consolidating {h.get('consolidating_stocks')} · "
+            f"breakout {h.get('breakout_candidates')} · vol confirmed {h.get('volume_confirmed')} · "
+            f"picks {h.get('final_picks')}"
+        )
+
+    if report.picks:
+        console.print(f"\n[green]Picks ({len(report.picks)}):[/green] {', '.join(p.replace('.NS', '') for p in report.picks)}")
+
+    if rejections:
+        for d in report.diagnostics:
+            if d.status == "picked":
+                continue
+            sym = d.symbol.replace(".NS", "")
+            console.print(f"  [red]{sym}[/red] @ {d.failure_stage}: {d.failure_reason}")
+
+    if export:
+        import json as _json
+        payload = report.to_dict(include_rejections=True)
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(payload, f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
+@app.command("nss-explain")
+def nss_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE or RELIANCE.NS)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON explanation."),
+):
+    """Detailed NSS pass/fail explanation for one ticker."""
+    from tradingagents.screening.nss_diagnostics import explain_ticker
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Explaining {ticker}...", spinner="dots"):
+        diag = explain_ticker(ticker, config)
+
+    console.print()
+    _render_ticker_diagnostic(diag)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(diag.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
+def _render_strsi_picks(picks):
+    t = Table(box=box.SIMPLE_HEAD, title="SuperTrend + RSI — signals")
+    t.add_column("#", justify="right", style="cyan")
+    t.add_column("Ticker", style="bold")
+    t.add_column("Dir")
+    t.add_column("Score", justify="right")
+    t.add_column("Grade")
+    t.add_column("RSI", justify="right")
+    t.add_column("ST age", justify="right")
+    t.add_column("Reasons")
+    for i, p in enumerate(picks, 1):
+        s = p.signal
+        t.add_row(
+            str(i),
+            s.symbol.replace(".NS", ""),
+            f"[green]{s.direction}[/green]" if s.direction == "BUY" else f"[red]{s.direction}[/red]",
+            str(s.score),
+            f"{s.grade_stars} {s.grade}",
+            f"{s.rsi:.1f}",
+            str(s.flip_age),
+            "; ".join(s.reasons[:3]),
+        )
+    console.print(t)
+
+
+def _render_strsi_signal(sig):
+    status = sig.direction if not sig.rejected else f"{sig.direction} (FILTERED)"
+    console.print(Panel.fit(
+        f"[bold]{sig.symbol.replace('.NS', '')}[/bold] — {status}\n"
+        f"Score: [bold]{sig.score}[/bold]/100 · {sig.grade_stars} {sig.grade}\n"
+        f"RSI {sig.rsi:.1f} · Close {sig.close:.2f} · ST {sig.supertrend_value:.2f} · Flip age {sig.flip_age}",
+        title="SuperTrend + RSI",
+    ))
+    if sig.rejected and sig.reject_reason:
+        console.print(f"[red]Filtered:[/red] {sig.reject_reason}")
+    if not sig.mandatory_pass and sig.reject_reason:
+        console.print(f"[yellow]No signal:[/yellow] {sig.reject_reason}")
+
+    c = sig.components
+    t = Table(box=box.SIMPLE_HEAD, title="Component breakdown (raw / max)")
+    t.add_column("Component")
+    t.add_column("Raw", justify="right")
+    t.add_column("Max", justify="right")
+    for name, val, mx in [
+        ("SuperTrend freshness", c.supertrend_freshness, 40),
+        ("RSI 50 cross", c.rsi_cross, 25),
+        ("RSI strength", c.rsi_strength, 25),
+        ("RSI momentum", c.rsi_momentum, 15),
+        ("RSI MA cross", c.rsi_ma_cross, 15),
+        ("ST distance", c.st_distance, 15),
+        ("Candle strength", c.candle_strength, 15),
+        ("Volume", c.volume, 10),
+        ("EMA trend", c.ema_trend, 10),
+    ]:
+        t.add_row(name, f"{val:.0f}", str(mx))
+    t.add_row("[bold]Total[/bold]", f"[bold]{c.raw_total:.0f}[/bold]", "170")
+    console.print(t)
+
+    if sig.reasons:
+        console.print("[bold]Reasons[/bold]")
+        for r in sig.reasons:
+            console.print(f"  [green]✓[/green] {r}")
+
+
+@app.command("supertrend-rsi")
+def supertrend_rsi_cmd(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max signals to show."),
+    min_score: Optional[int] = typer.Option(None, "--min-score", help="Minimum score (0 = no floor)."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save BUY picks to paper book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen for SuperTrend + RSI crossover signals (BUY/SELL with confidence score)."""
+    from tradingagents.supertrend_rsi import STRATEGY_NAME, SuperTrendRSIPositionBook, screen_supertrend_rsi
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["strsi_top_n"] = top
+    if min_score is not None:
+        config["strsi_min_score"] = min_score
+
+    min_label = "none" if config["strsi_min_score"] <= 0 else str(config["strsi_min_score"])
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]supertrend_rsi[/cyan]\n"
+        "ST(10,3) crossover + RSI(14) confirmation + 9-component scoring\n"
+        "Filters: opposite flip, ATR, candle body, ST distance, volume\n"
+        f"Top [bold]{config['strsi_top_n']}[/bold] · Min score [bold]{min_label}[/bold] · Fresh flip ≤[bold]{config['strsi_mandatory_flip_max_age']}[/bold] bars",
+        title="SuperTrend + RSI",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_supertrend_rsi(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No SuperTrend+RSI signals matched criteria today.[/yellow]")
+        console.print("[dim]Try: tradingagents supertrend-rsi-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_strsi_picks(picks)
+    buys = sum(1 for p in picks if p.direction == "BUY")
+    sells = len(picks) - buys
+    console.print(f"\n[dim]{len(picks)} signal(s): {buys} BUY · {sells} SELL[/dim]")
+
+    if save:
+        book = SuperTrendRSIPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} BUY position(s) to supertrend_rsi[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents supertrend-rsi-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/supertrend-rsi[/bold]")
+
+    if export:
+        import csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "symbol", "direction", "score", "grade", "rsi", "flip_age", "reasons",
+            ])
+            w.writeheader()
+            for p in picks:
+                s = p.signal
+                w.writerow({
+                    "symbol": s.symbol,
+                    "direction": s.direction,
+                    "score": s.score,
+                    "grade": s.grade,
+                    "rsi": s.rsi,
+                    "flip_age": s.flip_age,
+                    "reasons": "; ".join(s.reasons),
+                })
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("supertrend-rsi-positions")
+def supertrend_rsi_positions():
+    """Show supertrend_rsi paper positions and stats."""
+    from tradingagents.supertrend_rsi import STRATEGY_NAME, SuperTrendRSIPositionBook
+
+    book = SuperTrendRSIPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No ST+RSI positions yet. Run [bold]tradingagents supertrend-rsi[/bold] to screen and save.",
+            title="supertrend_rsi",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Score", justify="right")
+        t.add_column("Age", justify="right")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Trail ₹", justify="right")
+        t.add_column("RSI", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                str(p.get("signal_score", 0)),
+                str(p.get("flip_age", "—")),
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+                f"{p.get('rsi', 0):.1f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed ST+RSI positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed ST+RSI trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents supertrend-rsi-report[/bold]")
+
+
+@app.command("supertrend-rsi-daily")
+def supertrend_rsi_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily SuperTrend+RSI portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.supertrend_rsi import (
+        ReplacementProposal,
+        SuperTrendRSIPaperTradeManager,
+        run_supertrend_rsi_daily,
+    )
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full ({config['strsi_max_positions']}).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]ST+RSI daily run...", spinner="dots") as status:
+        report = run_supertrend_rsi_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]supertrend_rsi daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · BUY picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="ST+RSI daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents supertrend-rsi-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents supertrend-rsi-report[/bold]")
+
+
+@app.command("supertrend-rsi-approve")
+def supertrend_rsi_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+):
+    """Approve pending ST+RSI portfolio replacement proposals."""
+    from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
+    from tradingagents.supertrend_rsi import SuperTrendRSIPaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    manager = SuperTrendRSIPaperTradeManager(config)
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[yellow]No pending ST+RSI replacement proposals.[/yellow]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_supertrend_rsi(config) if p.direction == "BUY"}
+    approved = 0
+    for proposal in pending:
+        pick = picks.get(proposal.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = manager.approve_replacement(proposal.id, pick)
+        else:
+            console.print(
+                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+                f"(score {proposal.close_score:.0f}) with "
+                f"[bold]{proposal.new_stock_name}[/bold] "
+                f"(score {proposal.new_signal_score})?"
+            )
+            if questionary.confirm("Approve?", default=False).ask():
+                ok = manager.approve_replacement(proposal.id, pick)
+        if ok:
+            approved += 1
+            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
+
+    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+
+
+@app.command("supertrend-rsi-report")
+def supertrend_rsi_report():
+    """Show latest ST+RSI daily portfolio report."""
+    from tradingagents.supertrend_rsi import SuperTrendRSIPaperTradeManager
+
+    manager = SuperTrendRSIPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if report is None:
+        console.print("[yellow]No daily reports yet. Run tradingagents supertrend-rsi-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]supertrend_rsi daily report[/bold]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="ST+RSI report",
+    ))
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  exit {e['ticker']} · {e['reason']}")
+
+
+@app.command("supertrend-rsi-explain")
+def supertrend_rsi_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed SuperTrend+RSI signal analysis for one ticker."""
+    from tradingagents.supertrend_rsi import explain_supertrend_rsi
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        sig = explain_supertrend_rsi(ticker, config)
+
+    console.print()
+    _render_strsi_signal(sig)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(sig.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,10 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/", label: "Overview" },
+  { href: "/swing", label: "Swing desk" },
+  { href: "/momentum", label: "Momentum desk" },
+  { href: "/nss", label: "NSS desk" },
+  { href: "/supertrend-rsi", label: "ST+RSI desk" },
   { href: "/screens", label: "Screens" },
   { href: "/positions", label: "Positions" },
 ];

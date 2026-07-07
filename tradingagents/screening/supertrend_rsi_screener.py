@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from tradingagents.screening.prices import download_history
 from tradingagents.screening.supertrend_rsi_engine import (
@@ -41,6 +41,7 @@ class SuperTrendRSIPick:
 def screen_supertrend_rsi(
     config: dict,
     progress: Optional[Callable[[str], None]] = None,
+    price_data: Optional[Dict[str, "pd.DataFrame"]] = None,
 ) -> List[SuperTrendRSIPick]:
     def _log(msg: str):
         logger.info(msg)
@@ -57,8 +58,9 @@ def screen_supertrend_rsi(
     )
 
     period = config.get("strsi_history_period", "1y")
-    _log(f"Downloading {period} history for {len(universe)} tickers...")
-    price_data = download_history(universe, period=period)
+    if price_data is None:
+        _log(f"Downloading {period} history for {len(universe)} tickers...")
+        price_data = download_history(universe, period=period)
 
     min_cap_inr = float(config.get("strsi_min_market_cap_cr", 500.0)) * _CRORE
     min_traded_inr = float(config.get("strsi_min_avg_traded_value_cr", 1.0)) * _CRORE

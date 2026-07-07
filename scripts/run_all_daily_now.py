@@ -1,0 +1,71 @@
+"""Run all four daily paper-trade jobs from a single shared Yahoo download.
+
+Downloads 2y of daily history once for the shared NSE universe, then runs
+each strategy's daily job (screen -> process exits -> open/replace) against
+that data. All four paper books are synced in one pass.
+
+Exits still fetch per-open-position bars individually (small, only for names
+you already hold); the expensive 500-ticker screen download is shared here.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.momentum import run_momentum_daily
+from tradingagents.nss import run_nss_daily
+from tradingagents.screening.prices import download_history
+from tradingagents.screening.universe import load_universe
+from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
+from tradingagents.swing import run_swing_daily
+
+SHARED_PERIOD = "2y"
+
+
+def _summary(name: str, report: dict) -> None:
+    if report.get("skipped"):
+        print(f"  {name:<16} skipped ({report.get('reason')})")
+        return
+    print(
+        f"  {name:<16} picks={report.get('screener_picks', 0):<3} "
+        f"opened={len(report.get('opened', []))} "
+        f"exits={len(report.get('exits', []))} "
+        f"open_now={report.get('open_positions', 0)} "
+        f"pending={len(report.get('proposals', []))}"
+    )
+    if report.get("opened"):
+        print(f"      opened: {', '.join(report['opened'])}")
+
+
+def main() -> None:
+    config = DEFAULT_CONFIG.copy()
+    universe = load_universe(
+        csv_path=config.get("screen_universe_csv"),
+        cache_dir=config.get("data_cache_dir"),
+    )
+
+    print(f"Downloading {SHARED_PERIOD} history once for {len(universe)} tickers...")
+    price_data = download_history(universe, period=SHARED_PERIOD)
+    print(f"Got usable history for {len(price_data)} tickers.\n")
+
+    print("Syncing paper books (force=True):")
+    swing = run_swing_daily(config, force=True, price_data=price_data)
+    _summary("swing", swing)
+
+    momentum = run_momentum_daily(config, force=True, price_data=price_data)
+    _summary("momentum", momentum)
+
+    nss = run_nss_daily(config, force=True, price_data=price_data)
+    _summary("nss", nss)
+
+    strsi = run_supertrend_rsi_daily(config, force=True, price_data=price_data)
+    _summary("supertrend_rsi", strsi)
+
+    print("\nDone. Any pending replacements need approval via the *-approve commands.")
+
+
+if __name__ == "__main__":
+    main()

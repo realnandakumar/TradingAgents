@@ -1,15 +1,12 @@
 import { CandidatesTable } from "@/components/CandidatesTable";
-import { SetupNotice, EmptyState } from "@/components/SetupNotice";
-import { getScreens } from "@/lib/data";
+import { EmptyState } from "@/components/SetupNotice";
+import { getScreens } from "@/lib/paper-server";
 import { timeAgo } from "@/lib/format";
-import { isConfigured } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScreensPage() {
-  if (!isConfigured()) return <SetupNotice />;
-
-  const screens = await getScreens(30);
+  const screens = getScreens(30);
 
   return (
     <div className="space-y-6">

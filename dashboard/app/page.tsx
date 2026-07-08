@@ -1,17 +1,15 @@
 import { CandidatesTable } from "@/components/CandidatesTable";
 import { ReliabilityChart } from "@/components/ReliabilityChart";
-import { SetupNotice, EmptyState } from "@/components/SetupNotice";
+import { EmptyState } from "@/components/SetupNotice";
 import { StatCard } from "@/components/StatCard";
-import { getLatestPaper, getLatestScreen } from "@/lib/data";
+import { getLatestPaper, getLatestScreen } from "@/lib/paper-server";
 import { inr, pct, timeAgo } from "@/lib/format";
-import { isConfigured } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
-  if (!isConfigured()) return <SetupNotice />;
-
-  const [paper, screen] = await Promise.all([getLatestPaper(), getLatestScreen()]);
+  const paper = getLatestPaper();
+  const screen = getLatestScreen();
   const stats = paper?.data.stats;
   const o = stats?.overall;
 

@@ -1,17 +1,14 @@
 import { SignalList } from "@/components/Badges";
 import { OpenPositionsLive } from "@/components/OpenPositionsLive";
-import { SetupNotice, EmptyState } from "@/components/SetupNotice";
-import { getLatestPaper } from "@/lib/data";
+import { EmptyState } from "@/components/SetupNotice";
+import { getLatestPaper } from "@/lib/paper-server";
 import { pctFromFraction, shortSymbol } from "@/lib/format";
-import { isConfigured } from "@/lib/supabase";
 import type { Position } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function PositionsPage() {
-  if (!isConfigured()) return <SetupNotice />;
-
-  const paper = await getLatestPaper();
+  const paper = getLatestPaper();
   const positions = paper?.data.positions ?? [];
   const open = positions.filter((p) => p.status === "open");
   const closed = positions.filter((p) => p.status === "closed");
@@ -26,7 +23,7 @@ export default async function PositionsPage() {
       </div>
 
       {positions.length === 0 ? (
-        <EmptyState title="No paper positions yet" hint="Bullish screen calls open positions here." />
+        <EmptyState title="No paper positions yet" hint="Run `tradingagents screen` to open positions here." />
       ) : (
         <>
           <section className="card p-5">

@@ -33,6 +33,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PAPER_CAPITAL":        "paper_capital",
     "TRADINGAGENTS_PAPER_MAX_POSITIONS":  "paper_max_positions",
     "TRADINGAGENTS_PAPER_HOLDING_DAYS":   "paper_holding_days",
+    "TRADINGAGENTS_PAPER_SNAPSHOT_PATH":  "paper_snapshot_path",
+    "TRADINGAGENTS_PAPER_SCREENS_PATH":   "paper_screens_path",
     # Swing screener knobs
     "TRADINGAGENTS_SWING_HISTORY_PERIOD": "swing_history_period",
     "TRADINGAGENTS_SWING_MIN_MARKET_CAP_CR": "swing_min_market_cap_cr",
@@ -160,6 +162,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "paper_max_positions": 20,            # equal-weight sizing divisor
     "paper_holding_days": 20,             # trading days to hold before scoring
     "paper_benchmark": "^NSEI",           # alpha baseline for paper trades
+    # Offline dashboard snapshots (local JSON — no Supabase required)
+    "paper_snapshot_path": os.path.join(_TRADINGAGENTS_HOME, "paper", "paper_snapshot.json"),
+    "paper_screens_path": os.path.join(_TRADINGAGENTS_HOME, "paper", "screens.json"),
+    "paper_screens_history": 30,          # how many screen runs to retain locally
     # --- Swing trading screener (NSE) ---
     "swing_history_period": "2y",         # lookback for 52-week low check
     "swing_supertrend_period": 10,

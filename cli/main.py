@@ -1328,26 +1328,20 @@ def analyze(
 
 @app.command()
 def sync():
-    """Push the current paper book to the Supabase-backed dashboard.
+    """Refresh the local dashboard snapshot from the current paper book.
 
+    Re-marks the book to market and writes a fresh paper snapshot to local JSON.
     Useful after positions close (e.g. from a scheduled mark-to-market) without
-    re-running a full screen. No-op if Supabase credentials aren't set."""
+    re-running a full screen. Runs fully offline — no Supabase required."""
     from tradingagents.paper.book import PaperBook
-    from tradingagents.sync import SupabaseSync, paper_snapshot
+    from tradingagents.paper.snapshots import save_paper_snapshot
 
-    client = SupabaseSync()
-    if not client.configured:
-        console.print(
-            "[yellow]Supabase not configured.[/yellow] Set SUPABASE_URL and "
-            "SUPABASE_SERVICE_KEY (see dashboard/SETUP.md) to enable the dashboard."
-        )
-        raise typer.Exit()
-
-    book = PaperBook(DEFAULT_CONFIG.copy())
+    config = DEFAULT_CONFIG.copy()
+    book = PaperBook(config)
     book.mark_to_market()
-    ok = client.push("paper", paper_snapshot(book))
-    console.print("[green]Synced paper book to dashboard.[/green]" if ok
-                  else "[red]Sync failed — check logs.[/red]")
+    path = save_paper_snapshot(config, book)
+    console.print(f"[green]Refreshed dashboard snapshot.[/green] [dim]({path})[/dim]")
+    console.print("[dim]View:[/dim] [bold]http://localhost:3000/positions[/bold]")
 
 
 @app.callback(invoke_without_command=True)

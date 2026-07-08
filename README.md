@@ -52,7 +52,7 @@
 
 <div align="center">
 
-🚀 [TradingAgents](#tradingagents-framework) | ⚡ [Installation & CLI](#installation-and-cli) | 🎬 [Demo](https://www.youtube.com/watch?v=90gr5lwjIho) | 📦 [Package Usage](#tradingagents-package) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
+🚀 [TradingAgents](#tradingagents-framework) | ⚡ [Installation & CLI](#installation-and-cli) | 🇮🇳 [India Screeners](#india-screeners--paper-trading) | 🎬 [Demo](https://www.youtube.com/watch?v=90gr5lwjIho) | 📦 [Package Usage](#tradingagents-package) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
 
 </div>
 
@@ -196,6 +196,24 @@ no Supabase required.
 All screeners share the same Nifty-500 universe. Data is downloaded from Yahoo
 Finance once per run (or once across all screeners via the combined runners below).
 
+### Quick start
+
+```bash
+pip install .
+
+# Screen all four technical strategies (one Yahoo download):
+python scripts/run_all_screeners_now.py
+
+# Run daily paper-trade jobs for all four desks:
+python scripts/run_all_daily_now.py
+
+# Launch the local dashboard (reads ~/.tradingagents/ JSON — no Supabase):
+cd dashboard && npm install && npm run dev   # http://localhost:3000
+
+# RS screener with AI analysis (needs OPENAI_API_KEY):
+tradingagents screen --top 10
+```
+
 ### Legacy RS screener (AI-assisted)
 
 The original funnel: `Nifty 500 → relative strength vs Nifty → technical pattern
@@ -277,6 +295,17 @@ npm run dev          # http://localhost:3000
 
 Run `tradingagents screen` (RS) or any strategy's daily job to refresh the data,
 then reload the dashboard.
+
+Local data lives under `~/.tradingagents/`:
+
+| Path | Contents |
+|------|----------|
+| `paper/paper_snapshot.json` | RS paper book snapshot for `/` and `/positions` |
+| `paper/screens.json` | RS screen history for `/screens` |
+| `swing/positions.json` | Swing desk |
+| `momentum/positions.json` | Momentum desk |
+| `nss/positions.json` | NSS desk |
+| `supertrend_rsi/positions.json` | SuperTrend+RSI desk |
 
 ### Configuration
 

@@ -28,6 +28,7 @@
 # TradingAgents: Multi-Agents LLM Financial Trading Framework
 
 ## News
+- [2026-07] **India multi-strategy screeners** — Swing, Momentum, NSS, and SuperTrend+RSI desks with per-strategy paper trading, shared Yahoo download runners, and a fully offline local dashboard (no Supabase required).
 - [2026-05] **TradingAgents v0.2.5** released with the grounded Sentiment Analyst, GPT-5.5 etc. model coverage, Qwen/GLM/MiniMax dual-region support, `TRADINGAGENTS_*` env-var configurability with API-key auto-detection, remote Ollama support, non-US alpha benchmarks, and ticker path-traversal hardening. See [CHANGELOG.md](CHANGELOG.md) for the full list.
 - [2026-04] **TradingAgents v0.2.4** released with structured-output agents (Research Manager, Trader, Portfolio Manager), LangGraph checkpoint resume, persistent decision log, DeepSeek/Qwen/GLM/Azure provider support, Docker, and a Windows UTF-8 encoding fix.
 - [2026-03] **TradingAgents v0.2.3** released with multi-language support, GPT-5.4 family models, unified model catalog, backtesting date fidelity, and proxy support.
@@ -185,16 +186,22 @@ An interface will appear showing results as they load, letting you track the age
   <img src="assets/cli/cli_transaction.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>
 
-## India RS Screener + Paper Trading
+## India Screeners + Paper Trading
 
-Beyond analyzing a single ticker, you can automatically **screen the NSE universe
-for high relative-strength stocks**, deep-analyze the best ones, and **paper-trade
-the bullish calls** (no real money) to measure how reliable the system actually is.
+Beyond analyzing a single ticker, you can **screen the NSE universe** with
+multiple strategies, **paper-trade** the picks (no real money), and track P&L,
+win rate, and per-signal reliability on a **local dashboard** — fully offline,
+no Supabase required.
 
-The funnel: `Nifty 500 → relative strength vs Nifty → technical pattern engine
-(RSI breakout, breakout-soon squeeze, ascending triangle, cup-and-handle,
-pullback-in-uptrend) → composite rank → deep AI analysis on the top N →
-paper-trade & track P&L + alpha`.
+All screeners share the same Nifty-500 universe. Data is downloaded from Yahoo
+Finance once per run (or once across all screeners via the combined runners below).
+
+### Legacy RS screener (AI-assisted)
+
+The original funnel: `Nifty 500 → relative strength vs Nifty → technical pattern
+engine (RSI breakout, volume surge, breakout-soon squeeze, ascending triangle,
+cup-and-handle, pullback-in-uptrend) → composite rank → deep AI analysis on the
+top N → paper-trade bullish calls & track P&L + alpha`.
 
 ```bash
 # Preview the picks for free (no LLM calls):
@@ -203,20 +210,83 @@ tradingagents screen --preview
 # Run the full funnel: screen, analyze the top N, open paper positions:
 tradingagents screen --top 10
 
-# View the paper portfolio: open positions, P&L, win rate, and a
-# per-signal reliability breakdown (which patterns produced winners):
+# View the paper portfolio: open positions, P&L, win rate, per-signal reliability:
 tradingagents paper
+
+# Refresh the dashboard snapshot without re-screening:
+tradingagents sync
 ```
 
-Run `screen` periodically; each run also marks open paper positions to market and
-closes any that have reached their holding period, scoring return and alpha vs
-Nifty. Reliability stats become meaningful after a few weeks of runs.
+Each `screen` run marks open positions to market and closes any that have reached
+their holding period, scoring return and alpha vs Nifty.
 
-Configuration (see `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars):
-`screen_universe_csv`, `screen_benchmark`, `screen_top_n`, `screen_rs_min_percentile`,
-`paper_capital`, `paper_max_positions`, `paper_holding_days`. The universe loads
-from (1) a CSV you provide, (2) a live NSE Nifty-500 download, or (3) a bundled
-fallback list.
+### Technical screeners (no AI calls)
+
+Four rule-based screeners rank setups from the same universe. Each has its own
+paper book, daily job, and dashboard desk.
+
+| Strategy | CLI | Hold style | What it looks for |
+|----------|-----|------------|-------------------|
+| **Swing** | `tradingagents swing` | ~20 days | Supertrend flip, RSI 50–65, EMA20, volume, ADX |
+| **Momentum** | `tradingagents momentum` | 30–90 days | EMA50>EMA200, ST buy, MACD, ADX, continuation |
+| **NSS** | `tradingagents nss` | 30–90 days | Consolidation + breakout structure scoring |
+| **SuperTrend+RSI** | `tradingagents supertrend-rsi` | configurable | ST(10,3) crossover + RSI confirmation + 9-part score |
+
+Per-strategy commands (same pattern for all four):
+
+```bash
+tradingagents swing                    # screen + save picks
+tradingagents swing-positions          # open book + stats
+tradingagents swing-daily              # daily job: exits, opens, replacements
+tradingagents swing-report             # closed-trade summary
+```
+
+Replace `swing` with `momentum`, `nss`, or `supertrend-rsi` as needed.
+Use `*-explain TICKER` on NSS and SuperTrend+RSI to debug why a name passed or failed.
+
+### Run all screeners at once
+
+Because every strategy uses the same universe, you can download Yahoo data once
+and fan it out to all four technical screeners (or all four daily paper jobs):
+
+```bash
+python scripts/run_all_screeners_now.py   # screen all four strategies
+python scripts/run_all_daily_now.py       # run all four daily paper-trade jobs
+```
+
+### Local dashboard
+
+Results are written to `~/.tradingagents/` as JSON (paper books, screen snapshots).
+The Next.js dashboard reads those files directly — no cloud database setup.
+
+```bash
+cd dashboard
+npm install
+npm run dev          # http://localhost:3000
+```
+
+| Page | What it shows |
+|------|---------------|
+| `/` | RS screener overview — win rate, alpha, reliability chart |
+| `/screens` | History of RS screen runs and ranked candidates |
+| `/positions` | RS paper book — open/closed trades |
+| `/swing` | Swing desk blotter |
+| `/momentum` | Momentum desk blotter |
+| `/nss` | NSS desk blotter |
+| `/supertrend-rsi` | SuperTrend+RSI desk blotter |
+
+Run `tradingagents screen` (RS) or any strategy's daily job to refresh the data,
+then reload the dashboard.
+
+### Configuration
+
+See `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars. Key knobs:
+
+- **Universe:** `screen_universe_csv`, live NSE Nifty-500 download, or bundled fallback
+- **RS screener:** `screen_benchmark`, `screen_top_n`, `screen_rs_min_percentile`
+- **Paper (RS):** `paper_capital`, `paper_max_positions`, `paper_holding_days`
+- **Per-strategy:** `swing_*`, `momentum_*`, `nss_*`, `strsi_*` keys for hold windows,
+  position limits, stop/target R-multiples, and book paths
 
 > Pattern detection (especially cup-and-handle and ascending triangle) is heuristic
 > and approximate. The paper-trading layer exists precisely to measure which

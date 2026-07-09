@@ -1,8 +1,7 @@
-"""Run all four screeners from a single shared Yahoo download.
+"""Run all technical screeners from a single shared Yahoo download.
 
 Every strategy uses the same NSE universe, so we fetch 2y of daily history
 once (a superset of each strategy's lookback) and pass it to all screeners.
-This avoids downloading ~500 tickers four times.
 """
 from __future__ import annotations
 
@@ -15,6 +14,9 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.screening.momentum_screener import screen_momentum
 from tradingagents.screening.nss_screener import screen_nss
 from tradingagents.screening.prices import download_history
+from tradingagents.screening.trama_screener import screen_trama
+from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
+from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
 from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
 from tradingagents.screening.swing_screener import screen_swing
 from tradingagents.screening.universe import load_universe
@@ -29,7 +31,15 @@ def _print_picks(title: str, picks: list, kind: str = "pick") -> None:
     print("=" * 72)
     for i, p in enumerate(picks, 1):
         sym = p.symbol.replace(".NS", "")
-        if hasattr(p, "signal"):  # SuperTrend+RSI
+        if hasattr(p, "signal") and hasattr(p.signal, "projected_close_5d"):
+            s = p.signal
+            print(f"{i:>2}  {sym:<14} {s.direction:<4} prob={s.probability:.1f}% "
+                  f"proj5d={s.projected_close_5d:.2f} max5d={s.projected_max_high_5d:.2f}")
+        elif hasattr(p, "signal") and hasattr(p.signal, "cross_age") and not hasattr(p.signal, "flip_age"):
+            s = p.signal
+            print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.cross_age} "
+                  f"dist={s.dist_pct:+.1f}%")
+        elif hasattr(p, "signal"):  # SuperTrend+RSI
             s = p.signal
             print(f"{i:>2}  {sym:<14} {s.direction:<4} score={s.score:<3} "
                   f"RSI={s.rsi:.1f} age={s.flip_age}")
@@ -65,9 +75,19 @@ def main() -> None:
     strsi = screen_supertrend_rsi(config, price_data=price_data)
     _print_picks("SUPERTREND+RSI", strsi, kind="signal")
 
+    trama = screen_trama(config, price_data=price_data)
+    _print_picks("TRAMA", trama, kind="signal")
+
+    nwe = screen_nw_envelope(config, price_data=price_data)
+    _print_picks("NW ENVELOPE", nwe, kind="signal")
+
+    pf = screen_pattern_forecast(config, price_data=price_data)
+    _print_picks("PATTERN FORECAST", pf, kind="pick")
+
     print("\n" + "=" * 72)
     print(f"TOTAL: swing={len(swing)} momentum={len(momentum)} "
-          f"nss={len(nss)} supertrend_rsi={len(strsi)}")
+          f"nss={len(nss)} supertrend_rsi={len(strsi)} trama={len(trama)} "
+          f"nw_envelope={len(nwe)} pattern_forecast={len(pf)}")
     print("=" * 72)
 
 

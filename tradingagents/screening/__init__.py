@@ -6,4 +6,8 @@ Public entry points:
 - ``rank_by_relative_strength``(relative_strength.py)
 - ``score_patterns``           (patterns.py)   -- per-ticker technical signals
 - ``run_screen``               (batch_runner.py) -- full funnel + paper trades
+- ``screen_swing``             (swing_screener.py) -- Supertrend swing screener
+- ``screen_trama``             (trama_screener.py) -- LuxAlgo TRAMA close crossover
+- ``screen_nw_envelope``       (nw_envelope_screener.py) -- LuxAlgo NWE contrarian crosses
+- ``screen_pattern_forecast``  (pattern_forecast_screener.py) -- 2y analogue projection
 """

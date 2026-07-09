@@ -3089,5 +3089,1148 @@ def supertrend_rsi_explain(
         console.print(f"\n[green]Exported to {export}[/green]")
 
 
+def _render_trama_picks(picks) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Symbol", style="cyan", no_wrap=True)
+    table.add_column("Dir", justify="center", width=5)
+    table.add_column("Age", justify="right", width=4)
+    table.add_column("Close", justify="right")
+    table.add_column("TRAMA", justify="right")
+    table.add_column("Dist%", justify="right")
+    table.add_column("Remark")
+    for i, p in enumerate(picks, 1):
+        s = p.signal
+        dir_style = "green" if s.direction == "BUY" else "red"
+        table.add_row(
+            str(i),
+            s.symbol.replace(".NS", ""),
+            f"[{dir_style}]{s.direction}[/{dir_style}]",
+            str(s.cross_age),
+            f"{s.close:,.2f}",
+            f"{s.trama:,.2f}",
+            f"{s.dist_pct:+.2f}",
+            s.remark,
+        )
+    console.print(table)
+
+
+def _render_trama_signal(sig) -> None:
+    style = "green" if sig.direction == "BUY" else ("red" if sig.direction == "SELL" else "yellow")
+    console.print(Panel.fit(
+        f"[bold {style}]{sig.direction}[/bold {style}]  {sig.symbol}\n"
+        f"{sig.remark}",
+        title="TRAMA signal",
+    ))
+    if sig.rejected:
+        console.print(f"[yellow]Rejected:[/yellow] {sig.reject_reason}")
+        return
+    console.print(
+        f"  close={sig.close:,.2f}  trama={sig.trama:,.2f}  "
+        f"dist={sig.dist_pct:+.2f}%  age={sig.cross_age}"
+    )
+    if sig.reasons:
+        console.print("[bold]Remarks[/bold]")
+        for r in sig.reasons:
+            console.print(f"  [green]·[/green] {r}")
+
+
+def _render_pattern_forecast_picks(picks) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Symbol", style="cyan", no_wrap=True)
+    table.add_column("Stock", no_wrap=True)
+    table.add_column("Dir", justify="center", width=5)
+    table.add_column("Prob%", justify="right", width=6)
+    table.add_column("Score", justify="right", width=7)
+    table.add_column("R:R", justify="right", width=5)
+    table.add_column("Close", justify="right")
+    table.add_column("Proj 5d", justify="right")
+    table.add_column("Max 5d", justify="right")
+    table.add_column("Move%", justify="right")
+    table.add_column("Max%", justify="right")
+    table.add_column("SL", justify="right")
+    table.add_column("Analogue", no_wrap=True)
+    for i, p in enumerate(picks, 1):
+        s = p.signal
+        dir_style = "green" if s.direction == "UP" else "red"
+        table.add_row(
+            str(i),
+            s.symbol.replace(".NS", ""),
+            (p.stock_name or "")[:18],
+            f"[{dir_style}]{s.direction}[/{dir_style}]",
+            f"{s.probability:.1f}",
+            f"{s.composite_score:.3f}",
+            f"{s.risk_reward:.1f}",
+            f"{s.close:,.2f}",
+            f"{s.projected_close_5d:,.2f}",
+            f"{s.projected_max_high_5d:,.2f}",
+            f"{s.projected_move_pct:+.2f}",
+            f"{s.projected_max_pct:+.2f}",
+            f"{s.stop_loss:,.2f}" if s.stop_loss else "—",
+            s.analogue_end_date,
+        )
+    console.print(table)
+
+
+def _render_pattern_forecast_signal(sig) -> None:
+    style = "green" if sig.direction == "UP" else ("red" if sig.direction == "DOWN" else "yellow")
+    console.print(Panel.fit(
+        f"[bold {style}]{sig.direction}[/bold {style}]  {sig.symbol}\n"
+        f"{sig.remark}",
+        title="Pattern Forecast",
+    ))
+    if sig.rejected:
+        console.print(f"[yellow]Rejected:[/yellow] {sig.reject_reason}")
+        return
+    console.print(
+        f"  close={sig.close:,.2f}  proj_5d={sig.projected_close_5d:,.2f}  "
+        f"max_5d={sig.projected_max_high_5d:,.2f}  sl={sig.stop_loss:,.2f}  corr={sig.correlation:.3f}"
+    )
+    if sig.reasons:
+        console.print("[bold]Remarks[/bold]")
+        for r in sig.reasons:
+            console.print(f"  [green]-[/green] {r}")
+
+
+@app.command()
+def trama(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max signals to show."),
+    max_age: Optional[int] = typer.Option(
+        None, "--max-age", help="Only crossovers within last N trading days (default 3).",
+    ),
+    length: Optional[int] = typer.Option(
+        None, "--length", help="TRAMA length (LuxAlgo default 100).",
+    ),
+    buy_only: bool = typer.Option(False, "--buy-only", help="Show BUY crosses only."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save BUY picks to paper book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen for LuxAlgo TRAMA close crossovers (within last 3 trading days).
+
+    BUY = close crossed above TRAMA.  SELL = close crossed below TRAMA.
+    Only fresh crosses (age < max-age) are shown, with clear remarks.
+    """
+    from tradingagents.screening.trama_engine import STRATEGY_NAME
+    from tradingagents.screening.trama_screener import screen_trama
+    from tradingagents.trama import TramaPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["trama_top_n"] = top
+    if max_age is not None:
+        config["trama_cross_max_age"] = max_age
+    if length is not None:
+        config["trama_length"] = length
+        config["trama_min_bars"] = length + 5
+    if buy_only:
+        config["trama_directions"] = "BUY"
+
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]trama[/cyan]\n"
+        "LuxAlgo TRAMA (TradingView default length=100, src=close)\n"
+        "Signal: closing candle crossover of the TRAMA line\n"
+        f"Freshness: cross within last [bold]{config['trama_cross_max_age']}[/bold] trading days\n"
+        f"Hold check: age 1–2 must still be on signal side · Top [bold]{config['trama_top_n']}[/bold]\n"
+        f"Directions: [bold]{config['trama_directions']}[/bold]",
+        title="TRAMA Crossover",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_trama(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No TRAMA close crossovers in the freshness window.[/yellow]")
+        console.print("[dim]Try: tradingagents trama-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_trama_picks(picks)
+    buys = sum(1 for p in picks if p.direction == "BUY")
+    sells = len(picks) - buys
+    console.print(f"\n[dim]{len(picks)} signal(s): {buys} BUY · {sells} SELL[/dim]")
+    console.print("[dim]Remark legend: BUY/SELL - crossover age - close vs TRAMA[/dim]")
+
+    if save:
+        book = TramaPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} BUY position(s) to trama[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents trama-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/trama[/bold]")
+
+    if export:
+        import csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "symbol", "direction", "cross_age", "close", "trama", "dist_pct", "remark",
+            ])
+            w.writeheader()
+            for p in picks:
+                s = p.signal
+                w.writerow({
+                    "symbol": s.symbol,
+                    "direction": s.direction,
+                    "cross_age": s.cross_age,
+                    "close": s.close,
+                    "trama": s.trama,
+                    "dist_pct": s.dist_pct,
+                    "remark": s.remark,
+                })
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("trama-positions")
+def trama_positions():
+    """Show TRAMA paper positions and stats."""
+    from tradingagents.trama import STRATEGY_NAME, TramaPositionBook
+
+    book = TramaPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No TRAMA positions yet. Run [bold]tradingagents trama[/bold] to screen and save.",
+            title="trama",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Age", justify="right")
+        t.add_column("Dist%", justify="right")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("TRAMA ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Trail ₹", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                str(p.get("cross_age", "—")),
+                f"{p.get('dist_pct', 0):+.1f}%",
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('trama_value', 0):.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed TRAMA positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed TRAMA trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents trama-report[/bold]")
+
+
+@app.command("trama-daily")
+def trama_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily TRAMA portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.trama import ReplacementProposal, run_trama_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full ({config['trama_max_positions']}).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]TRAMA daily run...", spinner="dots") as status:
+        report = run_trama_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]trama daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · BUY picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="TRAMA daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents trama-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents trama-report[/bold]")
+
+
+@app.command("trama-approve")
+def trama_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+):
+    """Approve pending TRAMA portfolio replacement proposals."""
+    from tradingagents.screening.trama_screener import screen_trama
+    from tradingagents.trama import TramaPaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    manager = TramaPaperTradeManager(config)
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[yellow]No pending TRAMA replacement proposals.[/yellow]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_trama(config) if p.direction == "BUY"}
+    approved = 0
+    for proposal in pending:
+        pick = picks.get(proposal.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = manager.approve_replacement(proposal.id, pick)
+        else:
+            console.print(
+                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+                f"(dist {proposal.close_score:.1f}%) with "
+                f"[bold]{proposal.new_stock_name}[/bold] "
+                f"(dist {proposal.new_signal_score:.1f}%, age {proposal.new_flip_age})?"
+            )
+            if questionary.confirm("Approve?", default=False).ask():
+                ok = manager.approve_replacement(proposal.id, pick)
+        if ok:
+            approved += 1
+            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
+
+    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+
+
+@app.command("trama-report")
+def trama_report():
+    """Show latest TRAMA daily portfolio report."""
+    from tradingagents.trama import TramaPaperTradeManager
+
+    manager = TramaPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if report is None:
+        console.print("[yellow]No daily reports yet. Run tradingagents trama-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]trama daily report[/bold]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="TRAMA report",
+    ))
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  exit {e['ticker']} · {e['reason']}")
+
+
+@app.command("trama-explain")
+def trama_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed TRAMA crossover analysis for one ticker (with remarks)."""
+    from tradingagents.screening.trama_engine import explain_trama
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        sig = explain_trama(ticker, config)
+
+    console.print()
+    _render_trama_signal(sig)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(sig.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
+def _render_nw_envelope_picks(picks) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Symbol", style="cyan", no_wrap=True)
+    table.add_column("Dir", justify="center", width=5)
+    table.add_column("Age", justify="right", width=4)
+    table.add_column("Close", justify="right")
+    table.add_column("Lower", justify="right")
+    table.add_column("Upper", justify="right")
+    table.add_column("Dist%", justify="right")
+    table.add_column("Remark")
+    for i, p in enumerate(picks, 1):
+        s = p.signal
+        dir_style = "green" if s.direction == "BUY" else "red"
+        table.add_row(
+            str(i),
+            s.symbol.replace(".NS", ""),
+            f"[{dir_style}]{s.direction}[/{dir_style}]",
+            str(s.cross_age),
+            f"{s.close:,.2f}",
+            f"{s.lower:,.2f}",
+            f"{s.upper:,.2f}",
+            f"{s.dist_pct:+.2f}",
+            s.remark,
+        )
+    console.print(table)
+
+
+def _render_nw_envelope_signal(sig) -> None:
+    style = "green" if sig.direction == "BUY" else ("red" if sig.direction == "SELL" else "yellow")
+    console.print(Panel.fit(
+        f"[bold {style}]{sig.direction}[/bold {style}]  {sig.symbol}\n"
+        f"{sig.remark}",
+        title="NW Envelope signal",
+    ))
+    if sig.rejected:
+        console.print(f"[yellow]Rejected:[/yellow] {sig.reject_reason}")
+        return
+    console.print(
+        f"  close={sig.close:,.2f}  mid={sig.middle:,.2f}  "
+        f"lower={sig.lower:,.2f}  upper={sig.upper:,.2f}  "
+        f"dist={sig.dist_pct:+.2f}%  age={sig.cross_age}"
+    )
+    if sig.reasons:
+        console.print("[bold]Remarks[/bold]")
+        for r in sig.reasons:
+            console.print(f"  [green]·[/green] {r}")
+
+
+@app.command("nw-envelope")
+def nw_envelope(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max signals to show."),
+    max_age: Optional[int] = typer.Option(
+        None, "--max-age", help="Only crossovers within last N trading days (default 3).",
+    ),
+    bandwidth: Optional[float] = typer.Option(
+        None, "--bandwidth", help="Gaussian bandwidth (LuxAlgo default 8.0).",
+    ),
+    mult: Optional[float] = typer.Option(
+        None, "--mult", help="MAE multiplier (LuxAlgo default 3.0).",
+    ),
+    lookback: Optional[int] = typer.Option(
+        None, "--lookback", help="Kernel lookback (LuxAlgo default 500).",
+    ),
+    buy_only: bool = typer.Option(False, "--buy-only", help="Show BUY crosses only."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save BUY picks to paper book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen for LuxAlgo Nadaraya-Watson Envelope contrarian crosses.
+
+    BUY = close crossed below lower band (oversold).  SELL = close crossed above upper.
+    """
+    from tradingagents.screening.nw_envelope_engine import STRATEGY_NAME
+    from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
+    from tradingagents.nw_envelope import NwEnvelopePositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["nwe_top_n"] = top
+    if max_age is not None:
+        config["nwe_cross_max_age"] = max_age
+    if bandwidth is not None:
+        config["nwe_bandwidth"] = bandwidth
+    if mult is not None:
+        config["nwe_mult"] = mult
+    if lookback is not None:
+        config["nwe_lookback"] = lookback
+    if buy_only:
+        config["nwe_directions"] = "BUY"
+
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]nw_envelope[/cyan]\n"
+        "LuxAlgo NWE (bw=8, mult=3, lookback=500, src=close)\n"
+        "Signal: contrarian close crossover of upper/lower envelope\n"
+        f"Freshness: cross within last [bold]{config['nwe_cross_max_age']}[/bold] trading days\n"
+        f"Hold check: age 1–2 must still be on signal side · Top [bold]{config['nwe_top_n']}[/bold]\n"
+        f"Directions: [bold]{config['nwe_directions']}[/bold]",
+        title="NW Envelope",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_nw_envelope(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No NWE envelope crossovers in the freshness window.[/yellow]")
+        console.print("[dim]Try: tradingagents nw-envelope-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_nw_envelope_picks(picks)
+    buys = sum(1 for p in picks if p.direction == "BUY")
+    sells = len(picks) - buys
+    console.print(f"\n[dim]{len(picks)} signal(s): {buys} BUY · {sells} SELL[/dim]")
+    console.print("[dim]Remark legend: BUY/SELL - crossover age - close vs band[/dim]")
+
+    if save:
+        book = NwEnvelopePositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} BUY position(s) to nw_envelope[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents nw-envelope-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/nw-envelope[/bold]")
+
+    if export:
+        import csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "symbol", "direction", "cross_age", "close", "middle", "lower", "upper",
+                "dist_pct", "remark",
+            ])
+            w.writeheader()
+            for p in picks:
+                s = p.signal
+                w.writerow({
+                    "symbol": s.symbol,
+                    "direction": s.direction,
+                    "cross_age": s.cross_age,
+                    "close": s.close,
+                    "middle": s.middle,
+                    "lower": s.lower,
+                    "upper": s.upper,
+                    "dist_pct": s.dist_pct,
+                    "remark": s.remark,
+                })
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("nw-envelope-positions")
+def nw_envelope_positions():
+    """Show NW Envelope paper positions and stats."""
+    from tradingagents.nw_envelope import STRATEGY_NAME, NwEnvelopePositionBook
+
+    book = NwEnvelopePositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No NW Envelope positions yet. Run [bold]tradingagents nw-envelope[/bold] to screen and save.",
+            title="nw_envelope",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Age", justify="right")
+        t.add_column("Dist%", justify="right")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Lower ₹", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Trail ₹", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                str(p.get("cross_age", "—")),
+                f"{p.get('dist_pct', 0):+.1f}%",
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('nwe_lower', 0):.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed NW Envelope positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed NW Envelope trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents nw-envelope-report[/bold]")
+
+
+@app.command("nw-envelope-daily")
+def nw_envelope_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily NW Envelope portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.nw_envelope import ReplacementProposal, run_nw_envelope_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full ({config['nwe_max_positions']}).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]NW Envelope daily run...", spinner="dots") as status:
+        report = run_nw_envelope_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]nw_envelope daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · BUY picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="NW Envelope daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents nw-envelope-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents nw-envelope-report[/bold]")
+
+
+@app.command("nw-envelope-approve")
+def nw_envelope_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+):
+    """Approve pending NW Envelope portfolio replacement proposals."""
+    from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
+    from tradingagents.nw_envelope import NwEnvelopePaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    manager = NwEnvelopePaperTradeManager(config)
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[yellow]No pending NW Envelope replacement proposals.[/yellow]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_nw_envelope(config) if p.direction == "BUY"}
+    approved = 0
+    for proposal in pending:
+        pick = picks.get(proposal.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = manager.approve_replacement(proposal.id, pick)
+        else:
+            console.print(
+                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+                f"(dist {proposal.close_score:.1f}%) with "
+                f"[bold]{proposal.new_stock_name}[/bold] "
+                f"(dist {proposal.new_signal_score:.1f}%, age {proposal.new_flip_age})?"
+            )
+            if questionary.confirm("Approve?", default=False).ask():
+                ok = manager.approve_replacement(proposal.id, pick)
+        if ok:
+            approved += 1
+            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
+
+    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+
+
+@app.command("nw-envelope-report")
+def nw_envelope_report():
+    """Show latest NW Envelope daily portfolio report."""
+    from tradingagents.nw_envelope import NwEnvelopePaperTradeManager
+
+    manager = NwEnvelopePaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if report is None:
+        console.print("[yellow]No daily reports yet. Run tradingagents nw-envelope-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]nw_envelope daily report[/bold]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="NW Envelope report",
+    ))
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  exit {e['ticker']} · {e['reason']}")
+
+
+@app.command("nw-envelope-explain")
+def nw_envelope_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed NW Envelope crossover analysis for one ticker (with remarks)."""
+    from tradingagents.screening.nw_envelope_engine import explain_nw_envelope
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        sig = explain_nw_envelope(ticker, config)
+
+    console.print()
+    _render_nw_envelope_signal(sig)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(sig.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
+@app.command("pattern-forecast")
+def pattern_forecast(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max picks to show (default 10)."),
+    min_corr: Optional[float] = typer.Option(
+        None, "--min-corr", help="Minimum analogue correlation (default 0.55).",
+    ),
+    window: Optional[int] = typer.Option(
+        None, "--window", help="Recent pattern window in trading days (default 20).",
+    ),
+    horizon: Optional[int] = typer.Option(
+        None, "--horizon", help="Forward projection horizon in trading days (default 5).",
+    ),
+    up_only: bool = typer.Option(False, "--up-only", help="Show UP projections only."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save UP picks to paper book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Find strongest 2y historical analogues and project 5-day direction + max high.
+
+    v1: Pearson correlation on daily returns (Echo-inspired). Top UP picks can be
+    saved to the 5-day paper desk with mandatory stop loss.
+    """
+    from tradingagents.screening.pattern_forecast_engine import STRATEGY_NAME
+    from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
+    from tradingagents.pattern_forecast import PatternForecastPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["pattern_forecast_top_n"] = top
+    if min_corr is not None:
+        config["pattern_forecast_min_correlation"] = min_corr
+    if window is not None:
+        config["pattern_forecast_window"] = window
+    if horizon is not None:
+        config["pattern_forecast_horizon"] = horizon
+    if up_only:
+        config["pattern_forecast_directions"] = "UP"
+
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v1.1 · [cyan]pattern-forecast[/cyan]\n"
+        "ATR stops · stock/weekly regime · Spearman consensus · 12% move cap\n"
+        f"Window: [bold]{config['pattern_forecast_window']}[/bold] bars · "
+        f"Project: [bold]{config['pattern_forecast_horizon']}[/bold] trading days\n"
+        f"Min correlation: [bold]{config['pattern_forecast_min_correlation']}[/bold] · "
+        f"Top [bold]{config['pattern_forecast_top_n']}[/bold] · "
+        f"Directions: [bold]{config['pattern_forecast_directions']}[/bold]",
+        title="Pattern Forecast",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_pattern_forecast(
+            config, progress=lambda m: status.update(f"[bold green]{m}")
+        )
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No pattern forecasts above the correlation floor.[/yellow]")
+        console.print("[dim]Try: tradingagents pattern-forecast-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_pattern_forecast_picks(picks)
+    ups = sum(1 for p in picks if p.direction == "UP")
+    downs = len(picks) - ups
+    console.print(f"\n[dim]{len(picks)} pick(s): {ups} UP · {downs} DOWN[/dim]")
+    console.print("[dim]Score = corr x hist_fwd x R:R. Desk saves UP picks only.[/dim]")
+
+    if save:
+        book = PatternForecastPositionBook(config)
+        up_picks = [p for p in picks if p.direction == "UP"]
+        saved = book.save_picks(up_picks)
+        console.print(f"\n[green]Saved {len(saved)} UP pick(s) to paper book[/green]")
+
+    if export:
+        import csv as _csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = _csv.writer(f)
+            w.writerow([
+                "symbol", "stock_name", "sector", "direction", "probability", "correlation",
+                "close", "projected_close_5d", "projected_max_high_5d",
+                "projected_move_pct", "projected_max_pct", "analogue_end_date", "remark",
+            ])
+            for p in picks:
+                s = p.signal
+                w.writerow([
+                    s.symbol.replace(".NS", ""), p.stock_name, p.sector,
+                    s.direction, s.probability, s.correlation,
+                    s.close, s.projected_close_5d, s.projected_max_high_5d,
+                    s.projected_move_pct, s.projected_max_pct,
+                    s.analogue_end_date, s.remark,
+                ])
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
+@app.command("pattern-forecast-positions")
+def pattern_forecast_positions():
+    """Show Pattern Forecast paper positions and stats."""
+    from tradingagents.pattern_forecast import STRATEGY_NAME, PatternForecastPositionBook
+
+    book = PatternForecastPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No Pattern Forecast positions yet. Run [bold]tradingagents pattern-forecast-daily[/bold].",
+            title="pattern-forecast",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Score", justify="right")
+        t.add_column("R:R", justify="right")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("SL ₹", justify="right")
+        t.add_column("Max 5d ₹", justify="right")
+        t.add_column("Proj 5d ₹", justify="right")
+        t.add_column("Analogue")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                f"{p.get('probability', 0):.1f}",
+                f"{p.get('composite_score', 0):.3f}",
+                f"{p.get('risk_reward', 0):.1f}",
+                f"{p['entry_price']:,.2f}",
+                f"{p['stop_loss']:,.2f}",
+                f"{p.get('target_max', 0):,.2f}",
+                f"{p.get('projected_close_5d', 0):,.2f}",
+                p.get("analogue_end_date") or "—",
+            )
+        console.print(t)
+
+    ov = stats.get("overall", {})
+    console.print(
+        f"\n[dim]Open {summary['open_positions']} · closed {stats.get('closed_positions', 0)} · "
+        f"win rate {ov.get('win_rate')}% · avg return {ov.get('avg_return')}%[/dim]"
+    )
+    if closed:
+        console.print(f"[dim]{len(closed)} closed trade(s)[/dim]")
+
+
+@app.command("pattern-forecast-daily")
+def pattern_forecast_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Run Pattern Forecast screener and update 5-day paper book."""
+    from tradingagents.pattern_forecast import run_pattern_forecast_daily
+    from tradingagents.pattern_forecast.manager import ReplacementProposal
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+            f"(prob {proposal.close_score:.1f}%) with "
+            f"[bold]{proposal.new_stock_name}[/bold] "
+            f"(prob {proposal.new_probability:.1f}%)?"
+        )
+        return questionary.confirm("Approve?", default=False).ask()
+
+    with console.status("[bold green]Running daily...", spinner="dots") as status:
+        report = run_pattern_forecast_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve if not yes else (lambda _: True),
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print("[yellow]Skipped: not an NSE trading day.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]pattern-forecast daily[/bold]\n"
+        f"UP picks: {report.get('screener_picks')} · opened: {len(report.get('opened', []))} · "
+        f"exits: {len(report.get('exits', []))} · open: {report.get('open_positions')}",
+        title="Pattern Forecast daily",
+    ))
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    for e in report.get("exits", []):
+        console.print(f"  exit {e['ticker']} · {e['reason']}")
+
+
+@app.command("pattern-forecast-approve")
+def pattern_forecast_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+):
+    """Approve pending Pattern Forecast replacement proposals."""
+    from tradingagents.pattern_forecast import PatternForecastPaperTradeManager
+    from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
+
+    config = DEFAULT_CONFIG.copy()
+    config["pattern_forecast_directions"] = "UP"
+    manager = PatternForecastPaperTradeManager(config)
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[yellow]No pending Pattern Forecast replacement proposals.[/yellow]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_pattern_forecast(config) if p.direction == "UP"}
+    approved = 0
+    for proposal in pending:
+        pick = picks.get(proposal.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's UP picks[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = manager.approve_replacement(proposal.id, pick)
+        else:
+            console.print(
+                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+                f"(prob {proposal.close_score:.1f}%) with "
+                f"[bold]{proposal.new_stock_name}[/bold] "
+                f"(prob {proposal.new_probability:.1f}%)?"
+            )
+            if questionary.confirm("Approve?", default=False).ask():
+                ok = manager.approve_replacement(proposal.id, pick)
+        if ok:
+            approved += 1
+            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
+
+    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+
+
+@app.command("pattern-forecast-report")
+def pattern_forecast_report():
+    """Show latest Pattern Forecast daily portfolio report."""
+    from tradingagents.pattern_forecast import PatternForecastPaperTradeManager
+
+    manager = PatternForecastPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if report is None:
+        console.print("[yellow]No daily reports yet. Run tradingagents pattern-forecast-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]pattern-forecast daily report[/bold]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="Pattern Forecast report",
+    ))
+
+
+@app.command("pattern-forecast-audit")
+def pattern_forecast_audit(
+    sample: int = typer.Option(100, "--sample", help="Max tickers to audit (0 = full universe)."),
+    step: int = typer.Option(5, "--step", help="Walk-forward step in trading days."),
+):
+    """Walk-forward accuracy audit on 2y history before trusting projections."""
+    from tradingagents.screening.pattern_forecast_audit import audit_universe
+    from tradingagents.screening.prices import download_history
+    from tradingagents.screening.universe import load_universe
+
+    config = DEFAULT_CONFIG.copy()
+    universe = load_universe(
+        csv_path=config.get("screen_universe_csv"),
+        cache_dir=config.get("data_cache_dir"),
+    )
+    if sample > 0:
+        universe = universe[:sample]
+
+    period = config.get("pattern_forecast_history_period", "2y")
+    benchmark = config.get("paper_benchmark", "^NSEI")
+    with console.status(f"[bold green]Downloading {period} for {len(universe)} tickers...", spinner="dots"):
+        tickers = list(universe[:sample] if sample > 0 else universe)
+        if benchmark not in tickers:
+            tickers.append(benchmark)
+        price_data = download_history(tickers, period=period)
+
+    with console.status("[bold green]Running walk-forward audit (v1.7)...", spinner="dots"):
+        summary = audit_universe(
+            config, price_data, step=step, up_only=True, benchmark_df=price_data.get(benchmark)
+        )
+
+    d = summary.to_dict()
+    console.print(Panel.fit(
+        f"[bold]Pattern Forecast v1.7 audit[/bold]\n"
+        f"Symbols: {d['symbols_tested']} · UP signals: {d['signals']}\n"
+        f"Direction accuracy: [bold]{d['direction_accuracy_pct']}%[/bold]\n"
+        f"Max-high touch rate: [bold]{d['max_touch_rate_pct']}%[/bold]\n"
+        f"Stop hit rate: [bold]{d['stop_hit_rate_pct']}%[/bold]\n"
+        f"Avg return (SL applied): [bold]{d['avg_return_pct']}%[/bold]\n"
+        f"Win rate: [bold]{d['win_rate_pct']}%[/bold]",
+        title="Audit",
+    ))
+    if d.get("by_probability_bucket"):
+        console.print("\n[bold]By probability bucket[/bold]")
+        bt = Table(box=box.SIMPLE_HEAD)
+        bt.add_column("Bucket")
+        bt.add_column("N", justify="right")
+        bt.add_column("Dir%", justify="right")
+        bt.add_column("Max%", justify="right")
+        bt.add_column("Win%", justify="right")
+        for bucket, stats in sorted(d["by_probability_bucket"].items(), reverse=True):
+            bt.add_row(
+                bucket,
+                str(stats["n"]),
+                f"{stats['direction_accuracy_pct']:.1f}",
+                f"{stats['max_touch_rate_pct']:.1f}",
+                f"{stats['win_rate_pct']:.1f}",
+            )
+        console.print(bt)
+
+
+@app.command("pattern-forecast-explain")
+def pattern_forecast_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed 2y analogue pattern forecast for one ticker."""
+    from tradingagents.screening.pattern_forecast_engine import explain_pattern_forecast
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        sig = explain_pattern_forecast(ticker, config)
+
+    console.print()
+    _render_pattern_forecast_signal(sig)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(sig.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
 if __name__ == "__main__":
     app()

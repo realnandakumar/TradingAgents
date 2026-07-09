@@ -9,6 +9,9 @@ const LINKS = [
   { href: "/momentum", label: "Momentum desk" },
   { href: "/nss", label: "NSS desk" },
   { href: "/supertrend-rsi", label: "ST+RSI desk" },
+  { href: "/trama", label: "TRAMA desk" },
+  { href: "/nw-envelope", label: "NW Envelope" },
+  { href: "/pattern-forecast", label: "Pattern desk" },
   { href: "/screens", label: "Screens" },
   { href: "/positions", label: "Positions" },
 ];

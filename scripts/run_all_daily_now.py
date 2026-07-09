@@ -1,11 +1,8 @@
-"""Run all four daily paper-trade jobs from a single shared Yahoo download.
+"""Run all daily paper-trade jobs from a single shared Yahoo download.
 
 Downloads 2y of daily history once for the shared NSE universe, then runs
 each strategy's daily job (screen -> process exits -> open/replace) against
-that data. All four paper books are synced in one pass.
-
-Exits still fetch per-open-position bars individually (small, only for names
-you already hold); the expensive 500-ticker screen download is shared here.
+that data. All strategy paper books are synced in one pass.
 """
 from __future__ import annotations
 
@@ -19,6 +16,9 @@ from tradingagents.momentum import run_momentum_daily
 from tradingagents.nss import run_nss_daily
 from tradingagents.screening.prices import download_history
 from tradingagents.screening.universe import load_universe
+from tradingagents.trama import run_trama_daily
+from tradingagents.nw_envelope import run_nw_envelope_daily
+from tradingagents.pattern_forecast import run_pattern_forecast_daily
 from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
 from tradingagents.swing import run_swing_daily
 
@@ -63,6 +63,15 @@ def main() -> None:
 
     strsi = run_supertrend_rsi_daily(config, force=True, price_data=price_data)
     _summary("supertrend_rsi", strsi)
+
+    trama = run_trama_daily(config, force=True, price_data=price_data)
+    _summary("trama", trama)
+
+    nwe = run_nw_envelope_daily(config, force=True, price_data=price_data)
+    _summary("nw_envelope", nwe)
+
+    pf = run_pattern_forecast_daily(config, force=True, price_data=price_data)
+    _summary("pattern_forecast", pf)
 
     print("\nDone. Any pending replacements need approval via the *-approve commands.")
 

@@ -19,7 +19,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,85 @@ def _load_from_path(path: Path) -> List[str]:
     if not symbols:
         raise ValueError(f"No symbol/ticker column found in {path}")
     return symbols
+
+
+def _field_map(fieldnames) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not fieldnames:
+        return out
+    for name in fieldnames:
+        if not name:
+            continue
+        key = name.strip().lower()
+        out[key] = name
+    return out
+
+
+def _parse_universe_records(text: str) -> Dict[str, Dict[str, str]]:
+    """Parse name/sector metadata keyed by normalised ``.NS`` symbol."""
+    reader = csv.DictReader(io.StringIO(text))
+    fields = _field_map(reader.fieldnames)
+    sym_col = fields.get("symbol") or fields.get("ticker")
+    if sym_col is None:
+        return {}
+
+    name_col = fields.get("name") or fields.get("company name")
+    sector_col = fields.get("sector") or fields.get("industry")
+
+    records: Dict[str, Dict[str, str]] = {}
+    for row in reader:
+        symbol = _normalise_symbol(row.get(sym_col, ""))
+        if not symbol:
+            continue
+        records[symbol] = {
+            "name": (row.get(name_col, "") if name_col else "").strip() or symbol.replace(".NS", ""),
+            "sector": (row.get(sector_col, "") if sector_col else "").strip() or "—",
+        }
+    return records
+
+
+def _resolve_universe_text(
+    csv_path: Optional[str],
+    cache_dir: Optional[str],
+    allow_download: bool,
+) -> Optional[str]:
+    """Return raw CSV text for the resolved universe source, if available."""
+    csv_path = csv_path or os.getenv("TRADINGAGENTS_NSE_UNIVERSE_CSV")
+
+    if csv_path:
+        p = Path(csv_path).expanduser()
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+
+    if allow_download and cache_dir:
+        day = datetime.now().strftime("%Y%m%d")
+        cache_path = Path(cache_dir) / f"nse_nifty500_{day}.csv"
+        if cache_path.exists():
+            return cache_path.read_text(encoding="utf-8")
+        try:
+            symbols = _download_nse_list(cache_dir)
+            if cache_path.exists():
+                return cache_path.read_text(encoding="utf-8")
+            # Download succeeded but cache path missing — rebuild minimal text.
+            return "Symbol\n" + "\n".join(s.replace(".NS", "") for s in symbols)
+        except Exception:
+            pass
+
+    if _FALLBACK_CSV.exists():
+        return _FALLBACK_CSV.read_text(encoding="utf-8")
+    return None
+
+
+def load_universe_metadata(
+    csv_path: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    allow_download: bool = True,
+) -> Dict[str, Dict[str, str]]:
+    """Return ``{symbol: {"name": ..., "sector": ...}}`` for the universe."""
+    text = _resolve_universe_text(csv_path, cache_dir, allow_download)
+    if text is None:
+        return {}
+    return _parse_universe_records(text)
 
 
 def _download_nse_list(cache_dir: Optional[str]) -> List[str]:

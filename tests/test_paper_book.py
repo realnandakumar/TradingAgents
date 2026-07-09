@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 def _book(tmp_path):
     return PaperBook({
         "paper_book_path": str(tmp_path / "book.json"),
-        "paper_capital": 1_000_000.0,
+        "desk_capital": 100_000.0,
         "paper_max_positions": 10,
         "paper_holding_days": 20,
     })
@@ -26,8 +26,9 @@ def test_open_position_sizes_equal_weight(tmp_path):
     book = _book(tmp_path)
     pos = book.open_position("HAL.NS", "Buy", 4000.0, "2026-06-01", signals=["rsi_breakout"])
     assert pos is not None
-    assert pos["alloc"] == pytest.approx(100_000.0)       # capital / max_positions
-    assert pos["shares"] == pytest.approx(25.0)           # alloc / entry_price
+    assert pos["alloc"] == pytest.approx(10_000.0)       # capital / max_positions
+    assert pos["shares"] == 3                             # round(10000/4000)
+    assert pos["notional"] == pytest.approx(12_000.0)
     assert book.has_open_position("HAL.NS")
 
 

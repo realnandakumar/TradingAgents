@@ -14,6 +14,13 @@ import yfinance as yf
 
 from .exits import evaluate_bar_exits
 from .trailing import latest_supertrend_buy_line, ratchet_stop
+from tradingagents.paper.sizing import (
+    compute_position_size,
+    ensure_sizing_fields,
+    leg_rupee_pnl,
+    skip_exit_for_entry_day,
+    total_rupee_pnl_from_legs,
+)
 from tradingagents.screening.swing_indicators import compute_trade_levels
 from tradingagents.swing.exits import ExitAction, ExitReason, trading_days_between
 
@@ -38,6 +45,7 @@ class SuperTrendRSIPositionBook:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.holding_days = int(cfg.get("strsi_holding_days", 20))
         self.max_positions = int(cfg.get("strsi_max_positions", 10))
+        self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
         self.t2_exit_pct = float(cfg.get("strsi_t2_exit_pct", 75.0))
         self.st_period = int(cfg.get("strsi_supertrend_period", 10))
         self.st_mult = float(cfg.get("strsi_supertrend_multiplier", 3.0))
@@ -74,6 +82,8 @@ class SuperTrendRSIPositionBook:
             if p.get("phase") != "runner":
                 p["phase"] = "runner"
                 changed = True
+        if ensure_sizing_fields(p, self.desk_capital, self.max_positions):
+            changed = True
         return changed
 
     def _load(self) -> dict:
@@ -147,6 +157,7 @@ class SuperTrendRSIPositionBook:
             logger.warning("Invalid trade levels for %s (entry=%s stop=%s)", pick.symbol, entry, stop)
             return None
 
+        sizing = compute_position_size(self.desk_capital, self.max_positions, levels["entry"])
         return {
             "strategy": STRATEGY_NAME,
             "ticker": pick.symbol,
@@ -155,6 +166,9 @@ class SuperTrendRSIPositionBook:
             "screen_date": screen_date,
             "last_screen_date": screen_date,
             "entry_price": levels["entry"],
+            "shares": sizing["shares"],
+            "alloc": sizing["alloc"],
+            "notional": sizing["notional"],
             "stop_loss": levels["stop_loss"],
             "stop_loss_pct": levels["stop_loss_pct"],
             "trailing_stop": levels["stop_loss"],
@@ -230,6 +244,8 @@ class SuperTrendRSIPositionBook:
             if p.get("status") != "open":
                 continue
             self._ensure_position_fields(p)
+            if skip_exit_for_entry_day(p["screen_date"], as_of):
+                continue
 
             start = p["screen_date"]
             end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -252,7 +268,9 @@ class SuperTrendRSIPositionBook:
 
     def _apply_action(self, p: dict, action: ExitAction, history: pd.DataFrame) -> dict:
         entry = float(p["entry_price"])
+        shares = float(p.get("shares") or 0)
         leg_return = (action.exit_price - entry) / entry if entry else 0.0
+        leg_rupee = leg_rupee_pnl(shares, entry, action.exit_price, action.exit_pct)
         event = {
             "ticker": p["ticker"],
             "reason": action.reason.value,
@@ -260,6 +278,7 @@ class SuperTrendRSIPositionBook:
             "exit_date": action.exit_date,
             "exit_pct": action.exit_pct,
             "leg_return": round(leg_return, 4),
+            "leg_rupee_pnl": leg_rupee,
             "partial": action.partial,
         }
 
@@ -270,6 +289,7 @@ class SuperTrendRSIPositionBook:
                 "pct": action.exit_pct,
                 "reason": action.reason.value,
                 "return": round(leg_return, 4),
+                "rupee_pnl": leg_rupee,
             })
             p["remaining_pct"] = round(float(p["remaining_pct"]) - action.exit_pct, 2)
             p["t2_partial_done"] = True
@@ -283,6 +303,7 @@ class SuperTrendRSIPositionBook:
             "pct": action.exit_pct,
             "reason": action.reason.value,
             "return": round(leg_return, 4),
+            "rupee_pnl": leg_rupee,
         })
         blended = self._blended_return(p)
         p["status"] = "closed"
@@ -291,10 +312,13 @@ class SuperTrendRSIPositionBook:
         p["exit_date"] = action.exit_date
         p["exit_reason"] = action.reason.value
         p["raw_return"] = round(blended, 4)
-        p["alpha_return"] = round(self._alpha(p["screen_date"], action.exit_date, blended), 4) if blended is not None else None
+        p["rupee_pnl"] = total_rupee_pnl_from_legs(p["partial_exits"])
+        alpha = self._alpha(p["screen_date"], action.exit_date, blended) if blended is not None else None
+        p["alpha_return"] = round(alpha, 4) if alpha is not None else None
         p["trading_days_held"] = trading_days_between(p["screen_date"], action.exit_date, history)
         p["outcome"] = self._outcome_for_reason(action.reason, blended)
         event["raw_return"] = p["raw_return"]
+        event["rupee_pnl"] = p["rupee_pnl"]
         event["outcome"] = p["outcome"]
         return event
 
@@ -358,7 +382,8 @@ class SuperTrendRSIPositionBook:
             price = self.latest_price(p["ticker"])
             if price is not None:
                 rem = float(p.get("remaining_pct", 100.0)) / 100.0
-                unrealized += (price - float(p["entry_price"])) * rem
+                shares = float(p.get("shares") or 0)
+                unrealized += (price - float(p["entry_price"])) * shares * rem
         return {
             "closed_now": len(summary.get("closed", [])),
             "partial_events": sum(1 for e in summary.get("closed", []) if e.get("partial")),
@@ -374,15 +399,18 @@ class SuperTrendRSIPositionBook:
         def _agg(trades: List[dict]) -> dict:
             n = len(trades)
             if n == 0:
-                return {"trades": 0, "win_rate": None, "avg_return": None, "avg_alpha": None}
+                return {"trades": 0, "win_rate": None, "avg_return": None,
+                        "avg_alpha": None, "total_pnl": 0.0}
             wins = sum(1 for t in trades if t.get("outcome") == "success")
             avg_ret = sum(t.get("raw_return") or 0 for t in trades) / n
             alphas = [t["alpha_return"] for t in trades if t.get("alpha_return") is not None]
+            pnl = sum(t.get("rupee_pnl") or 0 for t in trades)
             return {
                 "trades": n,
                 "win_rate": round(100 * wins / n, 1),
                 "avg_return": round(100 * avg_ret, 2),
                 "avg_alpha": round(100 * sum(alphas) / len(alphas), 2) if alphas else None,
+                "total_pnl": round(pnl, 2),
             }
 
         by_reason: Dict[str, dict] = {}

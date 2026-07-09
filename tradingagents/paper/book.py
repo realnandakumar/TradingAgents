@@ -25,6 +25,8 @@ from typing import Dict, List, Optional
 
 import yfinance as yf
 
+from .sizing import compute_position_size, leg_rupee_pnl
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
@@ -63,7 +65,7 @@ class PaperBook:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.capital = float(cfg.get("paper_capital", 1_000_000.0))   # virtual ₹
+        self.capital = float(cfg.get("desk_capital", cfg.get("paper_capital", 100_000.0)))
         self.max_positions = int(cfg.get("paper_max_positions", 20))
         self.holding_days = int(cfg.get("paper_holding_days", 20))
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
@@ -111,8 +113,10 @@ class PaperBook:
             return None
         if self.has_open_position(ticker):
             return None
-        alloc = self.capital / max(self.max_positions, 1)
-        shares = alloc / entry_price
+        sizing = compute_position_size(self.capital, self.max_positions, entry_price)
+        alloc = sizing["alloc"]
+        shares = sizing["shares"]
+        notional = sizing["notional"]
         order_dt = datetime.now(IST)
         exec_dt = _next_execution(order_dt)
         pos = {
@@ -125,8 +129,9 @@ class PaperBook:
             "execution_time": exec_dt.isoformat(timespec="minutes"),
             "execution_deferred": exec_dt > order_dt,
             "entry_price": round(entry_price, 2),
-            "shares": round(shares, 4),
-            "alloc": round(alloc, 2),
+            "shares": shares,
+            "alloc": alloc,
+            "notional": notional,
             # ATR-based trade levels (target & stoploss) for the buy list.
             "stoploss": (levels or {}).get("stoploss"),
             "target": (levels or {}).get("target"),
@@ -223,6 +228,7 @@ class PaperBook:
         p["raw_return"] = round(raw, 4)
         p["alpha_return"] = round(alpha, 4) if alpha is not None else None
         p["holding_days_actual"] = idx
+        p["rupee_pnl"] = leg_rupee_pnl(p["shares"], p["entry_price"], exit_price, 100.0)
 
     # ---- reporting -------------------------------------------------------
 
@@ -240,7 +246,7 @@ class PaperBook:
             avg_ret = sum(t["raw_return"] or 0 for t in trades) / n
             alphas = [t["alpha_return"] for t in trades if t["alpha_return"] is not None]
             avg_alpha = sum(alphas) / len(alphas) if alphas else None
-            pnl = sum((t["exit_price"] - t["entry_price"]) * t["shares"] for t in trades)
+            pnl = sum(t.get("rupee_pnl") or (t["exit_price"] - t["entry_price"]) * t["shares"] for t in trades)
             return {
                 "trades": n,
                 "win_rate": round(100 * wins / n, 1),

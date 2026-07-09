@@ -31,6 +31,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_SCREEN_RS_MIN_PCT":    "screen_rs_min_percentile",
     "TRADINGAGENTS_SCREEN_HISTORY_PERIOD": "screen_history_period",
     "TRADINGAGENTS_PAPER_CAPITAL":        "paper_capital",
+    "TRADINGAGENTS_DESK_CAPITAL":         "desk_capital",
     "TRADINGAGENTS_PAPER_MAX_POSITIONS":  "paper_max_positions",
     "TRADINGAGENTS_PAPER_HOLDING_DAYS":   "paper_holding_days",
     "TRADINGAGENTS_PAPER_SNAPSHOT_PATH":  "paper_snapshot_path",
@@ -44,6 +45,27 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_SWING_TOP_N": "swing_top_n",
     "TRADINGAGENTS_SWING_FLIP_LOOKBACK": "swing_flip_lookback_sessions",
     "TRADINGAGENTS_SWING_BOOK_PATH": "swing_book_path",
+    # TRAMA crossover screener
+    "TRADINGAGENTS_TRAMA_LENGTH": "trama_length",
+    "TRADINGAGENTS_TRAMA_CROSS_MAX_AGE": "trama_cross_max_age",
+    "TRADINGAGENTS_TRAMA_TOP_N": "trama_top_n",
+    "TRADINGAGENTS_TRAMA_HISTORY_PERIOD": "trama_history_period",
+    "TRADINGAGENTS_TRAMA_BOOK_PATH": "trama_book_path",
+    "TRADINGAGENTS_TRAMA_MAX_POSITIONS": "trama_max_positions",
+    # NW Envelope screener
+    "TRADINGAGENTS_NWE_BANDWIDTH": "nwe_bandwidth",
+    "TRADINGAGENTS_NWE_MULT": "nwe_mult",
+    "TRADINGAGENTS_NWE_LOOKBACK": "nwe_lookback",
+    "TRADINGAGENTS_NWE_CROSS_MAX_AGE": "nwe_cross_max_age",
+    "TRADINGAGENTS_NWE_TOP_N": "nwe_top_n",
+    "TRADINGAGENTS_NWE_HISTORY_PERIOD": "nwe_history_period",
+    "TRADINGAGENTS_NWE_BOOK_PATH": "nwe_book_path",
+    "TRADINGAGENTS_NWE_MAX_POSITIONS": "nwe_max_positions",
+    "TRADINGAGENTS_PATTERN_FORECAST_HISTORY_PERIOD": "pattern_forecast_history_period",
+    "TRADINGAGENTS_PATTERN_FORECAST_TOP_N": "pattern_forecast_top_n",
+    "TRADINGAGENTS_PATTERN_FORECAST_MIN_CORRELATION": "pattern_forecast_min_correlation",
+    "TRADINGAGENTS_PATTERN_FORECAST_BOOK_PATH": "pattern_forecast_book_path",
+    "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
 }
 
 
@@ -158,7 +180,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "screen_rs_min_percentile": 50.0,     # gate: keep top X% by relative strength
     "screen_top_n": 10,                   # how many to deep-analyze with the AI
     # Paper book (no real money): used to measure reliability of the calls.
-    "paper_capital": 1_000_000.0,         # virtual ₹ portfolio size
+    "desk_capital": 100_000.0,            # virtual ₹ per strategy desk
+    "paper_capital": 100_000.0,           # legacy RS paper book (same per-desk size)
     "paper_max_positions": 20,            # equal-weight sizing divisor
     "paper_holding_days": 20,             # trading days to hold before scoring
     "paper_benchmark": "^NSEI",           # alpha baseline for paper trades
@@ -247,7 +270,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "nss_breakout_lookback": 20,
     "nss_breakout_fresh_sessions": 3,
     "nss_volume_lookback": 20,
-    "nss_volume_mult": 1.5,
+    "nss_volume_mult": 1.2,
     "nss_rsi_period": 14,
     "nss_rsi_min": 45.0,
     "nss_rsi_max": 65.0,
@@ -263,7 +286,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "nss_weight_volume": 15,
     "nss_weight_momentum": 10,
     "nss_weight_risk": 5,
-    "nss_min_score": 55.0,
+    "nss_min_score": 50.0,
     "nss_top_n": 20,
     "nss_max_positions": 20,
     "nss_min_holding_days": 30,
@@ -330,6 +353,103 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "strsi_pending_path": os.path.join(_TRADINGAGENTS_HOME, "supertrend_rsi", "pending_replacements.json"),
     "strsi_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "supertrend_rsi", "daily"),
     "strsi_run_times": ["09:30", "11:45", "14:30"],
+    # TRAMA Crossover (LuxAlgo) — close crosses TRAMA within last N days
+    "trama_history_period": "1y",
+    "trama_length": 100,                  # LuxAlgo TradingView default
+    "trama_min_bars": 105,                # length + warm-up buffer
+    "trama_cross_max_age": 3,             # only crosses within last 3 trading days
+    "trama_require_still_on_side": True,  # age 1–2: close must stay on signal side
+    "trama_top_n": 20,
+    "trama_directions": "BUY,SELL",       # both sides; set "BUY" for long-only
+    "trama_max_positions": 10,
+    "trama_holding_days": 20,
+    "trama_target_1_rr": 1.5,
+    "trama_target_2_rr": 2.5,
+    "trama_t2_exit_pct": 75.0,
+    "trama_book_path": os.getenv(
+        "TRADINGAGENTS_TRAMA_BOOK_PATH",
+        os.path.join(_TRADINGAGENTS_HOME, "trama", "positions.json"),
+    ),
+    "trama_pending_path": os.path.join(_TRADINGAGENTS_HOME, "trama", "pending_replacements.json"),
+    "trama_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "trama", "daily"),
+    "trama_run_times": ["09:30", "11:45", "14:30"],
+    # Nadaraya-Watson Envelope [LuxAlgo] — contrarian band crosses
+    "nwe_history_period": "2y",
+    "nwe_bandwidth": 8.0,
+    "nwe_mult": 3.0,
+    "nwe_lookback": 500,
+    "nwe_min_bars": 60,
+    "nwe_cross_max_age": 3,
+    "nwe_require_still_on_side": True,
+    "nwe_top_n": 20,
+    "nwe_directions": "BUY",
+    "nwe_max_positions": 10,
+    "nwe_holding_days": 20,
+    "nwe_target_1_rr": 1.5,
+    "nwe_target_2_rr": 2.5,
+    "nwe_t2_exit_pct": 75.0,
+    "nwe_book_path": os.getenv(
+        "TRADINGAGENTS_NWE_BOOK_PATH",
+        os.path.join(_TRADINGAGENTS_HOME, "nw_envelope", "positions.json"),
+    ),
+    "nwe_pending_path": os.path.join(_TRADINGAGENTS_HOME, "nw_envelope", "pending_replacements.json"),
+    "nwe_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "nw_envelope", "daily"),
+    "nwe_run_times": ["09:30", "11:45", "14:30"],
+    # Pattern Forecast v1.1 — accuracy-tuned 5d UP forecast (Pearson + consensus)
+    "pattern_forecast_history_period": "2y",
+    "pattern_forecast_window": 20,
+    "pattern_forecast_horizon": 5,
+    "pattern_forecast_use_v17": False,
+    "pattern_forecast_min_correlation": 0.56,
+    "pattern_forecast_min_bars": 126,
+    "pattern_forecast_top_n": 10,
+    "pattern_forecast_directions": "UP",
+    "pattern_forecast_bullish_only": True,
+    "pattern_forecast_correlation_method": "pearson",
+    "pattern_forecast_use_consensus": True,
+    "pattern_forecast_consensus_top_n": 5,
+    "pattern_forecast_consensus_median_n": 3,
+    "pattern_forecast_consensus_min_agree": 2,
+    "pattern_forecast_use_consensus_dispersion": False,
+    "pattern_forecast_consensus_dispersion_max_pct": 12.0,
+    "pattern_forecast_recency_weight": 0.20,
+    "pattern_forecast_min_hist_fwd_pct": 1.5,
+    "pattern_forecast_min_projected_move_pct": 0.5,
+    "pattern_forecast_max_projected_move_pct": 50.0,
+    "pattern_forecast_min_max_touch_pct": 0.5,
+    "pattern_forecast_min_risk_reward": 0.5,
+    "pattern_forecast_require_positive_20d_return": False,
+    "pattern_forecast_require_nifty_above_ma": False,
+    "pattern_forecast_nifty_ma_period": 20,
+    "pattern_forecast_require_stock_above_ma": False,
+    "pattern_forecast_stock_ma_period": 20,
+    "pattern_forecast_min_stock_return_20d": 0.0,
+    "pattern_forecast_require_weekly_above_ma": False,
+    "pattern_forecast_weekly_ma_period": 10,
+    "pattern_forecast_atr_period": 14,
+    "pattern_forecast_atr_stop_mult": 1.5,
+    "pattern_forecast_atr_stop_floor_mult": 1.2,
+    "pattern_forecast_target_atr_mult": 1.5,
+    "pattern_forecast_use_atr_target_cap": False,
+    "pattern_forecast_atr_regime_tolerance_pct": 40.0,
+    "pattern_forecast_require_analogue_quality": False,
+    "pattern_forecast_min_fwd_volume_ratio": 0.65,
+    "pattern_forecast_max_stop_pct": 5.0,
+    "pattern_forecast_min_stop_pct": 2.0,
+    "pattern_forecast_stop_on_close_only": False,
+    "pattern_forecast_breakeven_trigger_pct": 0.0,
+    "pattern_forecast_max_positions": 10,
+    "pattern_forecast_holding_days": 5,
+    "pattern_forecast_book_path": os.path.join(
+        os.path.expanduser("~"), ".tradingagents", "pattern_forecast", "positions.json"
+    ),
+    "pattern_forecast_pending_path": os.path.join(
+        os.path.expanduser("~"), ".tradingagents", "pattern_forecast", "pending_replacements.json"
+    ),
+    "pattern_forecast_daily_dir": os.path.join(
+        os.path.expanduser("~"), ".tradingagents", "pattern_forecast", "daily"
+    ),
+    "pattern_forecast_run_times": ["09:30", "11:45", "14:30"],
     "benchmark_map": {
         ".NS":  "^NSEI",    # NSE India (Nifty 50)
         ".BO":  "^BSESN",   # BSE India (Sensex)

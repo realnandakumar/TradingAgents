@@ -12,7 +12,6 @@ import pandas as pd
 
 from tradingagents.screening.momentum_indicators import (
     adx_rising,
-    higher_high_after_pullback,
     macd,
     pct_above_ema,
     supertrend_buy_age,
@@ -99,9 +98,6 @@ def _passes_technical_filters(df: pd.DataFrame, config: dict) -> Optional[dict]:
     macd_fast = int(config.get("momentum_macd_fast", 12))
     macd_slow = int(config.get("momentum_macd_slow", 26))
     macd_sig = int(config.get("momentum_macd_signal", 9))
-    pb_sessions = int(config.get("momentum_pullback_sessions", 10))
-    hh_lookback = int(config.get("momentum_hh_lookback", 10))
-    ema_tol = float(config.get("momentum_ema_pullback_tolerance", 1.02))
     adx_rise_sessions = int(config.get("momentum_adx_rising_sessions", 3))
     st_min_buy = int(config.get("momentum_st_min_buy_sessions", 4))
     swing_flip_sessions = int(config.get("swing_flip_lookback_sessions", 3))
@@ -151,11 +147,6 @@ def _passes_technical_filters(df: pd.DataFrame, config: dict) -> Optional[dict]:
 
     vol_ratio = volume_short_above_long(volume, vol_short, vol_long, min_ratio=vol_min_ratio)
     if vol_ratio is None:
-        return None
-
-    if not higher_high_after_pullback(
-        df, ema50, pullback_sessions=pb_sessions, hh_lookback=hh_lookback, ema_tolerance=ema_tol
-    ):
         return None
 
     if is_at_new_52_week_low(close):

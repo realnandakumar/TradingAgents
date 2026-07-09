@@ -240,7 +240,7 @@ their holding period, scoring return and alpha vs Nifty.
 
 ### Technical screeners (no AI calls)
 
-Four rule-based screeners rank setups from the same universe. Each has its own
+Seven rule-based screeners rank setups from the same universe. Each has its own
 paper book, daily job, and dashboard desk.
 
 | Strategy | CLI | Hold style | What it looks for |
@@ -249,8 +249,11 @@ paper book, daily job, and dashboard desk.
 | **Momentum** | `tradingagents momentum` | 30–90 days | EMA50>EMA200, ST buy, MACD, ADX, continuation |
 | **NSS** | `tradingagents nss` | 30–90 days | Consolidation + breakout structure scoring |
 | **SuperTrend+RSI** | `tradingagents supertrend-rsi` | configurable | ST(10,3) crossover + RSI confirmation + 9-part score |
+| **TRAMA** | `tradingagents trama` | ~20 days | LuxAlgo TRAMA close crossover within last 3 days |
+| **NW Envelope** | `tradingagents nw-envelope` | ~20 days | LuxAlgo Nadaraya-Watson envelope band crosses (contrarian) |
+| **Pattern Forecast** | `tradingagents pattern-forecast` | 5 days | 2y analogue Pearson projection + mandatory stop |
 
-Per-strategy commands (same pattern for all four):
+Per-strategy commands (same pattern for all seven):
 
 ```bash
 tradingagents swing                    # screen + save picks
@@ -259,17 +262,26 @@ tradingagents swing-daily              # daily job: exits, opens, replacements
 tradingagents swing-report             # closed-trade summary
 ```
 
-Replace `swing` with `momentum`, `nss`, or `supertrend-rsi` as needed.
-Use `*-explain TICKER` on NSS and SuperTrend+RSI to debug why a name passed or failed.
+Replace `swing` with `momentum`, `nss`, `supertrend-rsi`, `trama`, `nw-envelope`, or
+`pattern-forecast` as needed. Use `*-explain TICKER` on NSS, SuperTrend+RSI, TRAMA,
+NW Envelope, and Pattern Forecast to debug why a name passed or failed.
+
+Per-strategy one-shot scripts:
+
+```bash
+python scripts/run_<strategy>_screener_now.py   # screen only
+python scripts/run_<strategy>_daily_now.py      # screen + sync paper book
+python scripts/reset_paper_capital.py           # clear closed P&L, resize open lots
+```
 
 ### Run all screeners at once
 
 Because every strategy uses the same universe, you can download Yahoo data once
-and fan it out to all four technical screeners (or all four daily paper jobs):
+and fan it out to all seven technical screeners (or all seven daily paper jobs):
 
 ```bash
-python scripts/run_all_screeners_now.py   # screen all four strategies
-python scripts/run_all_daily_now.py       # run all four daily paper-trade jobs
+python scripts/run_all_screeners_now.py   # screen all strategies
+python scripts/run_all_daily_now.py       # run all daily paper-trade jobs
 ```
 
 ### Local dashboard
@@ -292,6 +304,9 @@ npm run dev          # http://localhost:3000
 | `/momentum` | Momentum desk blotter |
 | `/nss` | NSS desk blotter |
 | `/supertrend-rsi` | SuperTrend+RSI desk blotter |
+| `/trama` | TRAMA crossover desk blotter |
+| `/nw-envelope` | Nadaraya-Watson Envelope desk blotter |
+| `/pattern-forecast` | Pattern Forecast desk blotter |
 
 Run `tradingagents screen` (RS) or any strategy's daily job to refresh the data,
 then reload the dashboard.
@@ -306,6 +321,9 @@ Local data lives under `~/.tradingagents/`:
 | `momentum/positions.json` | Momentum desk |
 | `nss/positions.json` | NSS desk |
 | `supertrend_rsi/positions.json` | SuperTrend+RSI desk |
+| `trama/positions.json` | TRAMA desk |
+| `nw_envelope/positions.json` | NW Envelope desk |
+| `pattern_forecast/positions.json` | Pattern Forecast desk |
 
 ### Configuration
 
@@ -314,8 +332,10 @@ See `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars. Key knobs:
 - **Universe:** `screen_universe_csv`, live NSE Nifty-500 download, or bundled fallback
 - **RS screener:** `screen_benchmark`, `screen_top_n`, `screen_rs_min_percentile`
 - **Paper (RS):** `paper_capital`, `paper_max_positions`, `paper_holding_days`
-- **Per-strategy:** `swing_*`, `momentum_*`, `nss_*`, `strsi_*` keys for hold windows,
-  position limits, stop/target R-multiples, and book paths
+- **Per-strategy:** `swing_*`, `momentum_*`, `nss_*`, `strsi_*`, `trama_*`, `nwe_*`,
+  `pattern_forecast_*` keys for hold windows, position limits, stop/target R-multiples,
+  and book paths
+- **Desk capital:** `desk_capital` (₹1L per strategy desk, equal-weight slots)
 
 > Pattern detection (especially cup-and-handle and ascending triangle) is heuristic
 > and approximate. The paper-trading layer exists precisely to measure which

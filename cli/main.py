@@ -3851,6 +3851,219 @@ def gap_fill_explain(
         console.print(f"\n[green]Exported to {export}[/green]")
 
 
+def _render_chart_pattern_picks(picks) -> None:
+    from tradingagents.screening.chart_pattern_engine import PATTERN_CATALOG
+    from tradingagents.screening.chart_pattern_screener import group_chart_pattern_picks
+
+    groups = group_chart_pattern_picks(picks)
+    for pattern_id, group in groups:
+        meta = PATTERN_CATALOG[pattern_id]
+        bias_style = {
+            "BULLISH": "green",
+            "BEARISH": "red",
+            "NEUTRAL": "yellow",
+        }.get(meta["bias"], "white")
+        title = (
+            f"{meta['label']}  "
+            f"[{bias_style}]{meta['bias']}[/{bias_style}]  "
+            f"*{meta['stars']}  ({len(group)} hit(s))"
+        )
+        table = Table(title=title, show_header=True, header_style="bold")
+        table.add_column("#", justify="right", style="dim", width=3)
+        table.add_column("Symbol", style="cyan", no_wrap=True)
+        table.add_column("Name", max_width=22)
+        table.add_column("Age", justify="right", width=4)
+        table.add_column("Status", width=12)
+        table.add_column("Dist%", justify="right", width=6)
+        table.add_column("Score", justify="right", width=5)
+        table.add_column("Close", justify="right")
+        table.add_column("Trigger", justify="right")
+        for i, p in enumerate(group, 1):
+            s = p.signal
+            status_style = {
+                "AT_TRIGGER": "bold green",
+                "APPROACHING": "green",
+                "NEAR_TOP": "yellow",
+                "NEAR_BOTTOM": "yellow",
+            }.get(s.setup_status, "white")
+            table.add_row(
+                str(i),
+                s.symbol.replace(".NS", ""),
+                p.stock_name or "—",
+                str(s.pattern_age),
+                f"[{status_style}]{s.setup_status}[/{status_style}]",
+                f"{s.distance_to_trigger_pct:.1f}",
+                f"{s.actionability_score:.0f}",
+                f"{s.close:,.2f}",
+                f"{s.trigger_level:,.2f}" if s.trigger_level else "—",
+            )
+        console.print(table)
+        console.print()
+
+
+def _render_chart_pattern_signals(signals) -> None:
+    if not signals:
+        console.print("[yellow]No patterns detected.[/yellow]")
+        return
+    if len(signals) == 1 and signals[0].rejected:
+        console.print(f"[yellow]Rejected:[/yellow] {signals[0].reject_reason}")
+        return
+    for sig in signals:
+        bias_style = {
+            "BULLISH": "green",
+            "BEARISH": "red",
+            "NEUTRAL": "yellow",
+        }.get(sig.bias, "white")
+        console.print(Panel.fit(
+            f"[bold {bias_style}]{sig.pattern_name}[/bold {bias_style}]  "
+            f"{sig.bias}  {sig.stars_label}  score={sig.actionability_score:.0f}\n"
+            f"{sig.setup_status} · {sig.distance_to_trigger_pct:.1f}% to trigger · age {sig.pattern_age}d\n"
+            f"{sig.remark}",
+            title=f"Chart Patterns — {sig.symbol}",
+        ))
+        if sig.reasons:
+            console.print("[bold]Remarks[/bold]")
+            for r in sig.reasons:
+                console.print(f"  [green]·[/green] {r}")
+
+
+@app.command("chart-patterns")
+def chart_patterns(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max rows per pattern table."),
+    pattern: Optional[str] = typer.Option(
+        None, "--pattern", help="Comma-separated pattern ids (e.g. double_bottom,rectangle).",
+    ),
+    min_confidence: Optional[float] = typer.Option(
+        None, "--min-confidence", help="Minimum detection confidence (default 55).",
+    ),
+    bullish_only: bool = typer.Option(False, "--bullish-only", help="Show bullish patterns only."),
+    bearish_only: bool = typer.Option(False, "--bearish-only", help="Show bearish patterns only."),
+    max_age: Optional[int] = typer.Option(None, "--max-age", help="Max pattern age in trading days, exclusive (default 14)."),
+    max_dist: Optional[float] = typer.Option(
+        None, "--max-dist", help="Max %% distance to trigger for actionable setup (default 5).",
+    ),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen for classic chart patterns (pure screener, no paper book).
+
+    One table per pattern; rows sorted by actionability score.
+    """
+    from tradingagents.screening.chart_pattern_engine import STRATEGY_NAME, STRATEGY_VERSION
+    from tradingagents.screening.chart_pattern_screener import screen_chart_patterns
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["chart_pattern_top_n"] = top
+    if pattern is not None:
+        config["chart_pattern_patterns"] = pattern
+    if min_confidence is not None:
+        config["chart_pattern_min_confidence"] = min_confidence
+    if bullish_only:
+        config["chart_pattern_bullish_only"] = True
+    elif bearish_only:
+        config["chart_pattern_bearish_only"] = True
+    if max_age is not None:
+        config["chart_pattern_max_age_days"] = max_age
+    if max_dist is not None:
+        config["chart_pattern_max_distance_to_trigger_pct"] = max_dist
+
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v{STRATEGY_VERSION} · [cyan]chart-patterns[/cyan]\n"
+        "Actionable setups only — coiling near trigger inside a fresh pattern\n"
+        f"History: [bold]{config['chart_pattern_history_period']}[/bold] · "
+        f"Max age: [bold]<{config['chart_pattern_max_age_days']}[/bold]d · "
+        f"Max dist to trigger: [bold]{config['chart_pattern_max_distance_to_trigger_pct']}[/bold]% · "
+        f"Exclude today: [bold]{config['chart_pattern_exclude_today']}[/bold] · "
+        f"Top [bold]{config['chart_pattern_top_n']}[/bold] per pattern",
+        title="Chart Patterns",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_chart_patterns(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No chart patterns matched the filters.[/yellow]")
+        console.print("[dim]Try: tradingagents chart-patterns-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_chart_pattern_picks(picks)
+    bullish = sum(1 for p in picks if p.bias == "BULLISH")
+    bearish = sum(1 for p in picks if p.bias == "BEARISH")
+    neutral = len(picks) - bullish - bearish
+    console.print(
+        f"\n[dim]{len(picks)} row(s): {bullish} bullish · {bearish} bearish · {neutral} neutral[/dim]"
+    )
+
+    if export:
+        import csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "symbol", "pattern_id", "pattern_name", "bias", "reliability",
+                "pattern_age", "setup_status", "distance_to_trigger_pct",
+                "actionability_score", "confidence", "close", "trigger_level",
+                "support_level", "resistance_level", "detail", "remark",
+            ])
+            w.writeheader()
+            for p in picks:
+                s = p.signal
+                w.writerow({
+                    "symbol": s.symbol,
+                    "pattern_id": s.pattern_id,
+                    "pattern_name": s.pattern_name,
+                    "bias": s.bias,
+                    "reliability": s.reliability,
+                    "pattern_age": s.pattern_age,
+                    "setup_status": s.setup_status,
+                    "distance_to_trigger_pct": s.distance_to_trigger_pct,
+                    "actionability_score": s.actionability_score,
+                    "confidence": s.confidence,
+                    "close": s.close,
+                    "trigger_level": s.trigger_level,
+                    "support_level": s.support_level,
+                    "resistance_level": s.resistance_level,
+                    "detail": s.detail,
+                    "remark": s.remark,
+                })
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("chart-patterns-explain")
+def chart_patterns_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    pattern: Optional[str] = typer.Option(
+        None, "--pattern", help="Comma-separated pattern ids to check.",
+    ),
+    min_confidence: Optional[float] = typer.Option(
+        None, "--min-confidence", help="Minimum detection confidence.",
+    ),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed chart-pattern analysis for one ticker (with remarks)."""
+    from tradingagents.screening.chart_pattern_engine import explain_chart_patterns
+
+    config = DEFAULT_CONFIG.copy()
+    if pattern is not None:
+        config["chart_pattern_patterns"] = pattern
+    if min_confidence is not None:
+        config["chart_pattern_min_confidence"] = min_confidence
+
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        signals = explain_chart_patterns(ticker, config)
+
+    console.print()
+    _render_chart_pattern_signals(signals)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump([s.to_dict() for s in signals], f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
 def _render_nw_envelope_picks(picks) -> None:
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", justify="right", style="dim", width=3)

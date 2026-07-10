@@ -15,6 +15,7 @@ from tradingagents.screening.momentum_screener import screen_momentum
 from tradingagents.screening.nss_screener import screen_nss
 from tradingagents.screening.prices import download_history
 from tradingagents.screening.gap_fill_screener import screen_gap_fill
+from tradingagents.screening.chart_pattern_screener import screen_chart_patterns
 from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
 from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
 from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
@@ -36,6 +37,10 @@ def _print_picks(title: str, picks: list, kind: str = "pick") -> None:
             s = p.signal
             print(f"{i:>2}  {sym:<14} {s.direction:<4} prob={s.probability:.1f}% "
                   f"proj5d={s.projected_close_5d:.2f} max5d={s.projected_max_high_5d:.2f}")
+        elif hasattr(p, "signal") and hasattr(p.signal, "pattern_id"):
+            s = p.signal
+            print(f"{i:>2}  {sym:<14} {s.pattern_name:<22} {s.bias:<8} "
+                  f"*{s.reliability} conf={s.confidence:.0f}")
         elif hasattr(p, "signal") and hasattr(p.signal, "gap_age"):
             s = p.signal
             print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.gap_age} "
@@ -90,6 +95,9 @@ def main() -> None:
     gap_fill = screen_gap_fill(config, price_data=price_data)
     _print_picks("GAP FILL", gap_fill, kind="signal")
 
+    chart_patterns = screen_chart_patterns(config, price_data=price_data)
+    _print_picks("CHART PATTERNS", chart_patterns, kind="signal")
+
     nwe = screen_nw_envelope(config, price_data=price_data)
     _print_picks("NW ENVELOPE", nwe, kind="signal")
 
@@ -99,7 +107,7 @@ def main() -> None:
     print("\n" + "=" * 72)
     print(f"TOTAL: swing={len(swing)} momentum={len(momentum)} "
           f"nss={len(nss)} supertrend_rsi={len(strsi)} trama={len(trama)} "
-          f"gap_fill={len(gap_fill)} "
+          f"gap_fill={len(gap_fill)} chart_patterns={len(chart_patterns)} "
           f"nw_envelope={len(nwe)} pattern_forecast={len(pf)}")
     print("=" * 72)
 

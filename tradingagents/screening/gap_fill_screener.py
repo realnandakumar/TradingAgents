@@ -11,9 +11,11 @@ import pandas as pd
 from tradingagents.screening.gap_fill_engine import (
     STRATEGY_ID,
     STRATEGY_NAME,
+    STRATEGY_VERSION,
     GapFillSignal,
     evaluate_gap_fill,
 )
+from tradingagents.screening.screener_snapshot import save_screener_snapshot
 from tradingagents.screening.universe import load_universe, load_universe_metadata
 
 logger = logging.getLogger(__name__)
@@ -97,11 +99,50 @@ def screen_gap_fill(
         picks.append(GapFillPick(signal=sig, stock_name=name, sector=sector))
 
     picks.sort(key=lambda p: (p.gap_age, -abs(p.signal.gap_pct)))
+    capped = picks[:top_n]
     _log(
         f"{STRATEGY_NAME}: {len(picks)} active gap(s) in last {max_age} days "
         f"(checked {n_checked}, no gap {n_reject})"
     )
-    return picks[:top_n]
+
+    snapshot_path = config.get("gap_fill_screener_snapshot_path")
+    if snapshot_path:
+        rows = []
+        for i, p in enumerate(capped, 1):
+            s = p.signal
+            rows.append({
+                "rank": i,
+                "symbol": s.symbol,
+                "ticker": s.symbol.replace(".NS", "").replace(".BO", ""),
+                "stock_name": p.stock_name,
+                "sector": p.sector,
+                "direction": s.direction,
+                "gap_age": s.gap_age,
+                "gap_pct": s.gap_pct,
+                "fill_pct": s.fill_pct,
+                "close": s.close,
+                "rsi": s.rsi,
+                "gap_low": s.gap_low,
+                "gap_high": s.gap_high,
+                "fill_target": s.fill_target,
+                "remark": s.remark,
+            })
+        save_screener_snapshot(snapshot_path, {
+            "strategy_id": STRATEGY_ID,
+            "strategy_name": STRATEGY_NAME,
+            "version": STRATEGY_VERSION,
+            "filters": {
+                "max_age": max_age,
+                "min_pct": config.get("gap_fill_min_pct"),
+                "directions": directions,
+                "exclude_today": config.get("gap_fill_exclude_today", True),
+            },
+            "checked": n_checked,
+            "total_hits": len(picks),
+            "picks": rows,
+        })
+
+    return capped
 
 
 __all__ = ["GapFillPick", "screen_gap_fill", "STRATEGY_ID", "STRATEGY_NAME"]

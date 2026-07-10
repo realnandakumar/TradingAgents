@@ -101,6 +101,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PATTERN_FORECAST_MIN_CORRELATION": "pattern_forecast_min_correlation",
     "TRADINGAGENTS_PATTERN_FORECAST_BOOK_PATH": "pattern_forecast_book_path",
     "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
+    "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
 }
 
 
@@ -129,6 +130,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
     "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", os.path.join(_TRADINGAGENTS_HOME, "logs")),
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
+    # Quick tech-analyze watchlist and report output
+    "tech_watchlist_path": os.path.join(_TRADINGAGENTS_HOME, "watchlist.txt"),
+    "tech_analyze_reports_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_reports"),
     # Per-run directory for full tool response logs (StockTwits, Reddit,
     # yfinance news, technical indicators). None disables this logging; the
     # CLI sets it per run to a tool_responses/ subdir under results_dir.

@@ -196,6 +196,10 @@ no Supabase required.
 All screeners share the same Nifty-500 universe. Data is downloaded from Yahoo
 Finance once per run (or once across all screeners via the combined runners below).
 
+> **New to the CLI?** See **[docs/USER_CLI_GUIDE.md](docs/USER_CLI_GUIDE.md)** — a
+> beginner-friendly walkthrough for every screener, paper desk, dashboard page, and
+> daily script (VS Code + Windows).
+
 ### Quick start
 
 ```bash

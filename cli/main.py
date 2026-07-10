@@ -1,6 +1,7 @@
 from typing import Optional
 import datetime
 import json
+import sys
 import typer
 import questionary
 from pathlib import Path
@@ -1235,6 +1236,181 @@ def analyze(
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
     run_analysis(checkpoint=checkpoint, reddit_market=reddit_market)
+
+
+def _print_tech_report(sym: str, report_text: str) -> None:
+    """Emit the Market Analyst report as raw markdown on stdout."""
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    print(report_text.rstrip(), flush=True)
+
+
+@app.command("tech-analyze")
+def tech_analyze(
+    ticker: Optional[str] = typer.Option(
+        None, "--ticker", "-t", help="Single ticker to analyze."
+    ),
+    watchlist: bool = typer.Option(
+        False, "--watchlist", "-w", help="Use saved default watchlist."
+    ),
+    watchlist_file: Optional[str] = typer.Option(
+        None, "--watchlist-file", help="Custom watchlist file path."
+    ),
+    date: Optional[str] = typer.Option(
+        None, "--date", help="As-of date (YYYY-MM-DD). Default: today."
+    ),
+    save: bool = typer.Option(
+        True, "--save/--no-save", help="Save report to disk."
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output-dir", help="Custom output directory for saved reports."
+    ),
+    language: Optional[str] = typer.Option(
+        None, "--language", help="Output language for the technical report."
+    ),
+):
+    """Quick technical analysis using only the Market Analyst agent."""
+    from tradingagents.analysis.tech_analyze import (
+        run_tech_analyze,
+        save_tech_report,
+    )
+    from tradingagents.analysis.watchlist import load_watchlist
+
+    sources = [bool(ticker), watchlist, bool(watchlist_file)]
+    if sum(sources) != 1:
+        console.print(
+            "[red]Specify exactly one of: --ticker, --watchlist, or --watchlist-file[/red]"
+        )
+        raise typer.Exit(1)
+
+    config = DEFAULT_CONFIG.copy()
+    if language:
+        config["output_language"] = language
+
+    ensure_api_key(config.get("llm_provider", "openai"))
+
+    trade_date = date or datetime.date.today().isoformat()
+
+    if ticker:
+        tickers = [normalize_ticker_symbol(ticker)]
+    elif watchlist:
+        tickers = load_watchlist()
+        if not tickers:
+            console.print(
+                "[red]Watchlist is empty. Add tickers with: "
+                "tradingagents watchlist add TICKER[/red]"
+            )
+            raise typer.Exit(1)
+    else:
+        tickers = load_watchlist(watchlist_file)
+        if not tickers:
+            console.print(f"[red]No symbols found in watchlist file: {watchlist_file}[/red]")
+            raise typer.Exit(1)
+
+    stats_handler = StatsCallbackHandler()
+    reports_base = Path(output_dir) if output_dir else Path(config["tech_analyze_reports_dir"])
+
+    console.print(Panel.fit(
+        f"[bold]Quick technical analysis[/bold]\n"
+        f"Tickers: {', '.join(tickers)}\n"
+        f"As of: {trade_date}\n"
+        f"Language: {config.get('output_language', 'English')}",
+        title="Tech Analyze",
+    ))
+
+    results = []
+    for i, sym in enumerate(tickers):
+        if i > 0:
+            console.print(Rule(style="dim"))
+
+        asset_type = detect_asset_type(sym).value
+        config["tool_response_log_dir"] = str(
+            Path(config["results_dir"]) / sym / trade_date / "tool_responses"
+        )
+
+        with console.status(f"[bold green]Analyzing {sym}...", spinner="dots"):
+            result = run_tech_analyze(
+                sym,
+                trade_date,
+                config=config,
+                callbacks=[stats_handler],
+                asset_type=asset_type,
+            )
+        results.append(result)
+
+        report_text = result.get("market_report", "").strip()
+
+        if save:
+            save_path = reports_base / sym / trade_date
+            try:
+                report_file = save_tech_report(result, save_path)
+                console.print(
+                    f"[green]Report saved:[/green] {save_path.resolve()}\n"
+                    f"  [dim]Complete report:[/dim] {report_file.name}"
+                )
+            except Exception as e:
+                console.print(f"[red]Error saving report for {sym}: {e}[/red]")
+
+        if report_text:
+            _print_tech_report(sym, report_text)
+        else:
+            console.print(f"[yellow]No market report generated for {sym}.[/yellow]")
+
+
+watchlist_app = typer.Typer(help="Manage the tech-analyze watchlist.")
+app.add_typer(watchlist_app, name="watchlist")
+
+
+@watchlist_app.command("show")
+def watchlist_show():
+    """Show saved watchlist tickers."""
+    from tradingagents.analysis.watchlist import list_watchlist
+
+    symbols = list_watchlist()
+    if not symbols:
+        console.print("[dim]Watchlist is empty.[/dim]")
+        console.print(
+            "[dim]Add tickers with: tradingagents watchlist add RELIANCE TCS[/dim]"
+        )
+        return
+
+    table = Table(box=box.SIMPLE_HEAD, title="Tech-analyze watchlist")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold")
+    for i, sym in enumerate(symbols, 1):
+        table.add_row(str(i), sym)
+    console.print(table)
+
+
+@watchlist_app.command("add")
+def watchlist_add(
+    tickers: list[str] = typer.Argument(..., help="Ticker symbol(s) to add."),
+):
+    """Add ticker(s) to the watchlist."""
+    from tradingagents.analysis.watchlist import add_to_watchlist
+
+    updated = add_to_watchlist([normalize_ticker_symbol(t) for t in tickers])
+    console.print(
+        f"[green]Added {len(tickers)} ticker(s).[/green] "
+        f"Watchlist now has {len(updated)} symbol(s)."
+    )
+
+
+@watchlist_app.command("remove")
+def watchlist_remove(
+    tickers: list[str] = typer.Argument(..., help="Ticker symbol(s) to remove."),
+):
+    """Remove ticker(s) from the watchlist."""
+    from tradingagents.analysis.watchlist import remove_from_watchlist
+
+    updated = remove_from_watchlist([normalize_ticker_symbol(t) for t in tickers])
+    console.print(
+        f"[green]Removed {len(tickers)} ticker(s).[/green] "
+        f"Watchlist now has {len(updated)} symbol(s)."
+    )
 
 
 @app.command()

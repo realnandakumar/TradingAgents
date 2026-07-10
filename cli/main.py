@@ -1451,6 +1451,70 @@ def paper():
         console.print("[yellow]No closed trades yet — reliability stats appear once positions reach their holding period.[/yellow]")
 
 
+@app.command("portfolio-review")
+def portfolio_review(
+    as_of: Optional[str] = typer.Option(
+        None, "--as-of", help="As-of date for P&L (YYYY-MM-DD). Default: today.",
+    ),
+    no_llm: bool = typer.Option(
+        False, "--no-llm", help="Facts + tables only; skip LLM narrative (zero token cost).",
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output-dir", help="Directory for saved facts JSON and memo markdown.",
+    ),
+):
+    """Grounded portfolio PM memo across all 7 paper desks.
+
+    Builds facts from real book data and live prices, renders tables in Python,
+    then (unless --no-llm) asks the quick-think model for descriptive +
+    action-oriented commentary. Reports save under ~/.tradingagents/portfolio_reports/.
+    """
+    from tradingagents.portfolio_review import run_portfolio_review
+
+    config = DEFAULT_CONFIG.copy()
+    if not no_llm:
+        from cli.utils import ensure_api_key
+
+        ensure_api_key(config.get("llm_provider", "openai"))
+
+    out = Path(output_dir).expanduser() if output_dir else None
+    try:
+        result = run_portfolio_review(
+            config,
+            as_of=as_of,
+            use_llm=not no_llm,
+            output_dir=out,
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Portfolio review failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    s = result["summary"]
+    console.print(Panel.fit(
+        f"[bold]Portfolio review[/bold] · as of {result['as_of_date']}\n"
+        f"Open: {s['open_positions']} · Closed: {s['closed_positions']}\n"
+        f"Realized: [bold]Rs {s['total_realized_inr']:,.0f}[/bold] · "
+        f"Unrealized: [bold]Rs {s['total_unrealized_inr']:,.0f}[/bold] · "
+        f"Total: [bold]Rs {s['total_pnl_inr']:,.0f}[/bold]",
+        title="portfolio-review",
+    ))
+
+    if result.get("narrative"):
+        # Windows cp1252 consoles choke on ₹ in Rich Markdown; print plain text.
+        safe = result["narrative"].replace("\u20b9", "Rs ")
+        console.print(Markdown(safe))
+        if not result.get("validation_ok"):
+            console.print(
+                "[yellow]Grounding check flagged unverified numbers — "
+                "trust the tables in the saved memo for figures.[/yellow]"
+            )
+    else:
+        console.print("[dim]Tables written to memo file (use a UTF-8 terminal to preview here).[/dim]")
+
+    console.print(f"\n[green]Saved facts:[/green] {result['facts_path']}")
+    console.print(f"[green]Saved memo:[/green]  {result['memo_path']}")
+
+
 def _render_swing_picks(picks):
     table = Table(box=box.SIMPLE_HEAD, title="Swing screener — top picks (manual AI selection)")
     table.add_column("#", justify="right", style="cyan")

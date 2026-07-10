@@ -14,11 +14,12 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.screening.momentum_screener import screen_momentum
 from tradingagents.screening.nss_screener import screen_nss
 from tradingagents.screening.prices import download_history
-from tradingagents.screening.trama_screener import screen_trama
+from tradingagents.screening.gap_fill_screener import screen_gap_fill
 from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
 from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
 from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
 from tradingagents.screening.swing_screener import screen_swing
+from tradingagents.screening.trama_screener import screen_trama
 from tradingagents.screening.universe import load_universe
 
 # Longest lookback any screener needs; a superset for the 1y ST+RSI screen too.
@@ -35,10 +36,18 @@ def _print_picks(title: str, picks: list, kind: str = "pick") -> None:
             s = p.signal
             print(f"{i:>2}  {sym:<14} {s.direction:<4} prob={s.probability:.1f}% "
                   f"proj5d={s.projected_close_5d:.2f} max5d={s.projected_max_high_5d:.2f}")
+        elif hasattr(p, "signal") and hasattr(p.signal, "gap_age"):
+            s = p.signal
+            print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.gap_age} "
+                  f"gap={s.gap_pct:+.1f}% fill={s.fill_pct:.0f}%")
         elif hasattr(p, "signal") and hasattr(p.signal, "cross_age") and not hasattr(p.signal, "flip_age"):
             s = p.signal
-            print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.cross_age} "
-                  f"dist={s.dist_pct:+.1f}%")
+            if hasattr(s, "fill_pct"):
+                print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.gap_age} "
+                      f"gap={s.gap_pct:+.1f}% fill={s.fill_pct:.0f}%")
+            else:
+                print(f"{i:>2}  {sym:<14} {s.direction:<4} age={s.cross_age} "
+                      f"dist={s.dist_pct:+.1f}%")
         elif hasattr(p, "signal"):  # SuperTrend+RSI
             s = p.signal
             print(f"{i:>2}  {sym:<14} {s.direction:<4} score={s.score:<3} "
@@ -78,6 +87,9 @@ def main() -> None:
     trama = screen_trama(config, price_data=price_data)
     _print_picks("TRAMA", trama, kind="signal")
 
+    gap_fill = screen_gap_fill(config, price_data=price_data)
+    _print_picks("GAP FILL", gap_fill, kind="signal")
+
     nwe = screen_nw_envelope(config, price_data=price_data)
     _print_picks("NW ENVELOPE", nwe, kind="signal")
 
@@ -87,6 +99,7 @@ def main() -> None:
     print("\n" + "=" * 72)
     print(f"TOTAL: swing={len(swing)} momentum={len(momentum)} "
           f"nss={len(nss)} supertrend_rsi={len(strsi)} trama={len(trama)} "
+          f"gap_fill={len(gap_fill)} "
           f"nw_envelope={len(nwe)} pattern_forecast={len(pf)}")
     print("=" * 72)
 

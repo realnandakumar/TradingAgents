@@ -3488,6 +3488,376 @@ def trama_explain(
         console.print(f"\n[green]Exported to {export}[/green]")
 
 
+def _render_gap_fill_picks(picks) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Symbol", style="cyan", no_wrap=True)
+    table.add_column("Dir", justify="center", width=5)
+    table.add_column("Age", justify="right", width=4)
+    table.add_column("Gap%", justify="right")
+    table.add_column("Fill%", justify="right")
+    table.add_column("Close", justify="right")
+    table.add_column("Target", justify="right")
+    table.add_column("Remark")
+    for i, p in enumerate(picks, 1):
+        s = p.signal
+        dir_style = "green" if s.direction == "BUY" else "red"
+        table.add_row(
+            str(i),
+            s.symbol.replace(".NS", ""),
+            f"[{dir_style}]{s.direction}[/{dir_style}]",
+            str(s.gap_age),
+            f"{s.gap_pct:+.2f}",
+            f"{s.fill_pct:.0f}",
+            f"{s.close:,.2f}",
+            f"{s.fill_target:,.2f}",
+            s.remark,
+        )
+    console.print(table)
+
+
+def _render_gap_fill_signal(sig) -> None:
+    style = "green" if sig.direction == "BUY" else ("red" if sig.direction == "SELL" else "yellow")
+    console.print(Panel.fit(
+        f"[bold {style}]{sig.direction}[/bold {style}]  {sig.symbol}\n"
+        f"{sig.remark}",
+        title="Gap Fill signal",
+    ))
+    if sig.rejected:
+        console.print(f"[yellow]Rejected:[/yellow] {sig.reject_reason}")
+        return
+    console.print(
+        f"  close={sig.close:,.2f}  fill_target={sig.fill_target:,.2f}  "
+        f"gap={sig.gap_pct:+.2f}%  fill={sig.fill_pct:.0f}%  age={sig.gap_age}"
+    )
+    if sig.reasons:
+        console.print("[bold]Remarks[/bold]")
+        for r in sig.reasons:
+            console.print(f"  [green]·[/green] {r}")
+
+
+@app.command("gap-fill")
+def gap_fill(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max signals to show."),
+    max_age: Optional[int] = typer.Option(
+        None, "--max-age", help="Only gaps within last N trading days (default 3).",
+    ),
+    min_pct: Optional[float] = typer.Option(
+        None, "--min-pct", help="Minimum gap size in percent (default 0.75).",
+    ),
+    buy_only: bool = typer.Option(False, "--buy-only", help="Show BUY (gap down fill) only."),
+    save: bool = typer.Option(True, "--save/--no-save", help="Save BUY picks to paper book."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
+):
+    """Screen for in-progress gap fill setups (partial fill toward prior close).
+
+    BUY = gap down with fill in progress.  SELL = gap up pullback (optional).
+    """
+    from tradingagents.screening.gap_fill_engine import STRATEGY_NAME
+    from tradingagents.screening.gap_fill_screener import screen_gap_fill
+    from tradingagents.gap_fill import GapFillPositionBook
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["gap_fill_top_n"] = top
+    if max_age is not None:
+        config["gap_fill_max_age"] = max_age
+    if min_pct is not None:
+        config["gap_fill_min_pct"] = min_pct
+    if buy_only:
+        config["gap_fill_directions"] = "BUY"
+
+    console.print(Panel.fit(
+        f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]gap-fill[/cyan]\n"
+        "Trade partial fills back toward the prior session close\n"
+        f"Gap min: [bold]{config['gap_fill_min_pct']}%[/bold] · "
+        f"Freshness: gap within last [bold]{config['gap_fill_max_age']}[/bold] trading days\n"
+        f"Fill band: [bold]{config['gap_fill_min_progress']}–{config['gap_fill_max_progress']}%[/bold] · "
+        f"Top [bold]{config['gap_fill_top_n']}[/bold]\n"
+        f"Directions: [bold]{config['gap_fill_directions']}[/bold]",
+        title="Gap Fill",
+    ))
+
+    with console.status("[bold green]Screening...", spinner="dots") as status:
+        picks = screen_gap_fill(config, progress=lambda m: status.update(f"[bold green]{m}"))
+
+    console.print()
+    if not picks:
+        console.print("[yellow]No in-progress gap fill setups in the freshness window.[/yellow]")
+        console.print("[dim]Try: tradingagents gap-fill-explain TICKER[/dim]")
+        raise typer.Exit()
+
+    _render_gap_fill_picks(picks)
+    buys = sum(1 for p in picks if p.direction == "BUY")
+    sells = len(picks) - buys
+    console.print(f"\n[dim]{len(picks)} signal(s): {buys} BUY · {sells} SELL[/dim]")
+
+    if save:
+        book = GapFillPositionBook(config)
+        saved = book.save_picks(picks)
+        console.print(
+            f"\n[green]Saved {len(saved)} BUY position(s) to gap_fill[/green] "
+            f"[dim]({book.path})[/dim]"
+        )
+        console.print("[dim]View book:[/dim] [bold]tradingagents gap-fill-positions[/bold]")
+        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/gap-fill[/bold]")
+
+    if export:
+        import csv
+        with open(export, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "symbol", "direction", "gap_age", "gap_pct", "fill_pct",
+                "close", "fill_target", "remark",
+            ])
+            w.writeheader()
+            for p in picks:
+                s = p.signal
+                w.writerow({
+                    "symbol": s.symbol,
+                    "direction": s.direction,
+                    "gap_age": s.gap_age,
+                    "gap_pct": s.gap_pct,
+                    "fill_pct": s.fill_pct,
+                    "close": s.close,
+                    "fill_target": s.fill_target,
+                    "remark": s.remark,
+                })
+        console.print(f"[green]Exported to {export}[/green]")
+
+
+@app.command("gap-fill-positions")
+def gap_fill_positions():
+    """Show Gap Fill paper positions and stats."""
+    from tradingagents.gap_fill import STRATEGY_NAME, GapFillPositionBook
+
+    book = GapFillPositionBook(DEFAULT_CONFIG.copy())
+    summary = book.mark_to_market()
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+
+    if not book.positions:
+        console.print(Panel.fit(
+            "No Gap Fill positions yet. Run [bold]tradingagents gap-fill[/bold] to screen and save.",
+            title="gap_fill",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Stock")
+        t.add_column("Age", justify="right")
+        t.add_column("Gap%", justify="right")
+        t.add_column("Fill%", justify="right")
+        t.add_column("Screened", justify="right")
+        t.add_column("Entry Rs", justify="right")
+        t.add_column("Target Rs", justify="right")
+        t.add_column("Stop%", justify="right")
+        t.add_column("T2%", justify="right")
+        t.add_column("Phase")
+        t.add_column("Trail Rs", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                (p.get("stock_name") or "")[:20],
+                str(p.get("gap_age", "—")),
+                f"{p.get('gap_pct', 0):+.1f}%",
+                f"{p.get('fill_pct', 0):.0f}%",
+                p.get("screen_date", ""),
+                f"{p['entry_price']:.2f}",
+                f"{p.get('fill_target', 0):.2f}",
+                f"{p.get('stop_loss_pct', 0):.1f}%",
+                f"+{p.get('target_2_pct', 0):.1f}%",
+                p.get("phase", "initial"),
+                f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
+            )
+        console.print(t)
+        console.print(
+            f"[dim]{summary.get('open_positions', 0)} open · "
+            f"closed this run: {summary.get('closed_now', 0)}[/dim]\n"
+        )
+
+    if closed:
+        t = Table(box=box.SIMPLE_HEAD, title="Closed Gap Fill positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Return", justify="right")
+        t.add_column("Alpha vs Nifty", justify="right")
+        t.add_column("Exit", justify="right")
+        t.add_column("Exit reason")
+        for p in closed[-20:]:
+            ret = p.get("raw_return")
+            alpha = p.get("alpha_return")
+            rc = "green" if (ret or 0) > 0 else "red"
+            ac = "green" if (alpha or 0) > 0 else "red"
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
+                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
+                p.get("exit_date", ""),
+                p.get("exit_reason", ""),
+            )
+        console.print(t)
+
+    o = stats.get("overall", {})
+    if o.get("trades"):
+        msg = (
+            f"\n[bold]Reliability[/bold] ({o['trades']} closed): "
+            f"win rate {o['win_rate']}% · avg return {o['avg_return']:+.2f}%"
+        )
+        if o.get("avg_alpha") is not None:
+            msg += f" · avg alpha {o['avg_alpha']:+.2f}%"
+        console.print(msg)
+    else:
+        console.print("[yellow]No closed Gap Fill trades yet.[/yellow]")
+
+    console.print(f"\n[dim]Book:[/dim] {book.path}")
+    console.print("[dim]Daily report:[/dim] [bold]tradingagents gap-fill-report[/bold]")
+
+
+@app.command("gap-fill-daily")
+def gap_fill_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
+):
+    """Daily Gap Fill portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    from tradingagents.gap_fill import ReplacementProposal, run_gap_fill_daily
+
+    config = DEFAULT_CONFIG.copy()
+
+    def _approve(proposal: ReplacementProposal) -> bool:
+        if yes:
+            return True
+        console.print(
+            f"\n[yellow]Portfolio full ({config['gap_fill_max_positions']}).[/yellow] Replace "
+            f"[bold]{proposal.close_stock_name}[/bold] with "
+            f"[bold]{proposal.new_stock_name}[/bold]?"
+        )
+        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+
+    with console.status("[bold green]Gap Fill daily run...", spinner="dots") as status:
+        report = run_gap_fill_daily(
+            config,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+            approve=_approve,
+            force=force,
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]gap_fill daily[/bold] · chart: [cyan]1D[/cyan]\n"
+        f"Date: {report.get('date')} · BUY picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="Gap Fill daily",
+    ))
+
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("proposals") and not yes:
+        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
+        console.print("[dim]Run:[/dim] [bold]tradingagents gap-fill-approve[/bold]")
+
+    console.print("[dim]Full report:[/dim] [bold]tradingagents gap-fill-report[/bold]")
+
+
+@app.command("gap-fill-approve")
+def gap_fill_approve(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+):
+    """Approve pending Gap Fill portfolio replacement proposals."""
+    from tradingagents.screening.gap_fill_screener import screen_gap_fill
+    from tradingagents.gap_fill import GapFillPaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    manager = GapFillPaperTradeManager(config)
+    pending = manager.pending_proposals()
+    if not pending:
+        console.print("[yellow]No pending Gap Fill replacement proposals.[/yellow]")
+        raise typer.Exit()
+
+    picks = {p.symbol: p for p in screen_gap_fill(config) if p.direction == "BUY"}
+    approved = 0
+    for proposal in pending:
+        pick = picks.get(proposal.new_ticker)
+        if pick is None:
+            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
+            continue
+        ok = False
+        if yes:
+            ok = manager.approve_replacement(proposal.id, pick)
+        else:
+            console.print(
+                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
+                f"(fill {proposal.close_score:.0f}%) with "
+                f"[bold]{proposal.new_stock_name}[/bold] "
+                f"(score {proposal.new_signal_score:.1f}, age {proposal.new_flip_age})?"
+            )
+            if questionary.confirm("Approve?", default=False).ask():
+                ok = manager.approve_replacement(proposal.id, pick)
+        if ok:
+            approved += 1
+            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
+
+    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+
+
+@app.command("gap-fill-report")
+def gap_fill_report():
+    """Show latest Gap Fill daily portfolio report."""
+    from tradingagents.gap_fill import GapFillPaperTradeManager
+
+    manager = GapFillPaperTradeManager(DEFAULT_CONFIG.copy())
+    report = manager.latest_daily_report()
+    if report is None:
+        console.print("[yellow]No daily reports yet. Run tradingagents gap-fill-daily.[/yellow]")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]gap_fill daily report[/bold]\n"
+        f"Date: {report.get('date')} · picks: {report.get('screener_picks')} · "
+        f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
+        f"open: {report.get('open_positions')}",
+        title="Gap Fill report",
+    ))
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("exits"):
+        for e in report["exits"]:
+            console.print(f"  exit {e['ticker']} · {e['reason']}")
+
+
+@app.command("gap-fill-explain")
+def gap_fill_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    export: Optional[str] = typer.Option(None, "--export", help="Write JSON breakdown."),
+):
+    """Detailed Gap Fill analysis for one ticker (with remarks)."""
+    from tradingagents.screening.gap_fill_engine import explain_gap_fill
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        sig = explain_gap_fill(ticker, config)
+
+    console.print()
+    _render_gap_fill_signal(sig)
+
+    if export:
+        import json as _json
+        with open(export, "w", encoding="utf-8") as f:
+            _json.dump(sig.to_dict(), f, indent=2)
+        console.print(f"\n[green]Exported to {export}[/green]")
+
+
 def _render_nw_envelope_picks(picks) -> None:
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", justify="right", style="dim", width=3)

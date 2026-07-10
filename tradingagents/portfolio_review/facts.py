@@ -14,6 +14,7 @@ DESK_BOOKS: List[Tuple[str, str, str]] = [
     ("nss", "NSS", "tradingagents.nss.NSSPositionBook"),
     ("supertrend_rsi", "ST+RSI", "tradingagents.supertrend_rsi.SuperTrendRSIPositionBook"),
     ("trama", "TRAMA", "tradingagents.trama.TramaPositionBook"),
+    ("gap_fill", "Gap Fill", "tradingagents.gap_fill.GapFillPositionBook"),
     ("nw_envelope", "NW Envelope", "tradingagents.nw_envelope.NwEnvelopePositionBook"),
     ("pattern_forecast", "Pattern FC", "tradingagents.pattern_forecast.PatternForecastPositionBook"),
 ]
@@ -209,6 +210,7 @@ CLI_PREFIX = {
     "nss": "nss",
     "supertrend_rsi": "supertrend-rsi",
     "trama": "trama",
+    "gap_fill": "gap-fill",
     "nw_envelope": "nw-envelope",
     "pattern_forecast": "pattern-forecast",
 }

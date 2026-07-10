@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/nss", label: "NSS desk" },
   { href: "/supertrend-rsi", label: "ST+RSI desk" },
   { href: "/trama", label: "TRAMA desk" },
+  { href: "/gap-fill", label: "Gap Fill" },
   { href: "/nw-envelope", label: "NW Envelope" },
   { href: "/pattern-forecast", label: "Pattern desk" },
   { href: "/screens", label: "Screens" },

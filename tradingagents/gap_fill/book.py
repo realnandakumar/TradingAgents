@@ -193,6 +193,7 @@ class GapFillPositionBook:
             "gap_high": sig.gap_high,
             "fill_target": sig.fill_target,
             "fill_pct": sig.fill_pct,
+            "rsi": sig.rsi,
             "remark": sig.remark,
             "direction": sig.direction,
             "phase": "initial",

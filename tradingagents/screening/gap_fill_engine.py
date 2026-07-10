@@ -1,8 +1,4 @@
-"""Gap Fill signal engine.
-
-Price gaps (open away from prior close) often partially or fully fill back
-toward the prior session's close. Detect fresh gaps and in-progress fills.
-"""
+"""Gap screener engine — detect active true gaps on daily charts."""
 
 from __future__ import annotations
 
@@ -11,22 +7,25 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
+from tradingagents.screening.patterns import rsi
+
 STRATEGY_ID = "gap_fill"
-STRATEGY_NAME = "Gap Fill"
-STRATEGY_VERSION = "1.0"
+STRATEGY_NAME = "Gap Screener"
+STRATEGY_VERSION = "2.0"
 
 
 @dataclass
 class GapFillSignal:
     symbol: str
-    direction: str  # BUY | SELL | NONE
-    gap_age: int = -1  # 0=today … max_age-1; -1 if none
+    direction: str  # DOWN | UP | NONE
+    gap_age: int = -1
     gap_pct: float = 0.0
     gap_low: float = 0.0
     gap_high: float = 0.0
     fill_target: float = 0.0
     fill_pct: float = 0.0
     close: float = 0.0
+    rsi: float = 0.0
     score: float = 0.0
     remark: str = ""
     rejected: bool = False
@@ -49,6 +48,7 @@ class GapFillSignal:
             "fill_target": self.fill_target,
             "fill_pct": self.fill_pct,
             "close": self.close,
+            "rsi": self.rsi,
             "score": self.score,
             "remark": self.remark,
             "rejected": self.rejected,
@@ -59,9 +59,15 @@ class GapFillSignal:
         }
 
 
-def _age_label(age: int) -> str:
+def _completed_df(df: pd.DataFrame, exclude_today: bool) -> pd.DataFrame:
+    if exclude_today and len(df) > 1:
+        return df.iloc[:-1].copy()
+    return df
+
+
+def _age_label(age: int, *, exclude_today: bool = False) -> str:
     if age == 0:
-        return "today"
+        return "latest session" if exclude_today else "today"
     if age == 1:
         return "1 day ago"
     return f"{age} days ago"
@@ -72,7 +78,6 @@ def _gap_at_bar(
     i: int,
     gap_min_pct: float,
 ) -> Optional[Tuple[str, float, float, float, float]]:
-    """Return (direction, gap_pct, gap_low, gap_high, fill_target) for bar i, or None."""
     if i < 1:
         return None
     prev_close = float(df["Close"].iloc[i - 1])
@@ -100,7 +105,6 @@ def _find_latest_gap(
     gap_min_pct: float,
     max_age: int,
 ) -> Tuple[Optional[str], int, float, float, float, float, float]:
-    """Return freshest gap within window: direction UP/DOWN, age, gap_pct, low, high, fill_target."""
     n = len(df)
     if n < 2:
         return None, -1, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -131,8 +135,25 @@ def _sell_fill_progress(close_now: float, gap_high: float, fill_target: float) -
     return 100.0 * (gap_high - close_now) / span
 
 
-def _signal_score(gap_age: int, gap_pct: float, fill_pct: float) -> float:
-    return -gap_age * 10.0 + abs(gap_pct) + fill_pct * 0.1
+def _signal_score(gap_age: int, gap_pct: float) -> float:
+    return -gap_age * 10.0 + abs(gap_pct)
+
+
+def _latest_rsi(close: pd.Series, period: int) -> Optional[float]:
+    series = rsi(close, period)
+    if series.empty:
+        return None
+    val = float(series.iloc[-1])
+    if pd.isna(val):
+        return None
+    return val
+
+
+def _direction_allowed(gap_dir: str, directions: str) -> bool:
+    allowed = {d.strip().upper() for d in directions.split(",") if d.strip()}
+    if gap_dir == "DOWN":
+        return "DOWN" in allowed or "BUY" in allowed
+    return "UP" in allowed or "SELL" in allowed
 
 
 def evaluate_gap_fill(
@@ -140,21 +161,19 @@ def evaluate_gap_fill(
     config: Optional[dict] = None,
     symbol: str = "",
 ) -> GapFillSignal:
-    """Evaluate one ticker for an in-progress gap fill setup."""
+    """Return the freshest active true gap for one ticker (screener only)."""
     config = config or {}
-    gap_min_pct = float(config.get("gap_fill_min_pct", 0.75))
-    max_age = int(config.get("gap_fill_max_age", 3))
-    min_progress = float(config.get("gap_fill_min_progress", 10))
-    max_progress = float(config.get("gap_fill_max_progress", 85))
+    gap_min_pct = float(config.get("gap_fill_min_pct", 5.0))
+    max_age = int(config.get("gap_fill_max_age", 30))
+    exclude_today = bool(config.get("gap_fill_exclude_today", True))
+    rsi_period = int(config.get("gap_fill_rsi_period", 14))
     min_bars = int(config.get("gap_fill_min_bars", 30))
-    directions = str(config.get("gap_fill_directions", "BUY")).upper()
-    allow_buy = "BUY" in directions
-    allow_sell = "SELL" in directions
+    directions = str(config.get("gap_fill_directions", "UP,DOWN"))
 
     empty = GapFillSignal(symbol=symbol, direction="NONE", rejected=True)
 
     if df is None or len(df) < min_bars:
-        empty.reject_reason = f"Insufficient history (need ≥{min_bars} bars)"
+        empty.reject_reason = f"Insufficient history (need >={min_bars} bars)"
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
     if not {"Open", "High", "Low", "Close"}.issubset(df.columns):
@@ -162,83 +181,57 @@ def evaluate_gap_fill(
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
 
-    close_now = float(df["Close"].iloc[-1])
-    empty.close = round(close_now, 2)
+    work = _completed_df(df, exclude_today)
+    if len(work) < min_bars:
+        empty.reject_reason = f"Insufficient completed history (need >={min_bars} bars)"
+        empty.remark = f"REJECT - {empty.reject_reason}"
+        return empty
 
+    price_now = float(df["Close"].iloc[-1])
     gap_dir, age, gap_pct, gap_low, gap_high, fill_target, _ = _find_latest_gap(
-        df, gap_min_pct, max_age
+        work, gap_min_pct, max_age
     )
     if gap_dir is None:
         empty.reject_reason = f"No qualifying gap in last {max_age} trading days"
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
 
-    direction: Optional[str] = None
-    fill_pct: Optional[float] = None
-
-    if gap_dir == "DOWN" and allow_buy:
-        if close_now >= fill_target:
-            empty.gap_age = age
-            empty.gap_pct = round(gap_pct, 2)
-            empty.fill_target = round(fill_target, 2)
-            empty.reject_reason = "Gap down already filled (close at/above prior close)"
-            empty.remark = f"REJECT - {empty.reject_reason}"
-            return empty
-        fill_pct = _buy_fill_progress(close_now, gap_low, fill_target)
-        direction = "BUY"
-    elif gap_dir == "UP" and allow_sell:
-        if close_now <= fill_target:
-            empty.gap_age = age
-            empty.gap_pct = round(gap_pct, 2)
-            empty.fill_target = round(fill_target, 2)
-            empty.reject_reason = "Gap up already filled (close at/below prior close)"
-            empty.remark = f"REJECT - {empty.reject_reason}"
-            return empty
-        fill_pct = _sell_fill_progress(close_now, gap_high, fill_target)
-        direction = "SELL"
-    else:
+    if not _direction_allowed(gap_dir, directions):
         empty.reject_reason = f"Gap {gap_dir} not enabled in gap_fill_directions"
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
+
+    direction = gap_dir
+    if gap_dir == "DOWN":
+        fill_pct = _buy_fill_progress(price_now, gap_low, fill_target)
+    else:
+        fill_pct = _sell_fill_progress(price_now, gap_high, fill_target)
 
     if fill_pct is None:
         empty.reject_reason = "Invalid fill geometry"
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
 
-    if fill_pct < min_progress or fill_pct > max_progress:
-        empty.gap_age = age
-        empty.gap_pct = round(gap_pct, 2)
-        empty.gap_low = round(gap_low, 2)
-        empty.gap_high = round(gap_high, 2)
-        empty.fill_target = round(fill_target, 2)
-        empty.fill_pct = round(fill_pct, 2)
-        empty.reject_reason = (
-            f"Fill progress {fill_pct:.1f}% outside {min_progress:.0f}–{max_progress:.0f}% band"
-        )
-        empty.remark = f"REJECT - {empty.reject_reason}"
-        return empty
+    rsi_now = _latest_rsi(work["Close"], rsi_period)
+    age_txt = _age_label(age, exclude_today=exclude_today)
+    fill_txt = "filled" if (
+        (gap_dir == "DOWN" and price_now >= fill_target)
+        or (gap_dir == "UP" and price_now <= fill_target)
+    ) else f"{fill_pct:.0f}% toward {fill_target:.2f}"
 
-    score = _signal_score(age, gap_pct, fill_pct)
-    age_txt = _age_label(age)
-    if direction == "BUY":
-        remark = (
-            f"BUY - gap down {age_txt} ({gap_pct:+.2f}%) - "
-            f"fill {fill_pct:.0f}% toward {fill_target:.2f}"
-        )
-    else:
-        remark = (
-            f"SELL - gap up {age_txt} ({gap_pct:+.2f}%) - "
-            f"pullback {fill_pct:.0f}% toward {fill_target:.2f}"
-        )
+    remark = f"GAP {gap_dir} {age_txt} ({gap_pct:+.2f}%) - {fill_txt}"
 
     reasons = [
-        f"Gap {gap_dir} {_age_label(age)}: open vs prior close {gap_pct:+.2f}% (min {gap_min_pct}%)",
-        f"True gap separation confirmed on gap day",
+        f"Active gap {gap_dir} {_age_label(age, exclude_today=exclude_today)}: "
+        f"open vs prior close {gap_pct:+.2f}% (min {gap_min_pct}%)",
+        "True gap separation confirmed on gap day",
         f"Fill target = prior close {fill_target:.2f}",
-        f"Fill progress {fill_pct:.1f}% (band {min_progress:.0f}–{max_progress:.0f}%)",
-        f"Latest close {close_now:.2f}",
+        f"Fill progress {fill_pct:.1f}% at price {price_now:.2f}",
     ]
+    if rsi_now is not None:
+        reasons.append(f"RSI({rsi_period}) = {rsi_now:.1f} (info only)")
+    if exclude_today:
+        reasons.append("Gap detected on completed sessions; today's bar excluded")
 
     return GapFillSignal(
         symbol=symbol,
@@ -249,8 +242,9 @@ def evaluate_gap_fill(
         gap_high=round(gap_high, 2),
         fill_target=round(fill_target, 2),
         fill_pct=round(fill_pct, 2),
-        close=round(close_now, 2),
-        score=round(score, 2),
+        close=round(price_now, 2),
+        rsi=round(rsi_now or 0.0, 2),
+        score=round(_signal_score(age, gap_pct), 2),
         remark=remark,
         rejected=False,
         reasons=reasons,
@@ -258,7 +252,7 @@ def evaluate_gap_fill(
 
 
 def explain_gap_fill(ticker: str, config: dict) -> GapFillSignal:
-    """Download one ticker and return a gap fill signal with remarks."""
+    """Download one ticker and return gap screener details."""
     from tradingagents.screening.prices import download_history
 
     symbol = ticker.upper()

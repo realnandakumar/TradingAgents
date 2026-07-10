@@ -3495,19 +3495,21 @@ def _render_gap_fill_picks(picks) -> None:
     table.add_column("Dir", justify="center", width=5)
     table.add_column("Age", justify="right", width=4)
     table.add_column("Gap%", justify="right")
+    table.add_column("RSI", justify="right")
     table.add_column("Fill%", justify="right")
     table.add_column("Close", justify="right")
     table.add_column("Target", justify="right")
     table.add_column("Remark")
     for i, p in enumerate(picks, 1):
         s = p.signal
-        dir_style = "green" if s.direction == "BUY" else "red"
+        dir_style = "green" if s.direction == "DOWN" else "red"
         table.add_row(
             str(i),
             s.symbol.replace(".NS", ""),
             f"[{dir_style}]{s.direction}[/{dir_style}]",
             str(s.gap_age),
             f"{s.gap_pct:+.2f}",
+            f"{s.rsi:.0f}" if s.rsi else "—",
             f"{s.fill_pct:.0f}",
             f"{s.close:,.2f}",
             f"{s.fill_target:,.2f}",
@@ -3517,18 +3519,18 @@ def _render_gap_fill_picks(picks) -> None:
 
 
 def _render_gap_fill_signal(sig) -> None:
-    style = "green" if sig.direction == "BUY" else ("red" if sig.direction == "SELL" else "yellow")
+    style = "green" if sig.direction == "DOWN" else ("red" if sig.direction == "UP" else "yellow")
     console.print(Panel.fit(
         f"[bold {style}]{sig.direction}[/bold {style}]  {sig.symbol}\n"
         f"{sig.remark}",
-        title="Gap Fill signal",
+        title="Gap Screener",
     ))
     if sig.rejected:
         console.print(f"[yellow]Rejected:[/yellow] {sig.reject_reason}")
         return
     console.print(
         f"  close={sig.close:,.2f}  fill_target={sig.fill_target:,.2f}  "
-        f"gap={sig.gap_pct:+.2f}%  fill={sig.fill_pct:.0f}%  age={sig.gap_age}"
+        f"gap={sig.gap_pct:+.2f}%  rsi={sig.rsi:.1f}  fill={sig.fill_pct:.0f}%  age={sig.gap_age}"
     )
     if sig.reasons:
         console.print("[bold]Remarks[/bold]")
@@ -3541,22 +3543,22 @@ def gap_fill(
     universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
     top: Optional[int] = typer.Option(None, "--top", help="Max signals to show."),
     max_age: Optional[int] = typer.Option(
-        None, "--max-age", help="Only gaps within last N trading days (default 3).",
+        None, "--max-age", help="Only gaps within last N completed trading days (default 30).",
     ),
     min_pct: Optional[float] = typer.Option(
-        None, "--min-pct", help="Minimum gap size in percent (default 0.75).",
+        None, "--min-pct", help="Minimum gap size in percent (default 5).",
     ),
-    buy_only: bool = typer.Option(False, "--buy-only", help="Show BUY (gap down fill) only."),
-    save: bool = typer.Option(True, "--save/--no-save", help="Save BUY picks to paper book."),
+    down_only: bool = typer.Option(False, "--down-only", help="Show gap DOWN only."),
+    up_only: bool = typer.Option(False, "--up-only", help="Show gap UP only."),
     export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
 ):
-    """Screen for in-progress gap fill setups (partial fill toward prior close).
+    """Screen for active true daily gaps (pure screener, no paper book).
 
-    BUY = gap down with fill in progress.  SELL = gap up pullback (optional).
+    Lists gap UP / gap DOWN names with gap size, age, and fill progress.
+    Today's bar is excluded from gap detection while the market is open.
     """
     from tradingagents.screening.gap_fill_engine import STRATEGY_NAME
     from tradingagents.screening.gap_fill_screener import screen_gap_fill
-    from tradingagents.gap_fill import GapFillPositionBook
 
     config = DEFAULT_CONFIG.copy()
     if universe is not None:
@@ -3567,18 +3569,19 @@ def gap_fill(
         config["gap_fill_max_age"] = max_age
     if min_pct is not None:
         config["gap_fill_min_pct"] = min_pct
-    if buy_only:
-        config["gap_fill_directions"] = "BUY"
+    if down_only:
+        config["gap_fill_directions"] = "DOWN"
+    elif up_only:
+        config["gap_fill_directions"] = "UP"
 
     console.print(Panel.fit(
-        f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]gap-fill[/cyan]\n"
-        "Trade partial fills back toward the prior session close\n"
+        f"[bold]{STRATEGY_NAME}[/bold] v2.0 · [cyan]gap-fill[/cyan]\n"
+        "Pure gap screener — active true gaps on completed sessions (today excluded)\n"
         f"Gap min: [bold]{config['gap_fill_min_pct']}%[/bold] · "
-        f"Freshness: gap within last [bold]{config['gap_fill_max_age']}[/bold] trading days\n"
-        f"Fill band: [bold]{config['gap_fill_min_progress']}–{config['gap_fill_max_progress']}%[/bold] · "
-        f"Top [bold]{config['gap_fill_top_n']}[/bold]\n"
+        f"Lookback: [bold]{config['gap_fill_max_age']}[/bold] days · "
+        f"Top [bold]{config['gap_fill_top_n']}[/bold] · "
         f"Directions: [bold]{config['gap_fill_directions']}[/bold]",
-        title="Gap Fill",
+        title="Gap Screener",
     ))
 
     with console.status("[bold green]Screening...", spinner="dots") as status:
@@ -3586,24 +3589,14 @@ def gap_fill(
 
     console.print()
     if not picks:
-        console.print("[yellow]No in-progress gap fill setups in the freshness window.[/yellow]")
+        console.print("[yellow]No active gaps in the lookback window.[/yellow]")
         console.print("[dim]Try: tradingagents gap-fill-explain TICKER[/dim]")
         raise typer.Exit()
 
     _render_gap_fill_picks(picks)
-    buys = sum(1 for p in picks if p.direction == "BUY")
-    sells = len(picks) - buys
-    console.print(f"\n[dim]{len(picks)} signal(s): {buys} BUY · {sells} SELL[/dim]")
-
-    if save:
-        book = GapFillPositionBook(config)
-        saved = book.save_picks(picks)
-        console.print(
-            f"\n[green]Saved {len(saved)} BUY position(s) to gap_fill[/green] "
-            f"[dim]({book.path})[/dim]"
-        )
-        console.print("[dim]View book:[/dim] [bold]tradingagents gap-fill-positions[/bold]")
-        console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/gap-fill[/bold]")
+    downs = sum(1 for p in picks if p.direction == "DOWN")
+    ups = len(picks) - downs
+    console.print(f"\n[dim]{len(picks)} gap(s): {downs} DOWN · {ups} UP[/dim]")
 
     if export:
         import csv

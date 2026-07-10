@@ -16,7 +16,6 @@ from tradingagents.momentum import run_momentum_daily
 from tradingagents.nss import run_nss_daily
 from tradingagents.screening.prices import download_history
 from tradingagents.screening.universe import load_universe
-from tradingagents.gap_fill import run_gap_fill_daily
 from tradingagents.nw_envelope import run_nw_envelope_daily
 from tradingagents.pattern_forecast import run_pattern_forecast_daily
 from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
@@ -67,9 +66,6 @@ def main() -> None:
 
     trama = run_trama_daily(config, force=True, price_data=price_data)
     _summary("trama", trama)
-
-    gap_fill = run_gap_fill_daily(config, force=True, price_data=price_data)
-    _summary("gap_fill", gap_fill)
 
     nwe = run_nw_envelope_daily(config, force=True, price_data=price_data)
     _summary("nw_envelope", nwe)

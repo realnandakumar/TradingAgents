@@ -47,7 +47,7 @@ def screen_gap_fill(
     progress: Optional[Callable[[str], None]] = None,
     price_data: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> List[GapFillPick]:
-    """Screen the NSE universe for in-progress gap fill setups."""
+    """Screen the NSE universe for active true gaps on daily charts."""
 
     def _log(msg: str):
         logger.info(msg)
@@ -71,11 +71,9 @@ def screen_gap_fill(
 
         price_data = download_history(universe, period=period)
 
-    max_age = int(config.get("gap_fill_max_age", 3))
+    max_age = int(config.get("gap_fill_max_age", 30))
     top_n = int(config.get("gap_fill_top_n", 20))
-    directions = str(config.get("gap_fill_directions", "BUY")).upper()
-    allow_buy = "BUY" in directions
-    allow_sell = "SELL" in directions
+    directions = str(config.get("gap_fill_directions", "UP,DOWN"))
 
     picks: List[GapFillPick] = []
     n_checked = 0
@@ -90,10 +88,6 @@ def screen_gap_fill(
         if sig.rejected or sig.direction == "NONE":
             n_reject += 1
             continue
-        if sig.direction == "BUY" and not allow_buy:
-            continue
-        if sig.direction == "SELL" and not allow_sell:
-            continue
 
         meta = metadata.get(sym, {})
         name = meta.get("name") or sym.replace(".NS", "").replace(".BO", "")
@@ -102,10 +96,10 @@ def screen_gap_fill(
         sig.sector = sector
         picks.append(GapFillPick(signal=sig, stock_name=name, sector=sector))
 
-    picks.sort(key=lambda p: (p.gap_age, -abs(p.signal.gap_pct), -p.signal.fill_pct))
+    picks.sort(key=lambda p: (p.gap_age, -abs(p.signal.gap_pct)))
     _log(
-        f"{STRATEGY_NAME}: {len(picks)} setup(s) in last {max_age} days "
-        f"(checked {n_checked}, rejected {n_reject})"
+        f"{STRATEGY_NAME}: {len(picks)} active gap(s) in last {max_age} days "
+        f"(checked {n_checked}, no gap {n_reject})"
     )
     return picks[:top_n]
 

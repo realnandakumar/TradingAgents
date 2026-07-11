@@ -14,25 +14,107 @@ A plain-language guide for using **this entire project** from **VS Code on Windo
 
 ## Table of contents
 
+0. [VS Code: make commands work (read this first)](#0-vs-code-make-commands-work-read-this-first)
 1. [One-time setup](#1-one-time-setup)
 2. [Open the terminal in VS Code](#2-open-the-terminal-in-vs-code)
 3. [Start the dashboard](#3-start-the-dashboard)
-4. [Daily routine](#4-daily-routine-recommended)
-5. [Two kinds of tools](#5-two-kinds-of-tools)
-6. [Strategy cheat sheet](#6-strategy-cheat-sheet)
-7. [Pure screeners (no paper book)](#7-pure-screeners-no-paper-book)
-8. [Paper desks (screen + track fake trades)](#8-paper-desks-screen--track-fake-trades)
-9. [RS + AI screener (uses API keys)](#9-rs--ai-screener-uses-api-keys)
-10. [Deep AI analysis on one stock](#10-deep-ai-analysis-on-one-stock)
-11. [Quick technical analysis (tech-analyze)](#11-quick-technical-analysis-tech-analyze)
-12. [Tech Desk paper trading](#12-tech-desk-paper-trading)
-13. [Portfolio review (all desks)](#13-portfolio-review-all-desks)
-14. [Run everything at once (scripts)](#14-run-everything-at-once-scripts)
-15. [Dashboard pages](#15-dashboard-pages)
-16. [Where data is saved](#16-where-data-is-saved)
-17. [Optional: API keys (.env)](#17-optional-api-keys-env)
-18. [Troubleshooting](#18-troubleshooting)
-19. [Quick reference card](#19-quick-reference-card)
+4. [Daily & weekly routine](#4-daily--weekly-routine)
+5. [Audit guide — which command when](#5-audit-guide--which-command-when)
+6. [Three ways to trade (overview)](#6-three-ways-to-trade-overview)
+7. [Command reference (all commands + remarks)](#7-command-reference-all-commands--remarks)
+8. [Pure screeners (detail)](#8-pure-screeners-detail)
+9. [Rule-based paper desks (detail)](#9-rule-based-paper-desks-detail)
+10. [RS + AI funnel](#10-rs--ai-funnel)
+11. [Deep AI analysis (`analyze`)](#11-deep-ai-analysis-analyze)
+12. [Quick technical analysis (`tech-analyze`)](#12-quick-technical-analysis-tech-analyze)
+13. [Tech Desk paper trading](#13-tech-desk-paper-trading)
+14. [Portfolio review (all desks)](#14-portfolio-review-all-desks)
+15. [Batch scripts](#15-batch-scripts)
+16. [Dashboard pages](#16-dashboard-pages)
+17. [Where data is saved](#17-where-data-is-saved)
+18. [Config (`default_config.py`)](#18-config-default_configpy)
+19. [Optional: API keys (.env)](#19-optional-api-keys-env)
+20. [Troubleshooting](#20-troubleshooting)
+21. [Quick reference card](#21-quick-reference-card)
+
+---
+
+## 0. VS Code: make commands work (read this first)
+
+Most “command not found” / `ModuleNotFoundError` issues come from **VS Code using a different Python** than the one where you installed this project.
+
+### Step A — Pick the right Python in VS Code
+
+1. **Ctrl+Shift+P** → **Python: Select Interpreter**
+2. Choose **`.venv (Python 3.13.x)`** — it should appear automatically after setup below.
+3. If you do not see it: **Enter interpreter path** → browse to:
+   ```
+   C:\Users\nanda\OneDrive\Desktop\TradingAgents\.venv\Scripts\python.exe
+   ```
+4. **Avoid** the bare `Python 3.14` from `AppData\Local\Programs\...` unless you install the project into that interpreter too.
+
+### Step B — One-time setup (project virtual env)
+
+Open **Terminal → New Terminal** (PowerShell), then run **once**:
+
+```powershell
+cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+*Remark: Creates an isolated `.venv` folder inside the project. VS Code will detect it automatically (see `.vscode/settings.json`).*
+
+If `python -m venv` fails, browse to any installed Python (e.g. `C:\Users\nanda\anaconda3\python.exe`) and run:
+
+```powershell
+C:\Users\nanda\anaconda3\python.exe -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+### Step C — Smoke test (must pass before anything else)
+
+Run these **in order** from the project root:
+
+```powershell
+cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
+python -m cli.main --help
+python -m cli.main watchlist show
+```
+
+Expected: help text, then `Watchlist is empty.` (or your tickers).  
+If you see `ModuleNotFoundError: No module named 'typer'`, repeat Step A + B with the correct interpreter.
+
+### Step D — How to run commands in VS Code (two valid forms)
+
+| Form | When to use |
+|------|-------------|
+| `python -m cli.main <command>` | **Recommended in VS Code** — always uses the selected interpreter |
+| `tradingagents <command>` | Works only if that interpreter’s `Scripts` folder is on your PATH (often true in Anaconda, not always in VS Code) |
+
+Examples — **same command, two spellings:**
+
+```powershell
+python -m cli.main gap-fill --help
+tradingagents gap-fill --help
+
+python -m cli.main tech-desk-positions
+tradingagents tech-desk-positions
+```
+
+**Rule:** If `tradingagents` fails but `python -m cli.main` works, keep using `python -m cli.main` — nothing is broken.
+
+### Step E — PowerShell syntax (Windows)
+
+- Chain commands with **`;`** not `&&` (older PowerShell):
+  ```powershell
+  cd C:\Users\nanda\OneDrive\Desktop\TradingAgents\dashboard; npm run dev
+  ```
+- Batch scripts need the project root as cwd:
+  ```powershell
+  cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
+  python scripts/run_all_screeners_now.py
+  ```
 
 ---
 
@@ -46,760 +128,661 @@ A plain-language guide for using **this entire project** from **VS Code on Windo
 
 ### Install Python package
 
-Open a terminal (see [section 2](#2-open-the-terminal-in-vs-code)) and run:
-
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
 python -m pip install -e .
 ```
 
-### Install dashboard (for browser UI)
+*Remark: Installs the `tradingagents` command so you can run screeners and desks from the terminal.*
+
+### Install dashboard
 
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents\dashboard
 npm install
 ```
 
-### Verify CLI works
+*Remark: One-time install for the local web UI at localhost:3000.*
 
-```powershell
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-tradingagents --help
-```
-
-You should see a long list of commands.
-
-**Alternative if `tradingagents` is not found:**
+### Verify CLI
 
 ```powershell
 python -m cli.main --help
 ```
 
-(Replace `tradingagents` with `python -m cli.main` in any command below.)
+*Remark: Prefer this over bare `tradingagents --help` in VS Code (see [§0](#0-vs-code-make-commands-work-read-this-first)).*
+
+Optional — if `tradingagents` is on PATH:
+
+```powershell
+tradingagents --help
+```
 
 ---
 
 ## 2. Open the terminal in VS Code
 
-1. Menu: **Terminal → New Terminal**
-2. Bottom panel shows something like: `PS C:\...\TradingAgents>`
-3. Always `cd` to the project folder first:
+**Terminal → New Terminal**, then:
 
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
 ```
 
-**Tip:** Click the **+** dropdown in the terminal panel to open a **second tab** (useful: one tab for screeners, one for the dashboard).
+Use **two tabs**: one for CLI commands, one for `npm run dev` (dashboard).
 
 ---
 
 ## 3. Start the dashboard
 
-In a terminal tab:
-
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents\dashboard
 npm run dev
 ```
 
-Open in your browser: **http://localhost:3000**
+Open **http://localhost:3000** · Press **F5** to refresh after running screeners or daily jobs.
 
-Leave this terminal running. Press `Ctrl+C` to stop the dashboard.
-
-**Refresh the browser** after you run screeners or daily jobs in the other terminal.
+*Remark: Reads JSON from `C:\Users\nanda\.tradingagents\` — no database setup.*
 
 ---
 
-## 4. Daily routine (recommended)
+## 4. Daily & weekly routine
 
-Best time: **after market close** (so yesterday’s daily bar is complete).
+Best time: **after NSE close** (daily bar complete).
 
-### Terminal tab A — Screen everything (optional, ~5–10 min)
+### Every trading day (pick what you use)
 
-```powershell
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-python scripts/run_all_screeners_now.py
-```
+| Step | Command | Remark |
+|------|---------|--------|
+| Rule desks | `python scripts/run_all_daily_now.py` | Updates **all** rule-based paper books (swing, momentum, etc.) in one go |
+| Tech Desk only | `python -m cli.main tech-desk-daily` | Checks stops, targets, time exits, and **pullback zone fills** — no AI cost |
+| One desk | `python -m cli.main swing-daily` | Same as above but for swing only |
 
-### Terminal tab A — Or run only what you care about
+### Weekly (Tech Desk track)
 
-```powershell
-tradingagents gap-fill
-tradingagents chart-patterns
-tradingagents swing
-tradingagents momentum
-```
+| Step | Command | Remark |
+|------|---------|--------|
+| 1 | `python -m cli.main tech-analyze --watchlist` | Refresh AI technical reports for your watchlist (~1–2 min per ticker) |
+| 2 | Delete old report folders you no longer trust | Manual cleanup under `tech_reports\` |
+| 3 | `python -m cli.main tech-desk-process` | AI PM reads reports, picks best names, opens trades or sets pullback waits |
+| 4 | `python -m cli.main tech-desk-review` | Optional memo on open positions — read first |
+| 5 | `python -m cli.main tech-desk-review --apply` | Only if you agree — executes closes and stop raises |
 
-### Terminal tab A — Paper desks daily job (optional)
+### Optional (discovery)
 
-Updates open positions, exits, new entries for strategies that use paper books:
-
-```powershell
-python scripts/run_all_daily_now.py
-```
-
-Or one desk:
-
-```powershell
-tradingagents swing-daily
-tradingagents pattern-forecast-daily
-```
-
-### Terminal tab B — Dashboard
-
-```powershell
-cd dashboard
-npm run dev
-```
-
-Then browse http://localhost:3000
+| Step | Command | Remark |
+|------|---------|--------|
+| Scan NSE | `python scripts/run_all_screeners_now.py` | All rule screeners in one download — find **new** ideas |
+| Check stats | `python -m cli.main tech-desk-report` | Win rate, avg R, P&L by exit type |
 
 ---
 
-## 5. Two kinds of tools
+## 5. Audit guide — which command when
 
-| Kind | What it does | Opens real trades? | Example commands |
-|------|----------------|-------------------|------------------|
-| **Pure screener** | Lists setups only | No | `gap-fill`, `chart-patterns` |
-| **Paper desk** | Screens + saves to a “book” + daily P&L | No (simulated) | `swing`, `swing-daily`, `swing-positions` |
-| **RS + AI** | Ranks stocks + AI writes a report | No | `screen`, `analyze` |
+Use this when you are not sure what to run.
 
----
+### By goal
 
-## 6. Strategy cheat sheet
+| I want to… | Use this | Not this |
+|------------|----------|----------|
+| Scan **all NSE** for rule-based setups | `run_all_screeners_now.py` or `tradingagents swing` | `tech-analyze` (your list only) |
+| Research **my watchlist** with AI technicals | `tech-analyze --watchlist` | Full `analyze` (overkill, expensive) |
+| **Paper-trade** my watchlist from those reports | `tech-desk-process` then `tech-desk-daily` | `tech-analyze` alone (no trades) |
+| Run a **systematic** paper strategy (rules only) | `swing-daily`, `momentum-daily`, etc. | Tech Desk |
+| **Deep dive** one stock (news, fundamentals, debate) | `tradingagents analyze` | `tech-analyze` |
+| Original **RS + AI** funnel on Nifty 500 | `tradingagents screen` | `tech-desk-process` |
+| See **gaps** or **chart patterns** only (no AI) | `gap-fill`, `chart-patterns` | Paper desks |
+| Check **all desks** at once | `portfolio-review --no-llm` | Opening each `-positions` |
+| See open Tech Desk trades | `tech-desk-positions` or `/tech-desk` | `tech-analyze` |
 
-| Strategy | Type | Main screen command | Hold style (paper) |
-|----------|------|---------------------|--------------------|
-| **Gap Screener** | Pure screener | `tradingagents gap-fill` | — |
-| **Chart Patterns** | Pure screener | `tradingagents chart-patterns` | — |
-| **Swing** | Paper desk | `tradingagents swing` | ~20 days |
-| **Momentum** | Paper desk | `tradingagents momentum` | 30–90 days |
-| **NSS** | Paper desk | `tradingagents nss` | 30–90 days |
-| **SuperTrend + RSI** | Paper desk | `tradingagents supertrend-rsi` | configurable |
-| **TRAMA** | Paper desk | `tradingagents trama` | ~20 days |
-| **NW Envelope** | Paper desk | `tradingagents nw-envelope` | ~20 days |
-| **Pattern Forecast** | Paper desk | `tradingagents pattern-forecast` | 5 days |
-| **RS + patterns + AI** | AI funnel | `tradingagents screen` | RS paper book |
+### By how often
 
-Every **paper desk** uses the same command pattern:
+| Frequency | Must run | Nice to have |
+|-----------|----------|--------------|
+| **Daily** | `tech-desk-daily` (if using Tech Desk) · `run_all_daily_now.py` (if using rule desks) | Dashboard refresh |
+| **Weekly** | `tech-analyze --watchlist` + `tech-desk-process` | `tech-desk-review` |
+| **Monthly** | `tech-desk-report` — check win rate & foreclosure P&L | `portfolio-review` |
+| **Ad hoc** | `gap-fill`, `chart-patterns`, `tech-analyze -t TICKER` | `analyze` for big decisions |
+
+### Three tracks (do not mix them up)
 
 ```text
-tradingagents <strategy>              # screen (and usually save picks)
-tradingagents <strategy>-positions    # show open book
-tradingagents <strategy>-daily        # daily job: exits + new entries
-tradingagents <strategy>-report       # closed trades summary
-tradingagents <strategy>-approve      # approve replacement proposals (if portfolio full)
-tradingagents <strategy>-explain TICKER   # one-stock detail (where available)
+TRACK A — Rule screeners + rule desks
+  run_all_screeners_now  →  find ideas
+  swing / momentum / nss →  screen + save picks
+  *-daily                →  paper P&L (no AI)
+
+TRACK B — Tech Desk (your watchlist + AI)
+  tech-analyze           →  save technical reports
+  tech-desk-process      →  AI PM opens / waits
+  tech-desk-daily        →  exits + zone fills (no AI)
+  tech-desk-review       →  optional weekly tune-up
+
+TRACK C — Full AI (expensive, one-off)
+  analyze                →  one ticker, full memo
+  screen                 →  Nifty 500 funnel + RS paper book
 ```
+
+### Decision tree (simple)
+
+```text
+Do I already have a ticker list I care about?
+  YES → tech-analyze → tech-desk-process → tech-desk-daily (daily)
+  NO  → run_all_screeners_now OR gap-fill / chart-patterns / swing
+
+Do I need news + fundamentals + risk debate?
+  YES → analyze
+  NO  → tech-analyze (technicals only)
+
+Am I paper-trading to measure edge?
+  YES → use *-daily every day + *-report / tech-desk-report monthly
+  NO  → pure screeners only (gap-fill, chart-patterns)
+```
+
+### Expert audit checklist (before trusting Tech Desk)
+
+- [ ] Reports are **&lt; 14 days** old (`tech_desk_max_report_age_days`)
+- [ ] You ran `tech-desk-daily` **every session** after close
+- [ ] You checked `tech-desk-report` for **foreclosure** vs **stop_loss** P&L
+- [ ] You have **20+ closed trades** before judging win rate
+- [ ] You read `tech-desk-review` **before** `--apply`
 
 ---
 
-## 7. Pure screeners (no paper book)
+## 6. Three ways to trade (overview)
+
+| Kind | What it does | Real money? | API key? |
+|------|----------------|-------------|----------|
+| **Pure screener** | Lists setups only | No | No |
+| **Rule paper desk** | Rules screen → fake portfolio → daily P&L | No | No |
+| **Tech Desk** | AI report → AI PM → fake portfolio → rule exits | No | Yes |
+| **RS + AI** | Rank NSE → AI on top names → RS paper book | No | Yes |
+
+---
+
+## 7. Command reference (all commands + remarks)
+
+Plain English for every main command. *Remark* = what it actually does.
+
+### Setup & dashboard
+
+| Command | Remark |
+|---------|--------|
+| `python -m pip install -e .` | Install/update the project CLI |
+| `npm install` (in `dashboard/`) | Install dashboard dependencies |
+| `npm run dev` (in `dashboard/`) | Start local website on port 3000 |
+
+### Batch scripts
+
+| Command | Remark |
+|---------|--------|
+| `python scripts/run_all_screeners_now.py` | Download prices once, run **all** rule screeners, print ranked lists |
+| `python scripts/run_all_daily_now.py` | Download once, run **all** rule-based paper daily jobs (excludes Tech Desk) |
+| `python scripts/run_<strategy>_screener_now.py` | Run one screener only (e.g. `run_swing_screener_now.py`) |
+| `python scripts/run_<strategy>_daily_now.py` | Run one desk daily job only |
+| `python scripts/run_analyze_job.py` | Headless full `analyze` for dashboard jobs |
+
+### Pure screeners
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents gap-fill` | List stocks with active price gaps ≥5%; no trades |
+| `tradingagents gap-fill --down-only` | Same, only gaps down |
+| `tradingagents gap-fill --up-only` | Same, only gaps up |
+| `tradingagents gap-fill-explain TICKER` | Show one ticker’s gap detail |
+| `tradingagents gap-fill --export file.csv` | Save gap list to CSV |
+| `tradingagents chart-patterns` | List chart patterns in separate tables; no trades |
+| `tradingagents chart-patterns --bullish-only` | Only bullish pattern tables |
+| `tradingagents chart-patterns --bearish-only` | Only bearish pattern tables |
+| `tradingagents chart-patterns-explain TICKER` | One ticker’s pattern detail |
+| `tradingagents chart-patterns --export file.csv` | Save pattern hits to CSV |
+
+### Rule paper desks (replace `<strategy>`)
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents <strategy>` | Screen NSE, show ranked picks, usually save to paper book |
+| `tradingagents <strategy> --no-save` | Screen only — do not write to book |
+| `tradingagents <strategy>-positions` | Show open/closed fake positions and P&L |
+| `tradingagents <strategy>-daily` | After close: run exits, open new picks, sync book |
+| `tradingagents <strategy>-report` | Summary of closed trades and stats |
+| `tradingagents <strategy>-approve` | Approve swapping a weak position for a new pick (when full) |
+| `tradingagents <strategy>-explain TICKER` | Deep detail for one symbol (where available) |
+
+**`<strategy>` values:** `swing`, `momentum`, `nss`, `supertrend-rsi`, `trama`, `nw-envelope`, `pattern-forecast`, `gap-fill`
+
+*(Note: `tradingagents gap-fill` without `-daily` is the **pure gap screener** (no paper book). The **gap-fill paper desk** uses `gap-fill-daily`, `gap-fill-positions`, etc.)*
+
+**Extra:**
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents nss-diagnostics` | Health check for NSS pipeline |
+
+### RS + AI
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents screen --preview` | Rank NSE by RS + patterns only — **no AI cost** |
+| `tradingagents screen --top 10 --yes` | Full funnel: AI analyzes top 10, may add RS paper trades |
+| `tradingagents paper` | Show RS paper book P&L and reliability |
+| `tradingagents sync` | Refresh RS dashboard JSON from paper book |
+
+### Full analyze
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents analyze` | Interactive: all agents, full investment memo on **one** ticker |
+| `tradingagents analyze --checkpoint` | Same, but can resume if it crashes |
+
+### Tech-analyze (Market Analyst only)
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents tech-analyze -t TICKER` | AI technical report on one stock; saves markdown |
+| `tradingagents tech-analyze --watchlist` | Run report for every ticker in `watchlist.txt` |
+| `tradingagents tech-analyze --watchlist-file path` | Same from a custom CSV/txt file |
+| `tradingagents tech-analyze --no-save` | Print report only — do not save to disk |
+| `tradingagents tech-analyze --date YYYY-MM-DD` | As-of date for the analysis |
+| `tradingagents watchlist add T1 T2` | Add tickers to default watchlist file |
+| `tradingagents watchlist show` | Print current watchlist |
+| `tradingagents watchlist remove T1` | Remove tickers from watchlist |
+
+### Tech Desk
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents tech-desk-process` | Read **saved** tech reports → AI PM picks best → open / wait / skip |
+| `tradingagents tech-desk-daily` | **Rules only:** hit stops, targets, time exit, fill pullback zones |
+| `tradingagents tech-desk-review` | Weekly AI memo on open positions — **does not trade** |
+| `tradingagents tech-desk-review --apply` | Same memo, then **execute** closes and stop raises |
+| `tradingagents tech-desk-positions` | Show open book, pending zones, quick stats |
+| `tradingagents tech-desk-report` | Win rate, avg R, P&L by exit reason (stop, target, foreclosure) |
+
+### Portfolio
+
+| Command | Remark |
+|---------|--------|
+| `tradingagents portfolio-review` | AI memo across **all** paper desks |
+| `tradingagents portfolio-review --no-llm` | Tables only — free, no API |
+
+---
+
+## 8. Pure screeners (detail)
 
 ### Gap Screener
 
-Finds **active true gaps** (default ≥5%) on daily charts. Today’s bar is excluded while the market is open.
-
-```powershell
-tradingagents gap-fill
-tradingagents gap-fill --down-only
-tradingagents gap-fill --up-only
-tradingagents gap-fill --top 20 --max-age 14 --min-pct 8
-tradingagents gap-fill-explain TRENT
-tradingagents gap-fill --export gaps.csv
-```
+True gaps on daily chart; today excluded while market open.
 
 | Column | Meaning |
 |--------|---------|
-| DOWN | Gapped down — often watched for partial fill **up** |
-| UP | Gapped up — often watched for partial fill **down** |
+| DOWN / UP | Gap direction |
 | Gap% | Size of gap |
-| Age | Trading days since gap |
-| Fill% | How much already filled (info only) |
+| Age | Days since gap |
+| Fill% | How much filled (informational) |
 
 **Dashboard:** http://localhost:3000/gap-screener
 
-**Script:**
-
-```powershell
-python scripts/run_gap_fill_screener_now.py
-```
-
----
-
 ### Chart Patterns
 
-Finds **classic chart patterns** (double top, H&S, flags, etc.). One **table per pattern**. Only **fresh, actionable** setups (default: pattern &lt; 14 days, within 5% of trigger). Today’s bar excluded.
-
-```powershell
-tradingagents chart-patterns
-tradingagents chart-patterns --bullish-only
-tradingagents chart-patterns --bearish-only
-tradingagents chart-patterns --pattern double_bottom,inverse_head_shoulders
-tradingagents chart-patterns --max-age 7 --max-dist 3 --top 10
-tradingagents chart-patterns-explain SOBHA
-tradingagents chart-patterns --export patterns.csv
-```
-
-**Pattern IDs for `--pattern`:**
-
-`head_shoulders`, `inverse_head_shoulders`, `double_top`, `double_bottom`, `ascending_triangle`, `descending_triangle`, `rising_wedge`, `falling_wedge`, `cup_and_handle`, `bull_flag`, `bear_flag`, `pennant`, `rectangle`
-
-| Column | Meaning |
-|--------|---------|
-| Age | Days since pattern completed |
-| Status | `AT_TRIGGER` = at breakout level; `APPROACHING` = coiling |
-| Dist% | Distance to trigger (lower = closer) |
-| Score | Actionability 0–100 (higher = better now) |
-| Trigger | Price level that “activates” the pattern |
+13 pattern types; default &lt; 14 days old, within 5% of trigger.
 
 **Dashboard:** http://localhost:3000/chart-patterns
 
-**Script:**
-
-```powershell
-python scripts/run_chart_patterns_screener_now.py
-```
+**Pattern IDs:** `head_shoulders`, `inverse_head_shoulders`, `double_top`, `double_bottom`, `ascending_triangle`, `descending_triangle`, `rising_wedge`, `falling_wedge`, `cup_and_handle`, `bull_flag`, `bear_flag`, `pennant`, `rectangle`
 
 ---
 
-## 8. Paper desks (screen + track fake trades)
+## 9. Rule-based paper desks (detail)
 
-### Swing
+| Strategy | Screen logic (short) | Hold | Dashboard |
+|----------|---------------------|------|-----------|
+| Swing | ST flip, RSI, EMA20, volume | ~20d | `/swing` |
+| Momentum | EMA50&gt;200, trend, MACD | 30–90d | `/momentum` |
+| NSS | Consolidation + breakout score | 30–90d | `/nss` |
+| ST+RSI | Supertrend + RSI score | varies | `/supertrend-rsi` |
+| TRAMA | LuxAlgo TRAMA cross | ~20d | `/trama` |
+| NW Envelope | Band cross contrarian | ~20d | `/nw-envelope` |
+| Pattern Forecast | 5d analogue forecast + SL | 5d | `/pattern-forecast` |
 
-Early swing setups: Supertrend flip, RSI, EMA20, volume, ADX.
-
-```powershell
-tradingagents swing
-tradingagents swing --top 15 --no-save
-tradingagents swing-positions
-tradingagents swing-daily
-tradingagents swing-report
-```
-
-**Dashboard:** http://localhost:3000/swing  
-**Script:** `python scripts/run_swing_screener_now.py` · `python scripts/run_swing_daily_now.py`
+All use **₹1L desk capital**, **10 slots**, **whole shares** (same as Tech Desk sizing).
 
 ---
 
-### Momentum
-
-Continuation trades: EMA50 &gt; EMA200, strong trend, MACD, ADX.
+## 10. RS + AI funnel
 
 ```powershell
-tradingagents momentum
-tradingagents momentum-positions
-tradingagents momentum-daily
-tradingagents momentum-report
+tradingagents screen --preview          # free ranking
+tradingagents screen --top 10 --yes     # paid AI on top names
+tradingagents paper                     # view RS paper book
 ```
 
-**Dashboard:** http://localhost:3000/momentum  
-**Script:** `python scripts/run_momentum_screener_now.py` · `python scripts/run_momentum_daily_now.py`
+**Dashboard:** `/` · `/screens` · `/positions`
 
 ---
 
-### NSS (NANDA Swing Scanner)
-
-Structure-first: consolidation, breakout scoring, explainable stages.
-
-```powershell
-tradingagents nss
-tradingagents nss-diagnostics
-tradingagents nss-explain RELIANCE
-tradingagents nss-positions
-tradingagents nss-daily
-tradingagents nss-report
-```
-
-**Dashboard:** http://localhost:3000/nss  
-**Script:** `python scripts/run_nss_screener_now.py` · `python scripts/run_nss_daily_now.py`
-
----
-
-### SuperTrend + RSI
-
-ST(10,3) crossover + RSI confirmation + 9-part score.
-
-```powershell
-tradingagents supertrend-rsi
-tradingagents supertrend-rsi-explain TCS
-tradingagents supertrend-rsi-positions
-tradingagents supertrend-rsi-daily
-tradingagents supertrend-rsi-report
-```
-
-**Dashboard:** http://localhost:3000/supertrend-rsi  
-**Script:** `python scripts/run_supertrend_rsi_screener_now.py` · `python scripts/run_supertrend_rsi_daily_now.py`
-
----
-
-### TRAMA
-
-LuxAlgo TRAMA close crossover (buy/sell within last few days).
-
-```powershell
-tradingagents trama
-tradingagents trama --buy-only
-tradingagents trama-explain INFY
-tradingagents trama-positions
-tradingagents trama-daily
-tradingagents trama-report
-```
-
-**Dashboard:** http://localhost:3000/trama  
-**Script:** `python scripts/run_trama_screener_now.py` · `python scripts/run_trama_daily_now.py`
-
----
-
-### NW Envelope
-
-Nadaraya-Watson envelope band crosses (contrarian).
-
-```powershell
-tradingagents nw-envelope
-tradingagents nw-envelope-explain HDFCBANK
-tradingagents nw-envelope-positions
-tradingagents nw-envelope-daily
-tradingagents nw-envelope-report
-```
-
-**Dashboard:** http://localhost:3000/nw-envelope  
-**Script:** `python scripts/run_nw_envelope_screener_now.py` · `python scripts/run_nw_envelope_daily_now.py`
-
----
-
-### Pattern Forecast
-
-5-day UP forecast from 2-year price analogues + mandatory stop.
-
-```powershell
-tradingagents pattern-forecast
-tradingagents pattern-forecast-explain TCS
-tradingagents pattern-forecast-audit
-tradingagents pattern-forecast-positions
-tradingagents pattern-forecast-daily
-tradingagents pattern-forecast-report
-```
-
-**Dashboard:** http://localhost:3000/pattern-forecast  
-**Script:** `python scripts/run_pattern_forecast_screener_now.py` · `python scripts/run_pattern_forecast_daily_now.py`
-
----
-
-### Gap Fill desk (legacy paper book)
-
-The **gap screener** is pure (`gap-fill`). These commands are for the **old paper desk** only if you still use it:
-
-```powershell
-tradingagents gap-fill-positions
-tradingagents gap-fill-daily
-tradingagents gap-fill-report
-```
-
-**Dashboard (paper book):** http://localhost:3000/gap-fill
-
----
-
-## 9. RS + AI screener (uses API keys)
-
-The **original** funnel: relative strength vs Nifty → pattern score → **AI analysis** on top names → RS paper book.
-
-### Free preview (no AI cost)
-
-```powershell
-tradingagents screen --preview
-```
-
-### Full run (costs API tokens)
-
-Needs `OPENAI_API_KEY` or another LLM key in `.env` (see [section 15](#15-optional-api-keys-env)).
-
-```powershell
-tradingagents screen --top 10
-tradingagents screen --top 10 --yes
-```
-
-### View RS paper portfolio
-
-```powershell
-tradingagents paper
-tradingagents sync
-```
-
-**Dashboard:** http://localhost:3000 (overview) · `/screens` (history) · `/positions` (RS paper book)
-
----
-
-## 10. Deep AI analysis on one stock
-
-Interactive multi-agent report on **one ticker** (fundamentals, news, technicals, risk debate).
+## 11. Deep AI analysis (`analyze`)
 
 ```powershell
 tradingagents analyze
 ```
 
-Follow the on-screen prompts (ticker, date, model, etc.).
+Runs **Market + Sentiment + News + Fundamentals → Bull/Bear → Trader → Risk → Final decision**.
 
-**Or use the dashboard:** http://localhost:3000/analyze
+Use when: one high-conviction name, need full picture.  
+Skip when: watchlist batch work → use `tech-analyze` instead.
 
-**Non-interactive / scripted:**
-
-```powershell
-python scripts/run_analyze_job.py
-```
+**Dashboard:** http://localhost:3000/analyze
 
 ---
 
-## 11. Quick technical analysis (`tech-analyze`)
+## 12. Quick technical analysis (`tech-analyze`)
 
-A **fast, cheap slice** of the full Tauric `analyze` flow. Runs **only the Market Analyst** agent — the same one that picks up to **8 complementary indicators** from a catalog of 14 (moving averages, MACD family, RSI, Bollinger bands, ATR, VWMA), fetches price data, and writes a detailed technical report with a summary table.
+**Only** the Market Analyst: picks up to **8 indicators**, writes technical markdown.
 
-**Does not run:** Sentiment, News, Fundamentals, Bull/Bear debate, Trader, or Risk teams. The full `tradingagents analyze` command is unchanged.
+| | `tech-analyze` | `analyze` |
+|--|----------------|-----------|
+| Agents | Market only | All + debate |
+| Cost | Low | High |
+| Watchlist | Yes | One ticker |
+| Output | `tech_reports/` | Full memo |
 
-**Requires an API key** (same as `analyze`) — set `OPENAI_API_KEY` in `.env` or your provider’s key.
-
-### Single ticker
-
-```powershell
-tradingagents tech-analyze --ticker SWIGGY.NS
-tradingagents tech-analyze -t RELIANCE --date 2026-07-10
-tradingagents tech-analyze -t TCS --language English --no-save
-```
-
-**Terminal output:** raw **markdown only** (headings, tables, indicator commentary). Status lines (`Analyzing…`, `Report saved:`) use normal CLI styling; the report body is plain markdown you can pipe or paste into a viewer.
-
-**Saved files** (when `--save`, default on):
-
-| File | Contents |
-|------|----------|
-| `market.md` | Market Analyst report |
-| `complete_report.md` | Same report with header |
-
-Default folder: `C:\Users\nanda\.tradingagents\tech_reports\<TICKER>\<DATE>\`
-
-Example after a run:
+**Output:** raw markdown in terminal + saved files:
 
 ```text
 C:\Users\nanda\.tradingagents\tech_reports\SWIGGY.NS\2026-07-10\complete_report.md
 ```
 
-Open in VS Code with **Markdown preview** (`Ctrl+Shift+V`) for formatted tables.
+Preview in VS Code: **Ctrl+Shift+V**
 
-### Watchlist
-
-Default list file: `C:\Users\nanda\.tradingagents\watchlist.txt` (one ticker per line, or CSV with `symbol` / `ticker` column).
-
-```powershell
-tradingagents watchlist add SWIGGY.NS RELIANCE TCS
-tradingagents watchlist show
-tradingagents tech-analyze --watchlist
-tradingagents watchlist remove TCS
-```
-
-### Custom watchlist file
-
-```powershell
-tradingagents tech-analyze --watchlist-file C:\path\to\my_tickers.csv
-```
-
-### Options
-
-| Flag | Purpose |
-|------|---------|
-| `--ticker` / `-t` | One symbol (e.g. `SWIGGY.NS`, `RELIANCE`) |
-| `--watchlist` / `-w` | Run every symbol in the saved watchlist |
-| `--watchlist-file` | Run symbols from a file |
-| `--date` | As-of date `YYYY-MM-DD` (default: today) |
-| `--save` / `--no-save` | Write reports to disk (default: save) |
-| `--output-dir` | Override report folder |
-| `--language` | Report language (`English`, etc.) |
-
-**Rule:** use exactly one of `--ticker`, `--watchlist`, or `--watchlist-file`.
-
-### What you get (example)
-
-For `SWIGGY.NS`, the agent typically covers:
-
-- Price swing / wave structure (uptrend vs downtrend, pullback vs extended)
-- **8 indicators** it chose for that setup (e.g. 10 EMA, 50/200 SMA, MACD, RSI, Bollinger, ATR, volume)
-- Support/resistance and pattern reads (interpretive)
-- Markdown summary table + a directional note (often BUY/HOLD/SELL style)
-
-Typical runtime: **~1–2 minutes per ticker** (Yahoo data + a few LLM tool rounds).
-
-### vs full `analyze`
-
-| | `tech-analyze` | `analyze` |
-|--|----------------|-----------|
-| Agents | Market Analyst only | All analysts + research + trader + risk |
-| Cost | Low (few LLM calls) | High (many LLM calls) |
-| Output | Technical markdown | Full investment memo + final decision |
-| Watchlist | Built-in | One ticker per interactive run |
+**Requires API key** in `.env`.
 
 ---
 
-## 12. Tech Desk paper trading
+## 13. Tech Desk paper trading
 
-**Tech Desk** turns saved `tech-analyze` reports into a **paper portfolio** (₹1L, 10 slots, equal weight, whole shares). It does **not** run `tech-analyze` inline — you generate reports first, then batch-process them.
+Turns saved `tech-analyze` reports into a **paper portfolio**.
 
-### Workflow
+### How entries work
 
-1. **Generate reports** (watchlist or single ticker):
+| PM decision | Meaning |
+|-------------|---------|
+| **open** + market | Buy now at last price |
+| **wait** + zone | Put in pending — buy when price hits pullback zone |
+| **skip** | Pass this ticker |
+| Portfolio full | Auto-sell **weakest** open name (foreclosure), open new pick |
 
-```powershell
-tradingagents tech-analyze --watchlist
-```
-
-2. **Batch PM + execute** (reads all saved reports, latest per ticker; skips reports older than **14 days** by default):
-
-```powershell
-tradingagents tech-desk-process
-tradingagents tech-desk-process --reports-dir C:\Users\nanda\.tradingagents\tech_reports
-```
-
-Reports older than `tech_desk_max_report_age_days` (default 14) are ignored — refresh with `tech-analyze` or delete stale folders manually.
-
-3. **Daily rules job** (no LLM — stops, targets, time exits, zone fills):
+### Workflow (copy-paste)
 
 ```powershell
-tradingagents tech-desk-daily
+python -m cli.main watchlist add SWIGGY.NS RELIANCE TCS
+python -m cli.main tech-analyze --watchlist
+python -m cli.main tech-desk-process
+python -m cli.main tech-desk-daily
+python -m cli.main tech-desk-positions
+python -m cli.main tech-desk-report
 ```
 
-4. **Optional weekly LLM review** of open positions (memo only, unless you apply):
-
-```powershell
-tradingagents tech-desk-review
-tradingagents tech-desk-review --apply
-```
-
-`--apply` executes **close** and **raise stop** recommendations on the book.
-
-5. **Inspect book + stats** (win rate, avg R, P&L by exit reason):
-
-```powershell
-tradingagents tech-desk-positions
-tradingagents tech-desk-report
-```
-
-6. **Dashboard:** http://localhost:3000/tech-desk
-
-### Rules (summary)
+### Settings (defaults)
 
 | Setting | Value |
 |---------|-------|
-| Capital | ₹1,00,000 (`desk_capital`) |
+| Capital | ₹1,00,000 |
 | Max positions | 10 |
-| Sizing | Equal weight, whole shares |
-| Entries | HOLD + **pullback zone** (`limit_zone`) or **market** |
-| Portfolio full | Auto-foreclose weakest (no approval prompt) |
-| Long-only NSE cash | PM `closes` / SELL = exit |
-| Daily | Rules only |
-| Weekly review | Optional LLM (`quick_think_llm`); use `--apply` to execute |
-| Report age | Default max **14 days** for process/review |
-| Audit trail | Each position stores `report_path` + `report_date` |
+| Min confidence to open | 60 |
+| Max report age | 14 days |
+| Daily job | Rules only (no LLM) |
+| Long-only | SELL = exit only |
 
-**Data paths** (default):
+### Data paths
 
-- Reports in: `C:\Users\nanda\.tradingagents\tech_reports\`
-- Positions: `C:\Users\nanda\.tradingagents\tech_desk\positions.json`
-- Pending zones: `C:\Users\nanda\.tradingagents\tech_desk\pending_entries.json`
+| Path | Contents |
+|------|----------|
+| `tech_reports\TICKER\DATE\` | Saved AI technical reports |
+| `tech_desk\positions.json` | Open/closed paper trades |
+| `tech_desk\pending_entries.json` | Waiting for pullback price |
+| `tech_desk\process\` | Batch process logs |
+| `tech_desk\daily\` | Daily exit/fill logs |
+
+**Dashboard:** http://localhost:3000/tech-desk
+
+Each open position stores **`report_path`** and **`report_date`** for audit.
 
 ---
 
-## 13. Portfolio review (all desks)
-
-Summary across **all paper desks** — tables + optional AI memo.
+## 14. Portfolio review (all desks)
 
 ```powershell
-tradingagents portfolio-review
 tradingagents portfolio-review --no-llm
+tradingagents portfolio-review
 ```
 
-Reports save under: `C:\Users\nanda\.tradingagents\portfolio_reports\`
+Saves to: `C:\Users\nanda\.tradingagents\portfolio_reports\`
 
 ---
 
-## 14. Run everything at once (scripts)
+## 15. Batch scripts
 
-All commands below are run from:
+Run from project root:
 
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
 ```
 
-| Script | What it does |
-|--------|----------------|
-| `python scripts/run_all_screeners_now.py` | One Yahoo download → all technical screeners |
-| `python scripts/run_all_daily_now.py` | One download → all paper daily jobs |
-| `python scripts/run_<strategy>_screener_now.py` | Single screener only |
-| `python scripts/run_<strategy>_daily_now.py` | Single daily job only |
-
-**`<strategy>` examples:** `swing`, `momentum`, `nss`, `trama`, `supertrend_rsi`, `nw_envelope`, `pattern_forecast`, `gap_fill`, `chart_patterns`
+| Script | Remark |
+|--------|--------|
+| `run_all_screeners_now.py` | One Yahoo download → all rule screeners |
+| `run_all_daily_now.py` | One download → all rule desk daily jobs |
+| `run_gap_fill_screener_now.py` | Gap screener only |
+| `run_chart_patterns_screener_now.py` | Chart patterns only |
+| `run_*_screener_now.py` | Single strategy screener |
+| `run_*_daily_now.py` | Single strategy daily |
 
 ---
 
-## 15. Dashboard pages
+## 16. Dashboard pages
 
-| URL | What you see |
-|-----|----------------|
-| http://localhost:3000/ | RS overview — win rate, reliability |
-| http://localhost:3000/analyze | AI analysis UI |
+| URL | Remark |
+|-----|--------|
+| http://localhost:3000/ | RS paper overview |
+| http://localhost:3000/analyze | Launch full AI analyze |
 | http://localhost:3000/swing | Swing paper blotter |
 | http://localhost:3000/momentum | Momentum paper blotter |
 | http://localhost:3000/nss | NSS paper blotter |
 | http://localhost:3000/supertrend-rsi | ST+RSI paper blotter |
 | http://localhost:3000/trama | TRAMA paper blotter |
-| http://localhost:3000/gap-screener | **Gap pure screener snapshot** |
-| http://localhost:3000/chart-patterns | **Chart patterns pure screener snapshot** |
-| http://localhost:3000/gap-fill | Gap paper desk (legacy) |
-| http://localhost:3000/nw-envelope | NW Envelope paper blotter |
-| http://localhost:3000/pattern-forecast | Pattern Forecast paper blotter |
-| http://localhost:3000/tech-desk | Tech Desk paper blotter (LLM PM) |
+| http://localhost:3000/gap-screener | Latest gap scan snapshot |
+| http://localhost:3000/chart-patterns | Latest pattern scan snapshot |
+| http://localhost:3000/tech-desk | **Tech Desk** open + pending + closed |
+| http://localhost:3000/nw-envelope | NW Envelope desk |
+| http://localhost:3000/pattern-forecast | Pattern Forecast desk |
 | http://localhost:3000/screens | RS screen history |
 | http://localhost:3000/positions | RS paper positions |
 
 ---
 
-## 16. Where data is saved
+## 17. Where data is saved
 
-Everything lives under: **`C:\Users\nanda\.tradingagents\`**
+Root: **`C:\Users\nanda\.tradingagents\`**
 
-| Folder / file | Contents |
-|---------------|----------|
-| `gap_fill/screener.json` | Gap screener snapshot (dashboard) |
-| `chart_patterns/screener.json` | Chart patterns snapshot (dashboard) |
+| Path | Remark |
+|------|--------|
+| `watchlist.txt` | Your tech-analyze ticker list |
+| `tech_reports/` | AI technical reports (input for Tech Desk) |
+| `tech_desk/positions.json` | Tech Desk paper book |
+| `tech_desk/pending_entries.json` | Pullback zones not filled yet |
+| `gap_fill/screener.json` | Gap dashboard snapshot |
+| `chart_patterns/screener.json` | Pattern dashboard snapshot |
 | `swing/positions.json` | Swing paper book |
 | `momentum/positions.json` | Momentum paper book |
 | `nss/positions.json` | NSS paper book |
-| `supertrend_rsi/positions.json` | ST+RSI paper book |
-| `trama/positions.json` | TRAMA paper book |
-| `nw_envelope/positions.json` | NW Envelope paper book |
-| `pattern_forecast/positions.json` | Pattern Forecast paper book |
-| `gap_fill/positions.json` | Gap paper book (legacy desk) |
-| `paper/paper_snapshot.json` | RS paper snapshot |
-| `paper/screens.json` | RS screen history |
-| `portfolio_reports/` | Portfolio review memos |
-| `watchlist.txt` | Tech-analyze watchlist |
-| `tech_reports/` | Quick technical analysis reports |
+| `paper/` | RS screener paper book |
+| `portfolio_reports/` | Cross-desk review memos |
 | `cache/` | Downloaded price cache |
 
 ---
 
-## 17. Optional: API keys (.env)
+## 18. Config (`default_config.py`)
 
-**Not needed** for rule-based screeners (gap, chart patterns, swing, momentum, etc.).
+Key Tech Desk / tech-analyze keys in `tradingagents/default_config.py`:
 
-**Needed** for:
+| Key | Default | Remark |
+|-----|---------|--------|
+| `tech_watchlist_path` | `~/.tradingagents/watchlist.txt` | Watchlist file |
+| `tech_analyze_reports_dir` | `~/.tradingagents/tech_reports` | Where reports are saved |
+| `tech_desk_max_positions` | 10 | Max open trades |
+| `tech_desk_holding_days` | 20 | Default time exit |
+| `tech_desk_min_confidence` | 60 | PM must score ≥ this to open |
+| `tech_desk_max_report_age_days` | 14 | Ignore older reports in process |
+| `desk_capital` | 100000 | ₹1L shared sizing base |
 
-- `tradingagents screen` (full AI analysis)
-- `tradingagents analyze`
-- `tradingagents tech-analyze`
-- `tradingagents portfolio-review` (unless `--no-llm`)
+**Env overrides:**
 
-Setup:
-
-```powershell
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-copy .env.example .env
-```
-
-Edit `.env` in VS Code and add your key, e.g.:
-
-```text
-OPENAI_API_KEY=sk-...
+```env
+TRADINGAGENTS_TECH_WATCHLIST_PATH=C:\path\to\watchlist.txt
+TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS=21
 ```
 
 ---
 
-## 18. Troubleshooting
+## 19. Optional: API keys (.env)
 
-### `tradingagents` is not recognized
+**Not needed:** gap-fill, chart-patterns, swing, momentum, nss, all `*-daily` rule desks, `portfolio-review --no-llm`.
+
+**Needed:** `screen`, `analyze`, `tech-analyze`, `tech-desk-process`, `tech-desk-review`, `portfolio-review` (with LLM).
+
+### Your project (already configured)
+
+A `.env` file at the repo root is **already set up** for **DeepSeek**:
+
+| Variable | Your value |
+|----------|------------|
+| `TRADINGAGENTS_LLM_PROVIDER` | `deepseek` |
+| `TRADINGAGENTS_QUICK_THINK_LLM` | `deepseek-v4-flash` |
+| `TRADINGAGENTS_DEEP_THINK_LLM` | `deepseek-v4-pro` |
+| `DEEPSEEK_API_KEY` | set (loaded by CLI) |
+
+AI commands (`tech-analyze`, `tech-desk-process`, etc.) should work without adding OpenAI.
+
+### Verify the key loads
 
 ```powershell
 cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-python -m pip install -e .
+python -c "import tradingagents; from tradingagents.default_config import DEFAULT_CONFIG; import os; p=DEFAULT_CONFIG['llm_provider']; k='DEEPSEEK_API_KEY' if p=='deepseek' else 'OPENAI_API_KEY'; print('provider:', p, '| key loaded:', bool(os.environ.get(k)))"
 ```
 
-Or use: `python -m cli.main gap-fill`
+Expected: `provider: deepseek | key loaded: True`
 
-### Dashboard is empty
-
-1. Run the screener or daily job in the terminal first
-2. Refresh the browser (F5)
-
-### “No results” from a screener
-
-Normal on quiet days. Loosen filters, e.g.:
+### New machine / fresh copy
 
 ```powershell
-tradingagents chart-patterns --max-age 21 --max-dist 8
-tradingagents gap-fill --max-age 30
+Copy-Item .env.example .env
 ```
 
-### Command is slow
+Edit `.env` — sample for DeepSeek (matches this project):
 
-First run downloads ~500 stocks from Yahoo (30–90 seconds). Later runs may be faster.
+```env
+DEEPSEEK_API_KEY=your-deepseek-key-here
+TRADINGAGENTS_LLM_PROVIDER=deepseek
+TRADINGAGENTS_QUICK_THINK_LLM=deepseek-v4-flash
+TRADINGAGENTS_DEEP_THINK_LLM=deepseek-v4-pro
+```
 
-### Internet required
+For OpenAI instead, set `OPENAI_API_KEY=sk-...` and either omit `TRADINGAGENTS_LLM_PROVIDER` or set it to `openai`.
 
-Screeners need internet for price data.
+---
 
-### `npm run dev` fails
+## 20. Troubleshooting
+
+| Problem | What you see | Fix |
+|---------|--------------|-----|
+| Wrong Python in VS Code | `ModuleNotFoundError: No module named 'typer'` | Select **`.venv`** interpreter ([§0](#0-vs-code-make-commands-work-read-this-first)) or run `.\.venv\Scripts\python.exe -m pip install -e .` |
+| `tradingagents` not found | `'tradingagents' is not recognized...` | Use `python -m cli.main ...` **or** install in the active env and restart terminal |
+| Script fails | `can't open file 'scripts\...'` | `cd C:\Users\nanda\OneDrive\Desktop\TradingAgents` first |
+| PowerShell `&&` error | `The token '&&' is not a valid statement separator` | Use `;` instead: `cd dashboard; npm run dev` |
+| Dashboard empty | Page loads, no rows | Run screener/daily first, then F5 |
+| Tech Desk skipped all tickers | Log says reports too old | Reports &gt; 14 days — re-run `tech-analyze --watchlist` |
+| No Tech Desk opens | Process ran, book empty | Reports said HOLD + zone — check `pending_entries.json` |
+| AI command fails immediately | API key error | Check `.env` at repo root — this project uses **DeepSeek** (`DEEPSEEK_API_KEY`). Run the verify one-liner in [§19](#19-optional-api-keys-env) |
+| Screener empty | 0 results | Normal on quiet days; try `--max-age 60` |
+| Slow first run | Long wait on first screen | Yahoo download for ~500 stocks — cached after that |
+| `*-positions` / `tech-desk-report` crash in terminal | `UnicodeEncodeError: ... '\u20b9'` | **Use the dashboard** (start with `cd dashboard; npm run dev`) instead of CLI for P&amp;L tables — see table below |
+| `*-daily` hangs | Prompt: "Approve foreclosure?" | Add **`--yes`**: e.g. `python -m cli.main swing-daily --yes` |
+
+### Windows: use dashboard instead of `*-positions`
+
+On Windows, Rich tables with ₹ can crash the VS Code terminal. **Open the dashboard** for positions and stats:
+
+| CLI command | Dashboard URL |
+|-------------|---------------|
+| `tech-desk-positions` / `tech-desk-report` | http://localhost:3000/tech-desk |
+| `swing-positions` / `swing-report` | http://localhost:3000/swing |
+| `momentum-positions` / `momentum-report` | http://localhost:3000/momentum |
+| `nss-positions` / `nss-report` | http://localhost:3000/nss |
+| `supertrend-rsi-positions` | http://localhost:3000/supertrend-rsi |
+| `trama-positions` / `trama-report` | http://localhost:3000/trama |
+| `nw-envelope-positions` | http://localhost:3000/nw-envelope |
+| `pattern-forecast-positions` | http://localhost:3000/pattern-forecast |
+| `gap-fill-positions` | http://localhost:3000/gap-fill |
+| `paper` | http://localhost:3000/positions |
+| `portfolio-review --no-llm` | Open several desk pages above, or read `~/.tradingagents/portfolio_reports/` |
+
+Run screeners/dailies from CLI first, then **F5** in the browser to refresh.
+
+### Copy-paste recovery block
+
+If nothing works, run this whole block in a **new** VS Code terminal:
 
 ```powershell
-cd dashboard
-npm install
-npm run dev
+cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m cli.main --help
+.\.venv\Scripts\python.exe -m cli.main watchlist show
+.\.venv\Scripts\python.exe -m cli.main tech-desk-positions
+```
+
+All four commands should succeed (last one may say “No Tech Desk positions yet” — that is OK).
+
+---
+
+## 21. Quick reference card
+
+Use `python -m cli.main` in VS Code (replace with `tradingagents` if that works on your machine).
+
+```powershell
+cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
+
+# --- VERIFY (run once after setup) ---
+python -m cli.main --help
+python -m cli.main watchlist show
+
+# --- DAILY (after close) ---
+python -m cli.main tech-desk-daily              # Tech Desk: stops, targets, zone fills
+python scripts/run_all_daily_now.py             # All rule desks: swing, momentum, etc.
+
+# --- WEEKLY (Tech Desk track) ---
+python -m cli.main tech-analyze --watchlist     # Refresh AI reports for watchlist
+python -m cli.main tech-desk-process            # AI PM: open best / set pullback waits
+python -m cli.main tech-desk-review             # Read weekly memo (optional)
+python -m cli.main tech-desk-review --apply     # Execute memo actions (optional)
+
+# --- DISCOVERY (optional) ---
+python scripts/run_all_screeners_now.py         # Scan NSE with all rule screeners
+python -m cli.main gap-fill                     # Gaps only (no API key)
+python -m cli.main chart-patterns               # Patterns only (no API key)
+
+# --- CHECK ---
+python -m cli.main tech-desk-positions          # What's open + pending zones
+python -m cli.main tech-desk-report             # Win rate, avg R, P&L by exit
+python -m cli.main portfolio-review --no-llm    # All desks summary (no API key)
+
+# --- ONE STOCK DEEP DIVE ---
+python -m cli.main tech-analyze -t SWIGGY.NS    # Technicals only (needs API key)
+python -m cli.main analyze                      # Full AI memo (needs API key)
+
+# --- DASHBOARD ---
+cd dashboard; npm run dev                       # → http://localhost:3000/tech-desk
 ```
 
 ---
 
-## 19. Quick reference card
-
-```powershell
-# --- Setup (once) ---
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-python -m pip install -e .
-cd dashboard && npm install
-
-# --- Every day ---
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
-python scripts/run_all_screeners_now.py          # all screeners
-python scripts/run_all_daily_now.py              # all paper desks (optional)
-
-# --- Pure screeners ---
-tradingagents gap-fill
-tradingagents chart-patterns
-
-# --- One paper desk example ---
-tradingagents swing
-tradingagents swing-daily
-tradingagents swing-positions
-
-# --- RS + AI (needs API key) ---
-tradingagents screen --preview
-tradingagents screen --top 10 --yes
-tradingagents paper
-
-# --- One stock deep dive ---
-tradingagents analyze
-tradingagents tech-analyze -t RELIANCE
-tradingagents tech-analyze --watchlist
-tradingagents tech-desk-process
-tradingagents tech-desk-daily
-tradingagents tech-desk-positions
-tradingagents chart-patterns-explain SOBHA
-tradingagents nss-explain RELIANCE
-
-# --- All desks summary ---
-tradingagents portfolio-review --no-llm
-
-# --- Dashboard ---
-cd C:\Users\nanda\OneDrive\Desktop\TradingAgents\dashboard
-npm run dev
-# → http://localhost:3000
-```
-
----
-
-*Last updated for branch `cursor/setup-audit-env-and-pf-schedule` — includes Gap Screener, Chart Patterns, and full India desk stack.*
+*Last updated: VS Code interpreter fix, `python -m cli.main` as primary invocation, audit guide, Tech Desk.*

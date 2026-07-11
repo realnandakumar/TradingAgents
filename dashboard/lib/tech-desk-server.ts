@@ -4,6 +4,12 @@ import path from "path";
 
 const DEFAULT_BOOK = path.join(os.homedir(), ".tradingagents", "tech_desk", "positions.json");
 const DEFAULT_PENDING = path.join(os.homedir(), ".tradingagents", "tech_desk", "pending_entries.json");
+const DEFAULT_CLOSED_HISTORY = path.join(
+  os.homedir(),
+  ".tradingagents",
+  "tech_desk",
+  "closed_history.json",
+);
 
 export function techDeskBookPath(): string {
   return (
@@ -27,6 +33,7 @@ export interface TechDeskPosition {
   entry_price: number;
   shares: number;
   notional?: number;
+  alloc?: number;
   stop_loss: number;
   stop_loss_pct: number;
   target_1: number;
@@ -42,6 +49,15 @@ export interface TechDeskPosition {
   rupee_pnl?: number | null;
   exit_reason?: string | null;
   exit_date?: string | null;
+  trading_days_held?: number | null;
+  partial_exits?: Array<{
+    date?: string;
+    price?: number;
+    pct?: number;
+    reason?: string;
+    return?: number;
+    rupee_pnl?: number;
+  }>;
 }
 
 export interface TechDeskPendingEntry {
@@ -58,6 +74,42 @@ export interface TechDeskBook {
   strategy: string;
   updated_at: string;
   positions: TechDeskPosition[];
+}
+
+export function closedHistoryPath(): string {
+  return (
+    process.env.TECH_DESK_CLOSED_HISTORY_PATH ??
+    process.env.TRADINGAGENTS_TECH_DESK_CLOSED_HISTORY_PATH ??
+    DEFAULT_CLOSED_HISTORY
+  );
+}
+
+function tradeKey(p: TechDeskPosition): string {
+  return `${p.ticker}|${p.screen_date}|${p.exit_date ?? ""}`;
+}
+
+/** All closed trades: append-only archive merged with current book (deduped). */
+export function readAllClosedTrades(): TechDeskPosition[] {
+  const book = readTechDeskBook();
+  const fromBook = (book?.positions ?? []).filter((p) => p.status === "closed");
+
+  let archived: TechDeskPosition[] = [];
+  try {
+    const raw = fs.readFileSync(closedHistoryPath(), "utf-8");
+    const data = JSON.parse(raw) as { trades?: TechDeskPosition[] };
+    archived = (data.trades ?? []).map((t) => ({ ...t, status: "closed" as const }));
+  } catch {
+    archived = [];
+  }
+
+  const byKey = new Map<string, TechDeskPosition>();
+  for (const t of [...archived, ...fromBook]) {
+    byKey.set(tradeKey(t), t);
+  }
+
+  return Array.from(byKey.values()).sort((a, b) =>
+    (b.exit_date ?? b.screen_date).localeCompare(a.exit_date ?? a.screen_date),
+  );
 }
 
 export function readTechDeskBook(): TechDeskBook | null {

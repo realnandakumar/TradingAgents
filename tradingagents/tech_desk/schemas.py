@@ -122,22 +122,42 @@ class TechDeskPositionReview(BaseModel):
 def render_batch_decision(decision: TechDeskBatchDecision) -> str:
     lines = ["# Tech Desk Batch Decision", ""]
     if decision.closes:
-        lines.append(f"**Closes**: {', '.join(decision.closes)}")
+        lines.append(f"**Closes** ({len(decision.closes)}): {', '.join(decision.closes)}")
         lines.append("")
     if decision.opens:
-        lines.append("**Opens** (ordered):")
+        lines.append(f"**Opens** ({len(decision.opens)}, best-first):")
         for p in decision.opens:
-            lines.append(f"- {p.ticker} ({p.entry_type.value}, conf={p.confidence})")
+            zone = ""
+            if p.entry_type == EntryType.LIMIT_ZONE and p.zone_low is not None and p.zone_high is not None:
+                zone = f" · zone {p.zone_low:.2f}–{p.zone_high:.2f}"
+            tgt2 = f" · T2 {p.target_2:.2f}" if p.target_2 is not None else ""
+            lines.append(
+                f"- **{p.ticker}** · {p.entry_type.value}{zone} · "
+                f"stop {p.stop_loss:.2f} · T1 {p.target_1:.2f}{tgt2} · "
+                f"conf {p.confidence} · {p.bias.value}"
+            )
+            if p.rationale:
+                snippet = p.rationale.strip().replace("\n", " ")
+                if len(snippet) > 160:
+                    snippet = snippet[:157] + "..."
+                lines.append(f"  _{snippet}_")
         lines.append("")
     if decision.waits:
-        lines.append("**Waits** (zone):")
+        lines.append(f"**Waits** ({len(decision.waits)}, limit zone):")
         for p in decision.waits:
+            zone = f"{p.zone_low:.2f}–{p.zone_high:.2f}" if p.zone_low is not None and p.zone_high is not None else "?"
             lines.append(
-                f"- {p.ticker} zone {p.zone_low}-{p.zone_high} (conf={p.confidence})"
+                f"- **{p.ticker}** · zone {zone} · stop {p.stop_loss:.2f} · "
+                f"T1 {p.target_1:.2f} · conf {p.confidence}"
             )
+            if p.rationale:
+                snippet = p.rationale.strip().replace("\n", " ")
+                if len(snippet) > 160:
+                    snippet = snippet[:157] + "..."
+                lines.append(f"  _{snippet}_")
         lines.append("")
     if decision.skips:
-        lines.append("**Skips**:")
+        lines.append(f"**Skips** ({len(decision.skips)}):")
         for s in decision.skips:
             lines.append(f"- {s.ticker}: {s.reason}")
     return "\n".join(lines)

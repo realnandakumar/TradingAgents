@@ -4,6 +4,7 @@ import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { SwingPosition } from "@/lib/swing-types";
 import { shortSector } from "@/lib/swing-types";
+import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 20;
 
@@ -83,12 +84,12 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="text-muted uppercase tracking-wide border-b border-border bg-surface/40">
-                  {["SYM", "NAME", "SECT", "ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "ST", "SIZE", "RSI", "ADX"].map(
+                  {["SYM", "NAME", "SECT", ...deskOpenMetaHeaders(), "ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "ST", "SIZE", "RSI", "ADX"].map(
                     (h) => (
                       <th
                         key={h}
                         className={`font-medium py-2 px-2 whitespace-nowrap ${
-                          ["ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "SIZE", "RSI", "ADX"].includes(h)
+                          ["ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "SIZE", "RSI", "ADX", ...deskOpenMetaHeaders()].includes(h)
                             ? "text-right"
                             : "text-left"
                         }`}
@@ -108,6 +109,7 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
                     <td className="py-2 px-2 font-semibold">{shortSymbol(p.ticker)}</td>
                     <td className="py-2 px-2 text-muted max-w-[140px] truncate">{p.stock_name.replace(" Ltd.", "")}</td>
                     <td className="py-2 px-2 text-muted">{shortSector(p.sector)}</td>
+                    <DeskOpenMetaCells p={p} />
                     <td className="py-2 px-2 text-right tabular-nums">{inr(p.entry_price)}</td>
                     <td className="py-2 px-2 text-right tabular-nums">{inr(live)}</td>
                     <td className={`py-2 px-2 text-right tabular-nums ${mtmPct >= 0 ? "text-bull" : "text-bear"}`}>

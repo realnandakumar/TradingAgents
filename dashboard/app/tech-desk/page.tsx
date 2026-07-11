@@ -1,6 +1,12 @@
+import { TechDeskActionsPanel } from "@/components/TechDeskActionsPanel";
+import { TechDeskActivityPanel } from "@/components/TechDeskActivityPanel";
+import { TechDeskClosedHistory } from "@/components/TechDeskClosedHistory";
+import { TechDeskPipelineCard } from "@/components/TechDeskPipelineCard";
+import { TechWatchlistPanel } from "@/components/TechWatchlistPanel";
 import { TechDeskBlotter } from "@/components/TechDeskBlotter";
 import {
   computeTechDeskStats,
+  readAllClosedTrades,
   readTechDeskBook,
   readTechDeskPending,
   techDeskBookPath,
@@ -11,13 +17,16 @@ export const dynamic = "force-dynamic";
 export default function TechDeskPage() {
   const book = readTechDeskBook();
   const pending = readTechDeskPending();
+  const closedHistory = readAllClosedTrades();
   const positions = book?.positions ?? [];
   const open = positions.filter((p) => p.status === "open");
-  const closed = positions.filter((p) => p.status === "closed");
-  const stats = computeTechDeskStats(positions);
+  const stats = computeTechDeskStats(closedHistory);
   const updated = book?.updated_at
     ? new Date(book.updated_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
     : null;
+  const hasBook = Boolean(book);
+  const hasPending = pending.length > 0;
+  const showBlotter = hasBook || hasPending;
 
   return (
     <div className="space-y-0 -mx-4 sm:-mx-6 max-w-none">
@@ -36,19 +45,30 @@ export default function TechDeskPage() {
           {stats.trades > 0 ? (
             <div>
               Win {stats.winRate?.toFixed(0)}% · avg R {stats.avgR?.toFixed(2) ?? "—"} · P&L{" "}
-              {stats.totalPnl.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 })}
+              {stats.totalPnl.toLocaleString("en-IN", {
+                style: "currency",
+                currency: "INR",
+                maximumFractionDigits: 0,
+              })}
             </div>
           ) : null}
           <div className="font-mono text-[10px] truncate max-w-[280px]">{techDeskBookPath()}</div>
         </div>
       </div>
 
-      {!book ? (
+      <div className="mx-4 sm:mx-6 mt-4 space-y-4">
+        <TechDeskPipelineCard />
+        <TechWatchlistPanel />
+        <TechDeskActionsPanel />
+        <TechDeskActivityPanel />
+      </div>
+
+      {!showBlotter ? (
         <div className="card m-4 sm:m-6 p-8 text-center">
-          <h2 className="font-medium mb-2">No Tech Desk book found</h2>
-          <p className="text-muted text-sm mb-4">
-            Run <code className="text-accent">tradingagents tech-analyze --watchlist</code> then{" "}
-            <code className="text-accent">tradingagents tech-desk-process</code>.
+          <h2 className="font-medium mb-2">No Tech Desk book yet</h2>
+          <p className="text-muted text-sm mb-4 max-w-md mx-auto">
+            Use the watchlist above, run <strong>Analyze entire watchlist</strong>, then{" "}
+            <strong>Process zones</strong>. Run <strong>Daily run</strong> each trading day.
           </p>
           <p className="text-muted text-xs font-mono">{techDeskBookPath()}</p>
         </div>
@@ -58,45 +78,15 @@ export default function TechDeskPage() {
             <TechDeskBlotter positions={positions} pending={pending} />
           </div>
 
-          {closed.length > 0 && (
-            <section className="card mx-4 sm:mx-6 mt-4 p-5">
-              <h2 className="text-xs font-medium uppercase tracking-wide text-muted mb-3">
-                Closed trades ({closed.length})
-              </h2>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
-                  <thead>
-                    <tr className="text-muted uppercase border-b border-border">
-                      <th className="text-left py-2 pr-3">SYM</th>
-                      <th className="text-right py-2 pr-3">Return</th>
-                      <th className="text-right py-2 pr-3">P&L</th>
-                      <th className="text-left py-2">Exit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {closed.map((p) => (
-                      <tr key={`${p.ticker}-${p.exit_date}`} className="border-b border-border/40">
-                        <td className="py-2 pr-3">{p.ticker.replace(".NS", "")}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">
-                          {p.raw_return != null ? `${(p.raw_return * 100).toFixed(1)}%` : "—"}
-                        </td>
-                        <td className="py-2 pr-3 text-right tabular-nums">
-                          {p.rupee_pnl != null ? p.rupee_pnl.toFixed(0) : "—"}
-                        </td>
-                        <td className="py-2 text-muted">{p.exit_reason ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {open.length === 0 && pending.length === 0 && (
-            <p className="text-muted text-sm text-center py-8">No open Tech Desk positions or pending zones.</p>
+          {open.length === 0 && !hasPending && hasBook && (
+            <p className="text-muted text-sm text-center py-8">
+              No open Tech Desk positions or pending zones.
+            </p>
           )}
         </>
       )}
+
+      <TechDeskClosedHistory trades={closedHistory} />
     </div>
   );
 }

@@ -1,4 +1,6 @@
+import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { SwingBlotter } from "@/components/SwingBlotter";
+import { DeskClosedLedger } from "@/components/DeskClosedLedger";
 import { readSwingBook, swingBookPath } from "@/lib/swing-server";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +32,10 @@ export default function SwingDeskPage() {
         </div>
       </div>
 
+      <div className="mx-4 sm:mx-6 mt-4">
+        <DeskActionsPanel deskId="swing" />
+      </div>
+
       {!book ? (
         <div className="card m-4 sm:m-6 p-8 text-center">
           <h2 className="font-medium mb-2">No swing book found</h2>
@@ -50,28 +56,7 @@ export default function SwingDeskPage() {
               <h2 className="text-xs font-medium uppercase tracking-wide text-muted mb-3">
                 Closed trades ({closed.length})
               </h2>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
-                  <thead>
-                    <tr className="text-muted uppercase border-b border-border">
-                      <th className="text-left py-2 pr-3">SYM</th>
-                      <th className="text-right py-2 pr-3">Return</th>
-                      <th className="text-left py-2">Exit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {closed.map((p) => (
-                      <tr key={p.ticker} className="border-b border-border/40">
-                        <td className="py-2 pr-3">{p.ticker.replace(".NS", "")}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">
-                          {p.raw_return != null ? `${(p.raw_return * 100).toFixed(1)}%` : "—"}
-                        </td>
-                        <td className="py-2 text-muted">{p.exit_reason ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DeskClosedLedger positions={closed} />
             </section>
           )}
 

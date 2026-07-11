@@ -1368,9 +1368,15 @@ def tech_desk_process(
     date: Optional[str] = typer.Option(
         None, "--date", help="Process as-of date (YYYY-MM-DD). Default: today."
     ),
+    apply_replacements: bool = typer.Option(
+        False,
+        "--apply-replacements",
+        help="After process, apply any queued portfolio replacements from today's log.",
+    ),
 ):
     """Load saved tech-analyze reports, run PM batch, execute opens/closes."""
     from tradingagents.tech_desk import run_tech_desk_process
+    from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
 
     config = DEFAULT_CONFIG.copy()
     ensure_api_key(config.get("llm_provider", "openai"))
@@ -1378,6 +1384,7 @@ def tech_desk_process(
     console.print(Panel.fit(
         f"[bold]Tech Desk batch process[/bold]\n"
         f"Reports: {reports_dir or config['tech_analyze_reports_dir']}\n"
+        f"Watchlist: {config.get('tech_watchlist_path', '~/.tradingagents/watchlist.txt')}\n"
         f"Max slots: {config.get('tech_desk_max_positions', 10)} · "
         f"Min confidence: {config.get('tech_desk_min_confidence', 60)} · "
         f"Max report age: {config.get('tech_desk_max_report_age_days', 14)}d",
@@ -1393,25 +1400,109 @@ def tech_desk_process(
         )
 
     if report.get("skipped"):
-        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        reason = report.get("reason")
+        if reason == "empty_watchlist":
+            console.print("[yellow]Skipped:[/yellow] watchlist is empty — add tickers first.")
+        else:
+            console.print(f"[yellow]Skipped:[/yellow] {reason}")
         raise typer.Exit()
 
+    decision_md = report.get("decision_markdown")
+    if decision_md:
+        console.print(Panel(decision_md, title="PM decision", border_style="cyan"))
+
+    if report.get("pm_error"):
+        console.print(f"[red]PM error:[/red] {report['pm_error']}")
+
+    summary = report.get("summary") or {}
     console.print(
-        f"Candidates: {report.get('candidates')} · opened: {len(report.get('opened', []))} · "
-        f"waits: {len(report.get('waits', []))} · closes: {len(report.get('closes', []))} · "
-        f"foreclosures: {len(report.get('foreclosures', []))} · open: {report.get('open_positions')}"
+        f"Watchlist: {report.get('watchlist_count')} · candidates: {report.get('candidates')} · "
+        f"opened: {summary.get('opened', len(report.get('opened', [])))} · "
+        f"waits: {summary.get('waits', len(report.get('waits', [])))} · "
+        f"closes: {summary.get('closes', len(report.get('closes', [])))} · "
+        f"replacements queued: {summary.get('pending_replacements', len(report.get('pending_replacements', [])))} · "
+        f"open: {report.get('open_positions')}"
     )
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("foreclosures"):
-        console.print(f"  [yellow]foreclosed:[/yellow] {', '.join(report['foreclosures'])}")
+    if report.get("waits"):
+        console.print(f"  [cyan]pending zones:[/cyan] {', '.join(report['waits'])}")
+    pending_rep = report.get("pending_replacements") or []
+    if pending_rep:
+        for item in pending_rep:
+            console.print(
+                f"  [yellow]replacement queued:[/yellow] foreclose {item.get('foreclose')} → open {item.get('open')} "
+                f"(run [bold]tech-desk-apply-process[/bold] to approve)"
+            )
     stale = report.get("stale_tickers") or []
     if stale:
         console.print(
             f"  [dim]stale reports skipped (>{config.get('tech_desk_max_report_age_days', 14)}d):[/dim] "
             f"{', '.join(stale)}"
         )
+    skipped = report.get("skipped") or []
+    if skipped:
+        for s in skipped[:8]:
+            if isinstance(s, dict):
+                console.print(f"  [dim]skip {s.get('ticker')}:[/dim] {s.get('reason')}")
+        if len(skipped) > 8:
+            console.print(f"  [dim]… and {len(skipped) - 8} more skips[/dim]")
+
+    if apply_replacements and pending_rep:
+        manager = TechDeskPaperTradeManager(config)
+        proc_date = report.get("date") or date
+        with console.status("[bold green]Applying replacements...", spinner="dots"):
+            applied_report = manager.apply_pending_replacements(process_date=proc_date)
+        applied = applied_report.get("applied") or []
+        if applied:
+            console.print(f"[green]Applied {len(applied)} replacement(s).[/green]")
+        else:
+            console.print("[yellow]No replacements applied.[/yellow]")
+
     console.print("[dim]Full log:[/dim] [bold]tradingagents tech-desk-report[/bold]")
+
+
+@app.command("tech-desk-apply-process")
+def tech_desk_apply_process(
+    date: Optional[str] = typer.Option(
+        None, "--date", help="Process log date (YYYY-MM-DD). Default: today."
+    ),
+):
+    """Apply queued portfolio replacements from a prior tech-desk-process run."""
+    from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    manager = TechDeskPaperTradeManager(config)
+    proc_date = date or datetime.datetime.now().strftime("%Y-%m-%d")
+
+    with console.status("[bold green]Applying replacements...", spinner="dots"):
+        result = manager.apply_pending_replacements(process_date=proc_date)
+
+    if result.get("error"):
+        console.print(f"[red]{result['error']}[/red]")
+        raise typer.Exit(1)
+    if result.get("message"):
+        console.print(f"[yellow]{result['message']}[/yellow]")
+        raise typer.Exit()
+
+    applied = result.get("applied") or []
+    skipped = result.get("skipped") or []
+    console.print(Panel.fit(
+        f"[bold]Applied {len(applied)} · skipped {len(skipped)}[/bold]",
+        title=f"tech-desk-apply-process ({proc_date})",
+    ))
+    for item in applied:
+        if item.get("opened"):
+            console.print(
+                f"  [green]foreclosed {item['foreclosed']} → opened {item['opened']} "
+                f"@ {item.get('entry_price')}[/green]"
+            )
+        elif item.get("queued"):
+            console.print(
+                f"  [cyan]foreclosed {item['foreclosed']} → queued zone {item['queued']}[/cyan]"
+            )
+    for item in skipped:
+        console.print(f"  [dim]skip:[/dim] {item}")
 
 
 @app.command("tech-desk-daily")
@@ -1508,25 +1599,33 @@ def tech_desk_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
-        t.add_column("Entry ₹", justify="right")
-        t.add_column("Shares", justify="right")
-        t.add_column("SL ₹", justify="right")
-        t.add_column("T1 ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
+        t.add_column("SL Rs", justify="right")
+        t.add_column("T1 Rs", justify="right")
         t.add_column("Conf", justify="right")
         t.add_column("Bias")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:,.2f}",
-                str(p.get("shares", "—")),
                 f"{p['stop_loss']:,.2f}",
                 f"{p.get('target_1', 0):,.2f}",
                 str(p.get("confidence", "—")),
                 p.get("bias", "—"),
             )
         console.print(t)
+
+    closed = [p for p in book.positions if p.get("status") == "closed"]
+    if closed:
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title=f"{STRATEGY_NAME} — closed positions")
 
     if pending:
         console.print(f"\n[dim]Pending zone entries: {len(pending)}[/dim]")
@@ -1813,37 +1912,16 @@ def paper():
 
     # Open positions
     if open_positions:
-        t = Table(box=box.SIMPLE_HEAD, title="Open paper positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Rating")
-        t.add_column("Entry date")
-        t.add_column("Entry ₹", justify="right")
-        t.add_column("Signals")
-        for p in open_positions:
-            t.add_row(p["ticker"], p["rating"], p["entry_date"],
-                      f"{p['entry_price']:.2f}", ", ".join(p.get("signals", [])) or "-")
-        console.print(t)
-        console.print(f"[dim]Unrealized P&L (open): ₹{summary.get('unrealized_pnl', 0):,.0f}[/dim]\n")
+        from cli.position_tables import print_rs_paper_open
+
+        print_rs_paper_open(console, open_positions)
+        console.print(f"[dim]Unrealized P&L (open): Rs {summary.get('unrealized_pnl', 0):,.0f}[/dim]\n")
 
     # Closed trades
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed paper trades")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Held", justify="right")
-        for p in closed:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"],
-                f"[{rc}]{ret * 100:+.1f}%[/{rc}]" if ret is not None else "-",
-                f"[{ac}]{alpha * 100:+.1f}%[/{ac}]" if alpha is not None else "-",
-                f"{p.get('holding_days_actual', '-')}d",
-            )
-        console.print(t)
+        from cli.position_tables import print_rs_paper_closed
+
+        print_rs_paper_closed(console, closed)
 
     # Reliability stats
     o = stats["overall"]
@@ -2102,23 +2180,25 @@ def swing_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T1%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("R:R", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:22],
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
                 f"+{p.get('target_1_pct', 0):.1f}%",
@@ -2127,8 +2207,6 @@ def swing_positions():
                 p.get("phase", "initial"),
                 f"{p.get('remaining_pct', 100):.0f}",
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
-                f"{p.get('rsi', 0):.1f}",
-                f"{p.get('adx', 0):.1f}",
             )
         console.print(t)
         console.print(
@@ -2137,25 +2215,9 @@ def swing_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed swing positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed swing positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -2435,23 +2497,25 @@ def momentum_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         t.add_column("RSI", justify="right")
         t.add_column("ADX", justify="right")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:22],
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
                 f"+{p.get('target_2_pct', 0):.1f}%",
@@ -2468,25 +2532,9 @@ def momentum_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed momentum positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed momentum positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -2759,17 +2807,19 @@ def nss_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Score", justify="right")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         t.add_column("RSI", justify="right")
         t.add_column("ADX", justify="right")
         for p in open_positions:
@@ -2777,7 +2827,7 @@ def nss_positions():
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:20],
                 f"{p.get('composite_score', 0):.0f}",
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
                 f"+{p.get('target_2_pct', 0):.1f}%",
@@ -2794,25 +2844,9 @@ def nss_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed NSS positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed NSS positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -3272,17 +3306,19 @@ def supertrend_rsi_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Score", justify="right")
         t.add_column("Age", justify="right")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("Phase")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         t.add_column("RSI", justify="right")
         for p in open_positions:
             t.add_row(
@@ -3290,7 +3326,7 @@ def supertrend_rsi_positions():
                 (p.get("stock_name") or "")[:20],
                 str(p.get("signal_score", 0)),
                 str(p.get("flip_age", "—")),
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
                 f"+{p.get('target_2_pct', 0):.1f}%",
@@ -3305,25 +3341,9 @@ def supertrend_rsi_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed ST+RSI positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed ST+RSI positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -3700,25 +3720,27 @@ def trama_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Age", justify="right")
         t.add_column("Dist%", justify="right")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
-        t.add_column("TRAMA ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
+        t.add_column("TRAMA Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("Phase")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:20],
                 str(p.get("cross_age", "—")),
                 f"{p.get('dist_pct', 0):+.1f}%",
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('trama_value', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
@@ -3733,25 +3755,9 @@ def trama_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed TRAMA positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed TRAMA positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -4061,13 +4067,15 @@ def gap_fill_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Age", justify="right")
         t.add_column("Gap%", justify="right")
         t.add_column("Fill%", justify="right")
-        t.add_column("Screened", justify="right")
+        add_open_meta_columns(t)
         t.add_column("Entry Rs", justify="right")
         t.add_column("Target Rs", justify="right")
         t.add_column("Stop%", justify="right")
@@ -4081,7 +4089,7 @@ def gap_fill_positions():
                 str(p.get("gap_age", "—")),
                 f"{p.get('gap_pct', 0):+.1f}%",
                 f"{p.get('fill_pct', 0):.0f}%",
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('fill_target', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
@@ -4096,25 +4104,9 @@ def gap_fill_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed Gap Fill positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed Gap Fill positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -4656,25 +4648,27 @@ def nw_envelope_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Age", justify="right")
         t.add_column("Dist%", justify="right")
-        t.add_column("Screened", justify="right")
-        t.add_column("Entry ₹", justify="right")
-        t.add_column("Lower ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
+        t.add_column("Lower Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T2%", justify="right")
         t.add_column("Phase")
-        t.add_column("Trail ₹", justify="right")
+        t.add_column("Trail Rs", justify="right")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:20],
                 str(p.get("cross_age", "—")),
                 f"{p.get('dist_pct', 0):+.1f}%",
-                p.get("screen_date", ""),
+                *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('nwe_lower', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
@@ -4689,25 +4683,9 @@ def nw_envelope_positions():
         )
 
     if closed:
-        t = Table(box=box.SIMPLE_HEAD, title="Closed NW Envelope positions")
-        t.add_column("Ticker", style="bold")
-        t.add_column("Return", justify="right")
-        t.add_column("Alpha vs Nifty", justify="right")
-        t.add_column("Exit", justify="right")
-        t.add_column("Exit reason")
-        for p in closed[-20:]:
-            ret = p.get("raw_return")
-            alpha = p.get("alpha_return")
-            rc = "green" if (ret or 0) > 0 else "red"
-            ac = "green" if (alpha or 0) > 0 else "red"
-            t.add_row(
-                p["ticker"].replace(".NS", ""),
-                f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]",
-                f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a",
-                p.get("exit_date", ""),
-                p.get("exit_reason", ""),
-            )
-        console.print(t)
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed NW Envelope positions")
 
     o = stats.get("overall", {})
     if o.get("trades"):
@@ -4979,23 +4957,26 @@ def pattern_forecast_positions():
         raise typer.Exit()
 
     if open_positions:
+        from cli.position_tables import add_open_meta_columns, open_meta_cells
+
         t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
         t.add_column("Ticker", style="bold")
         t.add_column("Stock")
         t.add_column("Score", justify="right")
         t.add_column("R:R", justify="right")
-        t.add_column("Entry ₹", justify="right")
-        t.add_column("SL ₹", justify="right")
-        t.add_column("Max 5d ₹", justify="right")
-        t.add_column("Proj 5d ₹", justify="right")
+        add_open_meta_columns(t)
+        t.add_column("Entry Rs", justify="right")
+        t.add_column("SL Rs", justify="right")
+        t.add_column("Max 5d Rs", justify="right")
+        t.add_column("Proj 5d Rs", justify="right")
         t.add_column("Analogue")
         for p in open_positions:
             t.add_row(
                 p["ticker"].replace(".NS", ""),
                 (p.get("stock_name") or "")[:20],
                 f"{p.get('probability', 0):.1f}",
-                f"{p.get('composite_score', 0):.3f}",
                 f"{p.get('risk_reward', 0):.1f}",
+                *open_meta_cells(p),
                 f"{p['entry_price']:,.2f}",
                 f"{p['stop_loss']:,.2f}",
                 f"{p.get('target_max', 0):,.2f}",
@@ -5010,7 +4991,9 @@ def pattern_forecast_positions():
         f"win rate {ov.get('win_rate')}% · avg return {ov.get('avg_return')}%[/dim]"
     )
     if closed:
-        console.print(f"[dim]{len(closed)} closed trade(s)[/dim]")
+        from cli.position_tables import print_closed_positions_ledger
+
+        print_closed_positions_ledger(console, closed, title="Closed Pattern Forecast positions")
 
 
 @app.command("pattern-forecast-daily")

@@ -119,6 +119,38 @@ class TechDeskPositionBook:
     def pending_entries(self) -> List[dict]:
         return self._load_pending()
 
+    def validate_pending_plan(
+        self,
+        plan: "TechTradePlan",
+        current_price: Optional[float] = None,
+    ) -> Optional[str]:
+        """Return an error string if the pending plan fails validation."""
+        if plan.confidence < self.min_confidence:
+            return f"confidence {plan.confidence} < min {self.min_confidence}"
+        if plan.stop_loss <= 0:
+            return "stop_loss must be positive"
+        if plan.target_1 <= 0:
+            return "target_1 must be positive"
+
+        zone_low = plan.zone_low
+        zone_high = plan.zone_high
+        if zone_low is None or zone_high is None:
+            return "missing zone bounds"
+        if zone_low <= 0 or zone_high <= zone_low:
+            return "invalid zone bounds"
+        if plan.stop_loss >= zone_low:
+            return "stop must be below zone_low for long entries"
+        if plan.target_1 <= zone_high:
+            return "target_1 must be above zone_high"
+
+        if current_price is not None and current_price > 0:
+            if zone_low > current_price * 1.03:
+                return "zone_low above current price (not a pullback entry)"
+            if zone_high < current_price * 0.85:
+                return "zone too far below current price"
+
+        return None
+
     def add_pending_entry(
         self,
         plan: "TechTradePlan",
@@ -126,7 +158,12 @@ class TechDeskPositionBook:
         *,
         report_path: Optional[str] = None,
         report_date: Optional[str] = None,
-    ) -> dict:
+        current_price: Optional[float] = None,
+    ) -> Optional[dict]:
+        err = self.validate_pending_plan(plan, current_price)
+        if err:
+            logger.info("Reject pending %s — %s", plan.ticker, err)
+            return None
         pending = self._load_pending()
         pending = [p for p in pending if p.get("ticker") != plan.ticker]
         row = {
@@ -374,7 +411,44 @@ class TechDeskPositionBook:
         event["raw_return"] = p["raw_return"]
         event["rupee_pnl"] = p["rupee_pnl"]
         event["outcome"] = p["outcome"]
+        self._append_closed_history(p)
         return event
+
+    def _closed_history_path(self) -> Path:
+        custom = self.config.get("tech_desk_closed_history_path")
+        if custom:
+            return Path(custom).expanduser()
+        return self.path.parent / "closed_history.json"
+
+    def _append_closed_history(self, position: dict) -> None:
+        """Append-only archive so closed trades survive book resets."""
+        path = self._closed_history_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        state: dict = {"trades": []}
+        if path.exists():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                state = {"trades": []}
+        trades: List[dict] = state.setdefault("trades", [])
+        key = (
+            position.get("ticker"),
+            position.get("screen_date"),
+            position.get("exit_date"),
+        )
+        if any(
+            t.get("ticker") == key[0]
+            and t.get("screen_date") == key[1]
+            and t.get("exit_date") == key[2]
+            for t in trades
+        ):
+            return
+        snapshot = dict(position)
+        snapshot["archived_at"] = datetime.now().isoformat(timespec="seconds")
+        trades.append(snapshot)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp.replace(path)
 
     def close_position(
         self,

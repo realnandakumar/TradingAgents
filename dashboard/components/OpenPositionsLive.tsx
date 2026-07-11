@@ -1,7 +1,8 @@
 "use client";
 
 import { RatingBadge, SignalList } from "@/components/Badges";
-import { dateTimeIST, inr, pct, qty, shortSymbol } from "@/lib/format";
+import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
+import { dateTimeIST, inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { Position } from "@/lib/types";
 
@@ -44,9 +45,10 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
             <tr className="text-muted text-xs uppercase tracking-wide border-b border-border">
               <th className="text-left font-medium py-2 pr-3">Ticker</th>
               <th className="text-left font-medium py-2 pr-3">Rating</th>
-              <th className="text-right font-medium py-2 pr-3">Qty</th>
-              <th className="text-right font-medium py-2 pr-3">Entry</th>
-              <th className="text-right font-medium py-2 pr-3">Cost</th>
+              {deskOpenMetaHeaders().map((h) => (
+                <th key={h} className="text-right font-medium py-2 pr-3">{h}</th>
+              ))}
+              <th className="text-right font-medium py-2 pr-3">Entry ₹</th>
               <th className="text-right font-medium py-2 pr-3">Stop / Target</th>
               <th className="text-left font-medium py-2 pr-3">Ordered</th>
               <th className="text-left font-medium py-2 pr-3">Executes</th>
@@ -62,9 +64,8 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               <tr key={`${p.ticker}-${p.entry_date}`} className="border-b border-border/50 last:border-0">
                 <td className="py-2 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
                 <td className="py-2 pr-3"><RatingBadge rating={p.rating} /></td>
-                <td className="py-2 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{qty(p.shares)}</td>
+                <DeskOpenMetaCells p={{ ...p, screen_date: p.entry_date }} />
                 <td className="py-2 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.entry_price)}</td>
-                <td className="py-2 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.alloc)}</td>
                 <td className="py-2 pr-3 text-right text-xs whitespace-nowrap">
                   {p.stoploss != null ? (
                     <>

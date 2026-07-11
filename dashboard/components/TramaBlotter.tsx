@@ -4,6 +4,7 @@ import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { TramaPosition } from "@/lib/trama-server";
 import { shortSector } from "@/lib/swing-types";
+import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 10;
 const MAX_HOLD_DAYS = 20;
@@ -90,6 +91,11 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
               <thead>
                 <tr className="text-muted uppercase border-b border-border bg-surface-2/30">
                   <th className="text-left py-2 px-3">SYM</th>
+                  {deskOpenMetaHeaders().map((h) => (
+                    <th key={h} className={`py-2 px-2 whitespace-nowrap ${h === "OK" ? "text-center" : "text-right"}`}>
+                      {h}
+                    </th>
+                  ))}
                   <th className="text-right py-2 px-2">Age</th>
                   <th className="text-right py-2 px-2">Dist%</th>
                   <th className="text-right py-2 px-2">Last</th>
@@ -111,6 +117,7 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
                     }`}
                   >
                     <td className="py-2 px-3 font-medium">{shortSymbol(p.ticker)}</td>
+                    <DeskOpenMetaCells p={p} />
                     <td className="py-2 px-2 text-right tabular-nums">{crossAge ?? "—"}</td>
                     <td className="py-2 px-2 text-right tabular-nums">
                       {distPct != null ? pct(distPct, 1) : "—"}

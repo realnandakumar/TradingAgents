@@ -4,6 +4,9 @@ export interface SwingPosition {
   sector: string;
   screen_date: string;
   entry_price: number;
+  shares?: number;
+  notional?: number;
+  alloc?: number;
   stop_loss: number;
   stop_loss_pct: number;
   target_1: number;
@@ -25,7 +28,18 @@ export interface SwingPosition {
   range_pct?: number;
   atr_ratio?: number;
   raw_return?: number | null;
+  exit_date?: string | null;
   exit_reason?: string | null;
+  trading_days_held?: number | null;
+  rupee_pnl?: number | null;
+  partial_exits?: Array<{
+    date?: string;
+    price?: number;
+    pct?: number;
+    reason?: string;
+    return?: number;
+    rupee_pnl?: number;
+  }>;
 }
 
 export interface SwingBook {

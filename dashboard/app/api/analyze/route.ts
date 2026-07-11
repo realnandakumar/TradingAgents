@@ -9,19 +9,21 @@ import {
   repoRootFromDashboard,
   type AnalyzeJobSpec,
 } from "@/lib/analyze-server";
+import { pythonExecutable } from "@/lib/desk-cli-server";
+import { rootEnvForSpawn } from "@/lib/env-server";
 
 export const dynamic = "force-dynamic";
 
 function spawnAnalyzeJob(jobId: string): void {
   const script = analyzeJobScriptPath();
   const cwd = repoRootFromDashboard();
-  const pythonCmd = process.platform === "win32" ? "python" : "python3";
+  const pythonCmd = pythonExecutable();
 
   const child = spawn(pythonCmd, [script, "--job-id", jobId], {
     cwd,
     detached: true,
     stdio: "ignore",
-    env: { ...process.env },
+    env: { ...process.env, ...rootEnvForSpawn() },
   });
   child.unref();
 }

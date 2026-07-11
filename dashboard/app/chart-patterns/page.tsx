@@ -1,3 +1,4 @@
+import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { ChartPatternsBlotter } from "@/components/ChartPatternsBlotter";
 import {
   chartPatternScreenerSnapshotPath,
@@ -36,6 +37,10 @@ export default function ChartPatternsScreenerPage() {
             {chartPatternScreenerSnapshotPath()}
           </div>
         </div>
+      </div>
+
+      <div className="mx-4 sm:mx-6 mt-4">
+        <DeskActionsPanel deskId="chart-patterns" />
       </div>
 
       {!snapshot ? (

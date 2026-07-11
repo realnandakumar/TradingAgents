@@ -101,6 +101,7 @@ class TechDeskPaperTradeManager:
             "waits": [],
             "skipped": [],
             "foreclosures": [],
+            "pending_replacements": [],
             "exits": [],
         }
 
@@ -116,15 +117,24 @@ class TechDeskPaperTradeManager:
         for plan in decision.waits:
             if plan.entry_type != EntryType.LIMIT_ZONE:
                 plan = plan.model_copy(update={"entry_type": EntryType.LIMIT_ZONE})
-            if plan.zone_low is None or plan.zone_high is None:
-                report["skipped"].append({"ticker": plan.ticker, "reason": "wait missing zone"})
-                continue
             if self.book.has_open_position(plan.ticker):
                 report["skipped"].append({"ticker": plan.ticker, "reason": "already open"})
                 continue
+            err = self.book.validate_pending_plan(plan, prices.get(plan.ticker))
+            if err:
+                report["skipped"].append({"ticker": plan.ticker, "reason": err})
+                continue
             meta = self._snapshot_meta(plan.ticker, snapshots)
-            self.book.add_pending_entry(plan, process_date, **meta)
-            report["waits"].append(plan.ticker)
+            row = self.book.add_pending_entry(
+                plan,
+                process_date,
+                current_price=prices.get(plan.ticker),
+                **meta,
+            )
+            if row:
+                report["waits"].append(plan.ticker)
+            else:
+                report["skipped"].append({"ticker": plan.ticker, "reason": "pending validation failed"})
 
         for skip in decision.skips:
             report["skipped"].append({"ticker": skip.ticker, "reason": skip.reason})
@@ -135,20 +145,39 @@ class TechDeskPaperTradeManager:
                 continue
 
             if self.book.open_count() >= self.max_positions:
-                closed = self._foreclose_weakest(batch_tickers, process_date)
-                if closed:
-                    report["foreclosures"].append(closed)
-                else:
+                weak = self._weakest_open(batch_tickers)
+                if weak is None:
                     report["skipped"].append({"ticker": plan.ticker, "reason": "portfolio full"})
                     continue
+                report["pending_replacements"].append({
+                    "foreclose": weak["ticker"],
+                    "open": plan.ticker,
+                    "plan": plan.model_dump(),
+                    "foreclose_entry": weak.get("entry_price"),
+                    "foreclose_confidence": weak.get("confidence"),
+                })
+                report["skipped"].append({
+                    "ticker": plan.ticker,
+                    "reason": f"portfolio full — replacement queued (foreclose {weak['ticker']})",
+                })
+                continue
 
             if plan.entry_type == EntryType.LIMIT_ZONE:
-                if plan.zone_low is None or plan.zone_high is None:
-                    report["skipped"].append({"ticker": plan.ticker, "reason": "zone open missing bounds"})
+                err = self.book.validate_pending_plan(plan, prices.get(plan.ticker))
+                if err:
+                    report["skipped"].append({"ticker": plan.ticker, "reason": err})
                     continue
                 meta = self._snapshot_meta(plan.ticker, snapshots)
-                self.book.add_pending_entry(plan, process_date, **meta)
-                report["waits"].append(plan.ticker)
+                row = self.book.add_pending_entry(
+                    plan,
+                    process_date,
+                    current_price=prices.get(plan.ticker),
+                    **meta,
+                )
+                if row:
+                    report["waits"].append(plan.ticker)
+                else:
+                    report["skipped"].append({"ticker": plan.ticker, "reason": "pending validation failed"})
                 continue
 
             entry_price = prices.get(plan.ticker) or self.book.latest_price(plan.ticker)
@@ -165,10 +194,101 @@ class TechDeskPaperTradeManager:
 
         report["open_positions"] = self.book.open_count()
         report["stats"] = self.book.stats()
+        report["summary"] = {
+            "closes": len(report["closes"]),
+            "opened": len(report["opened"]),
+            "waits": len(report["waits"]),
+            "skipped": len(report["skipped"]),
+            "pending_replacements": len(report["pending_replacements"]),
+        }
 
         out = self.process_log_dir / f"{process_date}.json"
         out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         return report
+
+    def apply_pending_replacements(
+        self,
+        process_date: Optional[str] = None,
+        prices: Optional[Dict[str, float]] = None,
+    ) -> dict:
+        """Execute queued portfolio replacements from a process log (explicit approval)."""
+        process_date = process_date or datetime.now().strftime("%Y-%m-%d")
+        log_path = self.process_log_dir / f"{process_date}.json"
+        if not log_path.exists():
+            return {"applied": [], "skipped": [], "error": f"no process log for {process_date}"}
+
+        log = json.loads(log_path.read_text(encoding="utf-8"))
+        pending = log.get("pending_replacements") or []
+        if not pending:
+            return {"applied": [], "skipped": [], "message": "no pending replacements"}
+
+        from .schemas import EntryType, TechTradePlan
+
+        applied: List[dict] = []
+        skipped: List[dict] = []
+
+        for item in pending:
+            foreclose = item.get("foreclose")
+            plan_data = item.get("plan")
+            if not foreclose or not plan_data:
+                skipped.append({"item": item, "reason": "malformed replacement entry"})
+                continue
+
+            plan = TechTradePlan.model_validate(plan_data)
+            if not self.book.has_open_position(foreclose):
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "foreclose not open"})
+                continue
+            if self.book.has_open_position(plan.ticker):
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "open already held"})
+                continue
+
+            exit_price = (prices or {}).get(foreclose) or self.book.latest_price(foreclose)
+            if exit_price is None:
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "no exit price"})
+                continue
+
+            if not self.book.close_position(
+                foreclose, exit_price, process_date, ExitReason.FORECLOSURE.value
+            ):
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "foreclose failed"})
+                continue
+
+            if plan.entry_type == EntryType.LIMIT_ZONE:
+                err = self.book.validate_pending_plan(plan, (prices or {}).get(plan.ticker))
+                if err:
+                    skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": err})
+                    continue
+                row = self.book.add_pending_entry(
+                    plan,
+                    process_date,
+                    current_price=(prices or {}).get(plan.ticker),
+                )
+                if row:
+                    applied.append({"foreclosed": foreclose, "queued": plan.ticker, "type": "limit_zone"})
+                else:
+                    skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "pending rejected"})
+                continue
+
+            entry_price = (prices or {}).get(plan.ticker) or self.book.latest_price(plan.ticker)
+            if entry_price is None:
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "no entry price"})
+                continue
+            pos = self.book.open_from_plan(plan, entry_price, process_date)
+            if pos:
+                applied.append({
+                    "foreclosed": foreclose,
+                    "opened": plan.ticker,
+                    "entry_price": entry_price,
+                })
+            else:
+                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "open rejected"})
+
+        log["pending_replacements"] = []
+        log["replacements_applied"] = applied
+        log["replacements_skipped"] = skipped
+        log_path.write_text(json.dumps(log, indent=2, default=str), encoding="utf-8")
+
+        return {"applied": applied, "skipped": skipped, "date": process_date}
 
     def apply_review(
         self,

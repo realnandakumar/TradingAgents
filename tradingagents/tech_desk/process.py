@@ -6,10 +6,12 @@ import logging
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
+from tradingagents.analysis.watchlist import load_watchlist
 from tradingagents.llm_clients import create_llm_client
 from tradingagents.tech_desk.agents.portfolio_manager import run_tech_desk_batch_pm
 from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
 from tradingagents.tech_desk.report_loader import load_tech_reports
+from tradingagents.tech_desk.schemas import render_batch_decision
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,20 @@ def run_tech_desk_process(
     process_date = process_date or datetime.now().strftime("%Y-%m-%d")
     reports_dir = reports_dir or config.get("tech_analyze_reports_dir")
 
-    _log("Loading saved tech-analyze reports...")
+    watchlist = load_watchlist()
+    if not watchlist:
+        return {
+            "skipped": True,
+            "reason": "empty_watchlist",
+            "reports_dir": str(reports_dir),
+            "stale_tickers": [],
+        }
+
+    _log(f"Loading saved tech-analyze reports for {len(watchlist)} watchlist tickers...")
     max_age = config.get("tech_desk_max_report_age_days")
     candidates, stale_tickers = load_tech_reports(
         reports_dir,
+        tickers=watchlist,
         max_report_age_days=max_age,
         as_of=process_date,
     )
@@ -63,6 +75,7 @@ def run_tech_desk_process(
             "skipped": True,
             "reason": "no_reports",
             "reports_dir": str(reports_dir),
+            "watchlist_count": len(watchlist),
             "stale_tickers": stale_tickers,
         }
 
@@ -86,7 +99,7 @@ def run_tech_desk_process(
     )
     llm = client.get_llm()
 
-    decision = pm_runner(
+    decision, pm_error = pm_runner(
         llm,
         candidates,
         open_positions,
@@ -104,7 +117,11 @@ def run_tech_desk_process(
     )
     report["skipped"] = False
     report["candidates"] = len(candidates)
+    report["watchlist_count"] = len(watchlist)
     report["stale_tickers"] = stale_tickers
     report["slots_available"] = slots_available
     report["decision"] = decision.model_dump()
+    report["decision_markdown"] = render_batch_decision(decision)
+    if pm_error:
+        report["pm_error"] = pm_error
     return report

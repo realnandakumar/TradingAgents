@@ -1,3 +1,4 @@
+import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { CandidatesTable } from "@/components/CandidatesTable";
 import { EmptyState } from "@/components/SetupNotice";
 import { getScreens } from "@/lib/paper-server";
@@ -16,6 +17,8 @@ export default async function ScreensPage() {
           Each run: high-RS NSE stocks ranked by technical signals, then deep-analyzed by the AI.
         </p>
       </div>
+
+      <DeskActionsPanel deskId="screens" />
 
       {screens.length === 0 ? (
         <EmptyState

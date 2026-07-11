@@ -1,3 +1,4 @@
+import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { GapScreenerBlotter } from "@/components/GapScreenerBlotter";
 import { gapScreenerSnapshotPath, readGapScreenerSnapshot } from "@/lib/gap-screener-server";
 
@@ -30,6 +31,10 @@ export default function GapScreenerPage() {
           ) : null}
           <div className="font-mono text-[10px] truncate max-w-[320px]">{gapScreenerSnapshotPath()}</div>
         </div>
+      </div>
+
+      <div className="mx-4 sm:mx-6 mt-4">
+        <DeskActionsPanel deskId="gap-screener" />
       </div>
 
       {!snapshot ? (

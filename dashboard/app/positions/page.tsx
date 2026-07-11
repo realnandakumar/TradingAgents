@@ -1,9 +1,9 @@
+import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { SignalList } from "@/components/Badges";
 import { OpenPositionsLive } from "@/components/OpenPositionsLive";
+import { DeskClosedLedger } from "@/components/DeskClosedLedger";
 import { EmptyState } from "@/components/SetupNotice";
 import { getLatestPaper } from "@/lib/paper-server";
-import { pctFromFraction, shortSymbol } from "@/lib/format";
-import type { Position } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,8 @@ export default async function PositionsPage() {
         </p>
       </div>
 
+      <DeskActionsPanel deskId="positions" />
+
       {positions.length === 0 ? (
         <EmptyState title="No paper positions yet" hint="Run `tradingagents screen` to open positions here." />
       ) : (
@@ -36,36 +38,7 @@ export default async function PositionsPage() {
             {closed.length === 0 ? (
               <p className="text-muted text-sm">No closed trades yet.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-muted text-xs uppercase tracking-wide border-b border-border">
-                      <th className="text-left font-medium py-2 pr-3">Ticker</th>
-                      <th className="text-right font-medium py-2 pr-3">Return</th>
-                      <th className="text-right font-medium py-2 pr-3">Alpha vs Nifty</th>
-                      <th className="text-right font-medium py-2 pr-3">Held</th>
-                      <th className="text-left font-medium py-2">Signals</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {closed.map((p: Position) => (
-                      <tr key={`${p.ticker}-${p.entry_date}`} className="border-b border-border/50 last:border-0">
-                        <td className="py-2.5 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
-                        <td className={`py-2.5 pr-3 text-right tabular-nums ${ (p.raw_return ?? 0) >= 0 ? "text-bull" : "text-bear"}`}>
-                          {pctFromFraction(p.raw_return)}
-                        </td>
-                        <td className={`py-2.5 pr-3 text-right tabular-nums ${ (p.alpha_return ?? 0) >= 0 ? "text-bull" : "text-bear"}`}>
-                          {pctFromFraction(p.alpha_return)}
-                        </td>
-                        <td className="py-2.5 pr-3 text-right tabular-nums text-muted">
-                          {p.holding_days_actual != null ? `${p.holding_days_actual}d` : "—"}
-                        </td>
-                        <td className="py-2.5"><SignalList signals={p.signals} abbrev /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DeskClosedLedger positions={closed.map((p) => ({ ...p, screen_date: p.entry_date, trading_days_held: p.holding_days_actual }))} />
             )}
           </section>
         </>

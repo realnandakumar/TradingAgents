@@ -32,6 +32,7 @@ export interface Position {
   entry_price: number;
   shares: number;
   alloc: number;
+  notional?: number;
   stoploss?: number | null;
   target?: number | null;
   stop_pct?: number | null;       // negative %, downside to stop
@@ -42,6 +43,7 @@ export interface Position {
   raw_return: number | null;
   alpha_return: number | null;
   holding_days_actual: number | null;
+  rupee_pnl?: number | null;
 }
 
 export interface Agg {

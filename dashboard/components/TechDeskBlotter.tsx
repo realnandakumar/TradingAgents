@@ -1,8 +1,12 @@
 "use client";
 
+import { useState } from "react";
+
+import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { TechDeskPendingEntry, TechDeskPosition } from "@/lib/tech-desk-server";
+import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 10;
 
@@ -20,6 +24,28 @@ export function TechDeskBlotter({
 }) {
   const { quotes, loading } = useQuotes(positions.map((p) => p.ticker));
   const open = positions.filter((p) => p.status === "open");
+  const closedCount = positions.filter((p) => p.status === "closed").length;
+  const [reportTicker, setReportTicker] = useState<string | null>(null);
+  const [reportMd, setReportMd] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+
+  const openReport = async (ticker: string) => {
+    setReportTicker(ticker);
+    setReportLoading(true);
+    setReportMd(null);
+    try {
+      const res = await fetch(
+        `/api/tech-desk/report?ticker=${encodeURIComponent(ticker)}`,
+      );
+      const data = await res.json();
+      if (res.ok) setReportMd(data.markdown);
+      else setReportMd(`Report not found for ${ticker}. Run analyze first.`);
+    } catch {
+      setReportMd("Failed to load report.");
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   let mtmSum = 0;
   let haveLive = false;
@@ -56,7 +82,7 @@ export function TechDeskBlotter({
           { label: "Pending", value: String(pending.length), sub: "zone waits" },
           { label: "Slots free", value: String(MAX_POSITIONS - open.length), sub: "capacity" },
           { label: "Avg conf", value: open.length ? String(Math.round(avgConf)) : "—", sub: "0–100" },
-          { label: "Desk", value: "TECH", sub: "LLM PM" },
+          { label: "Closed", value: String(closedCount), sub: "lifetime" },
         ].map((k) => (
           <div key={k.label} className="px-4 py-3 border-r border-border/60 last:border-r-0">
             <div className="text-[10px] uppercase tracking-wider text-muted">{k.label}</div>
@@ -71,6 +97,11 @@ export function TechDeskBlotter({
           <thead>
             <tr className="text-muted uppercase border-b border-border bg-surface-2/30">
               <th className="text-left py-2 px-3">SYM</th>
+              {deskOpenMetaHeaders().map((h) => (
+                <th key={h} className={`py-2 px-2 whitespace-nowrap ${h === "OK" ? "text-center" : "text-right"}`}>
+                  {h}
+                </th>
+              ))}
               <th className="text-right py-2 px-2">Conf</th>
               <th className="text-right py-2 px-2">Last</th>
               <th className="text-right py-2 px-2">MTM</th>
@@ -90,6 +121,7 @@ export function TechDeskBlotter({
                 }`}
               >
                 <td className="py-2 px-3 font-medium">{shortSymbol(p.ticker)}</td>
+                <DeskOpenMetaCells p={p} />
                 <td className="py-2 px-2 text-right tabular-nums">{p.confidence ?? "—"}</td>
                 <td className="py-2 px-2 text-right tabular-nums">{inr(live)}</td>
                 <td
@@ -105,7 +137,19 @@ export function TechDeskBlotter({
                 </td>
                 <td className="py-2 px-2 text-right tabular-nums text-bull">{inr(p.target_1)}</td>
                 <td className="py-2 px-2 text-muted">{p.bias ?? "—"}</td>
-                <td className="py-2 px-3 text-muted">{p.report_date ?? "—"}</td>
+                <td className="py-2 px-3">
+                  {p.report_date ? (
+                    <button
+                      type="button"
+                      onClick={() => openReport(p.ticker)}
+                      className="text-accent hover:underline text-[11px]"
+                    >
+                      {p.report_date}
+                    </button>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -122,6 +166,33 @@ export function TechDeskBlotter({
           ))}
         </div>
       )}
+
+      {reportTicker ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="card max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <h3 className="text-sm font-medium font-mono">{shortSymbol(reportTicker)} report</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setReportTicker(null);
+                  setReportMd(null);
+                }}
+                className="text-muted hover:text-foreground text-lg leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {reportLoading ? (
+                <p className="text-sm text-muted">Loading…</p>
+              ) : reportMd ? (
+                <MarkdownViewer text={reportMd} />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -25,13 +25,14 @@ A plain-language guide for using **this entire project** from **VS Code on Windo
 9. [RS + AI screener (uses API keys)](#9-rs--ai-screener-uses-api-keys)
 10. [Deep AI analysis on one stock](#10-deep-ai-analysis-on-one-stock)
 11. [Quick technical analysis (tech-analyze)](#11-quick-technical-analysis-tech-analyze)
-12. [Portfolio review (all desks)](#12-portfolio-review-all-desks)
-13. [Run everything at once (scripts)](#13-run-everything-at-once-scripts)
-14. [Dashboard pages](#14-dashboard-pages)
-15. [Where data is saved](#15-where-data-is-saved)
-16. [Optional: API keys (.env)](#16-optional-api-keys-env)
-17. [Troubleshooting](#17-troubleshooting)
-18. [Quick reference card](#18-quick-reference-card)
+12. [Tech Desk paper trading](#12-tech-desk-paper-trading)
+13. [Portfolio review (all desks)](#13-portfolio-review-all-desks)
+14. [Run everything at once (scripts)](#14-run-everything-at-once-scripts)
+15. [Dashboard pages](#15-dashboard-pages)
+16. [Where data is saved](#16-where-data-is-saved)
+17. [Optional: API keys (.env)](#17-optional-api-keys-env)
+18. [Troubleshooting](#18-troubleshooting)
+19. [Quick reference card](#19-quick-reference-card)
 
 ---
 
@@ -537,7 +538,75 @@ Typical runtime: **~1–2 minutes per ticker** (Yahoo data + a few LLM tool roun
 
 ---
 
-## 12. Portfolio review (all desks)
+## 12. Tech Desk paper trading
+
+**Tech Desk** turns saved `tech-analyze` reports into a **paper portfolio** (₹1L, 10 slots, equal weight, whole shares). It does **not** run `tech-analyze` inline — you generate reports first, then batch-process them.
+
+### Workflow
+
+1. **Generate reports** (watchlist or single ticker):
+
+```powershell
+tradingagents tech-analyze --watchlist
+```
+
+2. **Batch PM + execute** (reads all saved reports, latest per ticker; skips reports older than **14 days** by default):
+
+```powershell
+tradingagents tech-desk-process
+tradingagents tech-desk-process --reports-dir C:\Users\nanda\.tradingagents\tech_reports
+```
+
+Reports older than `tech_desk_max_report_age_days` (default 14) are ignored — refresh with `tech-analyze` or delete stale folders manually.
+
+3. **Daily rules job** (no LLM — stops, targets, time exits, zone fills):
+
+```powershell
+tradingagents tech-desk-daily
+```
+
+4. **Optional weekly LLM review** of open positions (memo only, unless you apply):
+
+```powershell
+tradingagents tech-desk-review
+tradingagents tech-desk-review --apply
+```
+
+`--apply` executes **close** and **raise stop** recommendations on the book.
+
+5. **Inspect book + stats** (win rate, avg R, P&L by exit reason):
+
+```powershell
+tradingagents tech-desk-positions
+tradingagents tech-desk-report
+```
+
+6. **Dashboard:** http://localhost:3000/tech-desk
+
+### Rules (summary)
+
+| Setting | Value |
+|---------|-------|
+| Capital | ₹1,00,000 (`desk_capital`) |
+| Max positions | 10 |
+| Sizing | Equal weight, whole shares |
+| Entries | HOLD + **pullback zone** (`limit_zone`) or **market** |
+| Portfolio full | Auto-foreclose weakest (no approval prompt) |
+| Long-only NSE cash | PM `closes` / SELL = exit |
+| Daily | Rules only |
+| Weekly review | Optional LLM (`quick_think_llm`); use `--apply` to execute |
+| Report age | Default max **14 days** for process/review |
+| Audit trail | Each position stores `report_path` + `report_date` |
+
+**Data paths** (default):
+
+- Reports in: `C:\Users\nanda\.tradingagents\tech_reports\`
+- Positions: `C:\Users\nanda\.tradingagents\tech_desk\positions.json`
+- Pending zones: `C:\Users\nanda\.tradingagents\tech_desk\pending_entries.json`
+
+---
+
+## 13. Portfolio review (all desks)
 
 Summary across **all paper desks** — tables + optional AI memo.
 
@@ -550,7 +619,7 @@ Reports save under: `C:\Users\nanda\.tradingagents\portfolio_reports\`
 
 ---
 
-## 13. Run everything at once (scripts)
+## 14. Run everything at once (scripts)
 
 All commands below are run from:
 
@@ -569,7 +638,7 @@ cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
 
 ---
 
-## 14. Dashboard pages
+## 15. Dashboard pages
 
 | URL | What you see |
 |-----|----------------|
@@ -585,12 +654,13 @@ cd C:\Users\nanda\OneDrive\Desktop\TradingAgents
 | http://localhost:3000/gap-fill | Gap paper desk (legacy) |
 | http://localhost:3000/nw-envelope | NW Envelope paper blotter |
 | http://localhost:3000/pattern-forecast | Pattern Forecast paper blotter |
+| http://localhost:3000/tech-desk | Tech Desk paper blotter (LLM PM) |
 | http://localhost:3000/screens | RS screen history |
 | http://localhost:3000/positions | RS paper positions |
 
 ---
 
-## 15. Where data is saved
+## 16. Where data is saved
 
 Everything lives under: **`C:\Users\nanda\.tradingagents\`**
 
@@ -615,7 +685,7 @@ Everything lives under: **`C:\Users\nanda\.tradingagents\`**
 
 ---
 
-## 16. Optional: API keys (.env)
+## 17. Optional: API keys (.env)
 
 **Not needed** for rule-based screeners (gap, chart patterns, swing, momentum, etc.).
 
@@ -641,7 +711,7 @@ OPENAI_API_KEY=sk-...
 
 ---
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 ### `tradingagents` is not recognized
 
@@ -684,7 +754,7 @@ npm run dev
 
 ---
 
-## 18. Quick reference card
+## 19. Quick reference card
 
 ```powershell
 # --- Setup (once) ---
@@ -715,6 +785,9 @@ tradingagents paper
 tradingagents analyze
 tradingagents tech-analyze -t RELIANCE
 tradingagents tech-analyze --watchlist
+tradingagents tech-desk-process
+tradingagents tech-desk-daily
+tradingagents tech-desk-positions
 tradingagents chart-patterns-explain SOBHA
 tradingagents nss-explain RELIANCE
 

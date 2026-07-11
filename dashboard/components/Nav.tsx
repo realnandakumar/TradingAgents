@@ -16,6 +16,7 @@ const LINKS = [
   { href: "/gap-fill", label: "Gap desk" },
   { href: "/nw-envelope", label: "NW Envelope" },
   { href: "/pattern-forecast", label: "Pattern desk" },
+  { href: "/tech-desk", label: "Tech desk" },
   { href: "/screens", label: "Screens" },
   { href: "/positions", label: "Positions" },
 ];

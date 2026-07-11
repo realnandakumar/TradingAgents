@@ -102,6 +102,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PATTERN_FORECAST_BOOK_PATH": "pattern_forecast_book_path",
     "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
     "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
+    "TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS": "tech_desk_max_report_age_days",
 }
 
 
@@ -133,6 +134,15 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Quick tech-analyze watchlist and report output
     "tech_watchlist_path": os.path.join(_TRADINGAGENTS_HOME, "watchlist.txt"),
     "tech_analyze_reports_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_reports"),
+    # Tech Desk paper trading (batch PM over saved tech-analyze reports)
+    "tech_desk_max_positions": 10,
+    "tech_desk_holding_days": 20,
+    "tech_desk_min_confidence": 60,
+    "tech_desk_book_path": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "positions.json"),
+    "tech_desk_pending_path": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "pending_entries.json"),
+    "tech_desk_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "daily"),
+    "tech_desk_process_log_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "process"),
+    "tech_desk_max_report_age_days": 14,
     # Per-run directory for full tool response logs (StockTwits, Reddit,
     # yfinance news, technical indicators). None disables this logging; the
     # CLI sets it per run to a tool_responses/ subdir under results_dir.

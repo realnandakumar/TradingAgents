@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from tradingagents.agents import create_market_analyst
+from tradingagents.agents.analysts.market_analyst_tech import create_tech_market_analyst
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.agents.utils.agent_utils import (
     create_msg_delete,
@@ -52,7 +53,7 @@ def _build_tech_graph(quick_llm, conditional_logic: ConditionalLogic):
     tools_market = ToolNode([get_stock_data, get_indicators])
 
     workflow = StateGraph(AgentState)
-    workflow.add_node("Market Analyst", create_market_analyst(quick_llm))
+    workflow.add_node("Market Analyst", create_tech_market_analyst(quick_llm))
     workflow.add_node("tools_market", tools_market)
     workflow.add_node("Msg Clear Market", create_msg_delete())
 
@@ -73,6 +74,28 @@ def _prepare_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     set_config(cfg)
     os.makedirs(cfg["data_cache_dir"], exist_ok=True)
     return cfg
+
+
+_META_PREAMBLE_RE = re.compile(
+    r"^(?:now i have (?:all )?(?:the )?(?:data|information)|"
+    r"let me (?:now )?(?:analyze|write|compile|prepare)|"
+    r"i(?:'ll| will) now (?:analyze|write|compile|prepare)|"
+    r"based on (?:the )?(?:data|information) (?:i've |i have )?gathered).*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_market_report_preamble(text: str) -> str:
+    """Remove meta narration before the report heading (tech-analyze backup)."""
+    if not text:
+        return text
+    cleaned = _META_PREAMBLE_RE.sub("", text).strip()
+    if cleaned.startswith("#"):
+        return cleaned
+    for i, line in enumerate(cleaned.splitlines()):
+        if line.strip().startswith("#"):
+            return "\n".join(cleaned.splitlines()[i:]).strip()
+    return cleaned
 
 
 def run_tech_analyze(
@@ -113,11 +136,13 @@ def run_tech_analyze(
     for chunk in graph.stream(init_state, **args):
         final_state.update(chunk)
 
+    market_report = strip_market_report_preamble(final_state.get("market_report", ""))
+
     return {
         "ticker": ticker,
         "trade_date": trade_date,
-        "market_report": final_state.get("market_report", ""),
-        "final_state": final_state,
+        "market_report": market_report,
+        "final_state": {**final_state, "market_report": market_report},
     }
 
 

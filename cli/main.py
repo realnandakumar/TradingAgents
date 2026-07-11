@@ -1360,6 +1360,251 @@ def tech_analyze(
             console.print(f"[yellow]No market report generated for {sym}.[/yellow]")
 
 
+@app.command("tech-desk-process")
+def tech_desk_process(
+    reports_dir: Optional[str] = typer.Option(
+        None, "--reports-dir", help="Folder of saved tech-analyze reports."
+    ),
+    date: Optional[str] = typer.Option(
+        None, "--date", help="Process as-of date (YYYY-MM-DD). Default: today."
+    ),
+):
+    """Load saved tech-analyze reports, run PM batch, execute opens/closes."""
+    from tradingagents.tech_desk import run_tech_desk_process
+
+    config = DEFAULT_CONFIG.copy()
+    ensure_api_key(config.get("llm_provider", "openai"))
+
+    console.print(Panel.fit(
+        f"[bold]Tech Desk batch process[/bold]\n"
+        f"Reports: {reports_dir or config['tech_analyze_reports_dir']}\n"
+        f"Max slots: {config.get('tech_desk_max_positions', 10)} · "
+        f"Min confidence: {config.get('tech_desk_min_confidence', 60)} · "
+        f"Max report age: {config.get('tech_desk_max_report_age_days', 14)}d",
+        title="tech-desk-process",
+    ))
+
+    with console.status("[bold green]Processing batch...", spinner="dots") as status:
+        report = run_tech_desk_process(
+            config,
+            reports_dir=reports_dir,
+            process_date=date,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(
+        f"Candidates: {report.get('candidates')} · opened: {len(report.get('opened', []))} · "
+        f"waits: {len(report.get('waits', []))} · closes: {len(report.get('closes', []))} · "
+        f"foreclosures: {len(report.get('foreclosures', []))} · open: {report.get('open_positions')}"
+    )
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("foreclosures"):
+        console.print(f"  [yellow]foreclosed:[/yellow] {', '.join(report['foreclosures'])}")
+    stale = report.get("stale_tickers") or []
+    if stale:
+        console.print(
+            f"  [dim]stale reports skipped (>{config.get('tech_desk_max_report_age_days', 14)}d):[/dim] "
+            f"{', '.join(stale)}"
+        )
+    console.print("[dim]Full log:[/dim] [bold]tradingagents tech-desk-report[/bold]")
+
+
+@app.command("tech-desk-daily")
+def tech_desk_daily(
+    force: bool = typer.Option(False, "--force", help="Run even on weekends (testing)."),
+):
+    """Rules-only daily job: stop/target/time exits + pending zone fills (no LLM)."""
+    from tradingagents.tech_desk import run_tech_desk_daily
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status("[bold green]Tech Desk daily...", spinner="dots"):
+        report = run_tech_desk_daily(config, force=force)
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]tech-desk daily[/bold]\n"
+        f"Exits: {len(report.get('exits', []))} · zone fills: {len(report.get('zone_fills', []))} · "
+        f"open: {report.get('open_positions')} · pending: {report.get('pending_entries')}",
+        title="Tech Desk daily",
+    ))
+
+
+@app.command("tech-desk-review")
+def tech_desk_review(
+    reports_dir: Optional[str] = typer.Option(
+        None, "--reports-dir", help="Folder of saved tech-analyze reports."
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Execute CLOSE / tighten_stop / trail_stop on the book after review.",
+    ),
+):
+    """Manual weekly LLM review of open Tech Desk positions."""
+    from tradingagents.llm_clients import create_llm_client
+    from tradingagents.tech_desk import TechDeskPaperTradeManager
+
+    config = DEFAULT_CONFIG.copy()
+    ensure_api_key(config.get("llm_provider", "openai"))
+
+    client = create_llm_client(
+        provider=config["llm_provider"],
+        model=config["quick_think_llm"],
+        base_url=config.get("backend_url"),
+    )
+    manager = TechDeskPaperTradeManager(config)
+
+    with console.status("[bold green]Running weekly review...", spinner="dots"):
+        result = manager.run_review(
+            client.get_llm(),
+            reports_dir=reports_dir or config.get("tech_analyze_reports_dir"),
+            apply=apply,
+        )
+
+    if result.get("message") == "no open positions":
+        console.print("[yellow]No open Tech Desk positions to review.[/yellow]")
+        raise typer.Exit()
+
+    md = result.get("review_markdown")
+    if md:
+        console.print(Markdown(md))
+    else:
+        console.print("[yellow]Review did not produce structured output.[/yellow]")
+
+    applied = result.get("applied")
+    if applied:
+        if applied.get("closed"):
+            console.print(f"[green]Applied closes:[/green] {', '.join(applied['closed'])}")
+        if applied.get("stops_raised"):
+            console.print(f"[green]Stops raised:[/green] {', '.join(applied['stops_raised'])}")
+        if applied.get("skipped"):
+            console.print(f"[dim]Skipped {len(applied['skipped'])} review action(s).[/dim]")
+
+
+@app.command("tech-desk-positions")
+def tech_desk_positions():
+    """Show Tech Desk paper positions, pending zone entries, and stats."""
+    from tradingagents.tech_desk import STRATEGY_NAME, TechDeskPositionBook
+
+    book = TechDeskPositionBook(DEFAULT_CONFIG.copy())
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    pending = book.pending_entries()
+
+    if not book.positions and not pending:
+        console.print(Panel.fit(
+            "No Tech Desk positions yet. Run [bold]tradingagents tech-desk-process[/bold] "
+            "after saving tech-analyze reports.",
+            title="tech-desk",
+        ))
+        raise typer.Exit()
+
+    if open_positions:
+        t = Table(box=box.SIMPLE_HEAD, title=f"{STRATEGY_NAME} — open positions")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Entry ₹", justify="right")
+        t.add_column("Shares", justify="right")
+        t.add_column("SL ₹", justify="right")
+        t.add_column("T1 ₹", justify="right")
+        t.add_column("Conf", justify="right")
+        t.add_column("Bias")
+        for p in open_positions:
+            t.add_row(
+                p["ticker"].replace(".NS", ""),
+                f"{p['entry_price']:,.2f}",
+                str(p.get("shares", "—")),
+                f"{p['stop_loss']:,.2f}",
+                f"{p.get('target_1', 0):,.2f}",
+                str(p.get("confidence", "—")),
+                p.get("bias", "—"),
+            )
+        console.print(t)
+
+    if pending:
+        console.print(f"\n[dim]Pending zone entries: {len(pending)}[/dim]")
+        for pe in pending:
+            console.print(
+                f"  {pe['ticker']} · zone {pe.get('zone_low')}–{pe.get('zone_high')} · "
+                f"conf {pe.get('confidence')}"
+            )
+
+    ov = stats.get("overall", {})
+    console.print(
+        f"\n[dim]Open {stats.get('open_positions', 0)} · closed {stats.get('closed_positions', 0)} · "
+        f"win rate {ov.get('win_rate')}% · total P&L ₹{ov.get('total_pnl', 0):,.0f}[/dim]"
+    )
+
+
+@app.command("tech-desk-report")
+def tech_desk_report():
+    """Show Tech Desk portfolio stats and latest process/daily logs."""
+    from tradingagents.tech_desk import TechDeskPaperTradeManager, TechDeskPositionBook
+
+    book = TechDeskPositionBook(DEFAULT_CONFIG.copy())
+    stats = book.stats()
+    manager = TechDeskPaperTradeManager(DEFAULT_CONFIG.copy())
+    process_report = manager.latest_process_report()
+    daily_report = manager.latest_daily_report()
+
+    ov = stats.get("overall", {})
+    console.print(Panel.fit(
+        f"[bold]Tech Desk stats[/bold]\n"
+        f"Closed: {ov.get('trades', 0)} · win rate {ov.get('win_rate')}% · "
+        f"avg return {ov.get('avg_return')}% · avg R {ov.get('avg_r')} · "
+        f"total P&L ₹{ov.get('total_pnl', 0):,.0f}\n"
+        f"Open: {stats.get('open_positions', 0)} · pending zones: {stats.get('pending_entries', 0)}",
+        title="tech-desk-report",
+    ))
+
+    by_reason = stats.get("by_exit_reason") or {}
+    if by_reason:
+        t = Table(box=box.SIMPLE_HEAD, title="P&L by exit reason")
+        t.add_column("Reason")
+        t.add_column("Trades", justify="right")
+        t.add_column("Win%", justify="right")
+        t.add_column("Avg R", justify="right")
+        t.add_column("P&L ₹", justify="right")
+        for reason, agg in by_reason.items():
+            t.add_row(
+                reason,
+                str(agg.get("trades", 0)),
+                str(agg.get("win_rate") if agg.get("win_rate") is not None else "—"),
+                str(agg.get("avg_r") if agg.get("avg_r") is not None else "—"),
+                f"{agg.get('total_pnl', 0):,.0f}",
+            )
+        console.print(t)
+
+    if not process_report and not daily_report and ov.get("trades", 0) == 0:
+        console.print(
+            "[yellow]No Tech Desk activity yet. Run tech-desk-process or tech-desk-daily.[/yellow]"
+        )
+        raise typer.Exit()
+
+    if process_report:
+        console.print(Panel.fit(
+            f"[bold]Latest process[/bold] · {process_report.get('date')}\n"
+            f"Opened: {len(process_report.get('opened', []))} · "
+            f"waits: {len(process_report.get('waits', []))} · "
+            f"open: {process_report.get('open_positions')}",
+            title="Tech Desk process",
+        ))
+    if daily_report:
+        console.print(Panel.fit(
+            f"[bold]Latest daily[/bold] · {daily_report.get('date')}\n"
+            f"Exits: {len(daily_report.get('exits', []))} · "
+            f"zone fills: {len(daily_report.get('zone_fills', []))}",
+            title="Tech Desk daily",
+        ))
+
+
 watchlist_app = typer.Typer(help="Manage the tech-analyze watchlist.")
 app.add_typer(watchlist_app, name="watchlist")
 

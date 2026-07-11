@@ -28,6 +28,7 @@
 # TradingAgents: Multi-Agents LLM Financial Trading Framework
 
 ## News
+- [2026-07] **Tech Desk** — LLM watchlist pipeline (`tech-analyze` → PM batch process → daily rules), dashboard at `/tech-desk`, pullback zone entries, and explicit approval for portfolio replacements.
 - [2026-07] **India multi-strategy screeners** — Swing, Momentum, NSS, and SuperTrend+RSI desks with per-strategy paper trading, shared Yahoo download runners, and a fully offline local dashboard (no Supabase required).
 - [2026-05] **TradingAgents v0.2.5** released with the grounded Sentiment Analyst, GPT-5.5 etc. model coverage, Qwen/GLM/MiniMax dual-region support, `TRADINGAGENTS_*` env-var configurability with API-key auto-detection, remote Ollama support, non-US alpha benchmarks, and ticker path-traversal hardening. See [CHANGELOG.md](CHANGELOG.md) for the full list.
 - [2026-04] **TradingAgents v0.2.4** released with structured-output agents (Research Manager, Trader, Portfolio Manager), LangGraph checkpoint resume, persistent decision log, DeepSeek/Qwen/GLM/Azure provider support, Docker, and a Windows UTF-8 encoding fix.
@@ -270,6 +271,35 @@ Replace `swing` with `momentum`, `nss`, `supertrend-rsi`, `trama`, `nw-envelope`
 `pattern-forecast` as needed. Use `*-explain TICKER` on NSS, SuperTrend+RSI, TRAMA,
 NW Envelope, and Pattern Forecast to debug why a name passed or failed.
 
+### Tech Desk (LLM watchlist paper trading)
+
+Separate from the rule-based screeners above: maintain a **watchlist**, run quick
+**technical analysis** per ticker (Market Analyst only — no full multi-agent debate),
+then an **AI portfolio manager** reads those saved reports and opens trades or queues
+**pullback limit zones**. Daily runs are rules-only (stops, targets, time exits, zone
+fills) with no extra LLM cost.
+
+```bash
+tradingagents watchlist add RELIANCE TCS       # ~/.tradingagents/watchlist.txt
+tradingagents tech-analyze --watchlist         # saves to tech_reports/TICKER/DATE/
+tradingagents tech-analyze -t SWIGGY.NS        # single ticker (does not add to watchlist)
+tradingagents tech-desk-process                # PM: open / wait / skip (watchlist tickers)
+tradingagents tech-desk-apply-process          # approve queued portfolio replacements
+tradingagents tech-desk-daily                  # exits + zone fills (no LLM)
+tradingagents tech-desk-positions              # open book + pending zones
+tradingagents tech-desk-report               # closed-trade stats (win rate, avg R, P&L)
+tradingagents tech-desk-review               # weekly memo on open positions (read only)
+tradingagents tech-desk-review --apply       # execute review closes / stop raises
+```
+
+Weekly rhythm: refresh reports → **Process** → **Daily** each session → optional **Review**.
+Process uses watchlist reports ≤14 days old; HOLD / wait-for-pullback setups become
+pending zones rather than immediate market buys when price is above the cited entry band.
+
+Dashboard **`/tech-desk`**: watchlist editor, pipeline P&L, Analyze / Process / Daily /
+Review buttons (desk-cli jobs), blotter, and closed history. See
+**[§13 Tech Desk](docs/USER_CLI_GUIDE.md#13-tech-desk-paper-trading)** in the user guide.
+
 Per-strategy one-shot scripts:
 
 ```bash
@@ -311,9 +341,12 @@ npm run dev          # http://localhost:3000
 | `/trama` | TRAMA crossover desk blotter |
 | `/nw-envelope` | Nadaraya-Watson Envelope desk blotter |
 | `/pattern-forecast` | Pattern Forecast desk blotter |
+| `/tech-desk` | Tech Desk — watchlist, LLM analyze/process pipeline, paper blotter |
 
-Run `tradingagents screen` (RS) or any strategy's daily job to refresh the data,
-then reload the dashboard.
+Run `tradingagents screen` (RS), any strategy's daily job, or Tech Desk **Process** / **Daily**
+to refresh the data, then reload the dashboard.
+
+Most desk pages include a **Run** panel that mirrors the CLI via background jobs (`/api/desk-cli`).
 
 Local data lives under `~/.tradingagents/`:
 
@@ -328,6 +361,12 @@ Local data lives under `~/.tradingagents/`:
 | `trama/positions.json` | TRAMA desk |
 | `nw_envelope/positions.json` | NW Envelope desk |
 | `pattern_forecast/positions.json` | Pattern Forecast desk |
+| `watchlist.txt` | Tech Desk watchlist (one ticker per line) |
+| `tech_reports/TICKER/DATE/market.md` | Saved `tech-analyze` reports |
+| `tech_desk/positions.json` | Tech Desk open book |
+| `tech_desk/pending_entries.json` | Pullback limit zones waiting for fill |
+| `tech_desk/process/` | Process logs (opens, waits, replacements) |
+| `tech_desk/daily/` | Daily exit / zone-fill logs |
 
 ### Configuration
 
@@ -339,6 +378,8 @@ See `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars. Key knobs:
 - **Per-strategy:** `swing_*`, `momentum_*`, `nss_*`, `strsi_*`, `trama_*`, `nwe_*`,
   `pattern_forecast_*` keys for hold windows, position limits, stop/target R-multiples,
   and book paths
+- **Tech Desk:** `tech_desk_max_positions`, `tech_desk_min_confidence`,
+  `tech_desk_holding_days`, `tech_desk_max_report_age_days`, `tech_analyze_reports_dir`
 - **Desk capital:** `desk_capital` (₹1L per strategy desk, equal-weight slots)
 
 > Pattern detection (especially cup-and-handle and ascending triangle) is heuristic

@@ -1,7 +1,7 @@
 import { GapFillBlotter } from "@/components/GapFillBlotter";
 import { GapScreenerBlotter } from "@/components/GapScreenerBlotter";
 import { PortfolioDeskPage } from "@/components/PortfolioDeskPage";
-import { gapFillBookPath, readGapFillBook } from "@/lib/gap-fill-server";
+import { gapFillBookPath, readGapFillBook, type GapFillPosition } from "@/lib/gap-fill-server";
 import { gapScreenerSnapshotPath, readGapScreenerSnapshot } from "@/lib/gap-screener-server";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,9 @@ export default function GapFillDeskPage() {
   const snapshot = readGapScreenerSnapshot();
   const maxFillPct =
     typeof snapshot?.filters?.max_fill_pct === "number" ? snapshot.filters.max_fill_pct : 50;
-  const openPositions = (book?.positions ?? []).filter((p) => p.status === "open");
+  const openPositions = (book?.positions ?? []).filter(
+    (p) => p.status === "open",
+  ) as GapFillPosition[];
   const openTickers = openPositions.map((p) => p.ticker);
   const screenerTickers = (snapshot?.picks ?? []).map((p) => p.symbol);
   const screenerSet = new Set(screenerTickers);

@@ -25,7 +25,13 @@ export async function GET(req: NextRequest) {
   const desksRaw = req.nextUrl.searchParams.get("desks");
   const enabledDesks = parseDeskFilter(desksRaw);
 
-  const payload = await loadChartPayload(normalizeTicker(ticker), range, enabledDesks);
+  const patternId = req.nextUrl.searchParams.get("pattern_id");
+  const payload = await loadChartPayload(
+    normalizeTicker(ticker),
+    range,
+    enabledDesks,
+    patternId,
+  );
   if (payload.bars.length === 0) {
     return NextResponse.json(
       { error: `No OHLCV data for ${payload.ticker}`, ticker: payload.ticker },

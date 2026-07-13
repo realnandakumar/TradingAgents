@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { TradingChart } from "@/components/charts/TradingChart";
@@ -23,17 +23,29 @@ function shortSymbol(ticker: string): string {
   return ticker.replace(/\.NS$/i, "");
 }
 
+function resolveTickerFromQuery(query: string, tickers: string[]): string | null {
+  const raw = query.trim().toUpperCase();
+  if (!raw) return null;
+  if (tickers.includes(raw)) return raw;
+  const withNs = raw.includes(".") ? raw : `${raw}.NS`;
+  if (tickers.includes(withNs)) return withNs;
+  const bare = raw.replace(/\.NS$/i, "");
+  return tickers.find((t) => shortSymbol(t) === bare) ?? null;
+}
+
 export function ChartWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tickerParam = searchParams.get("ticker") ?? "";
   const rangeParam = (searchParams.get("range") ?? "1y") as ChartRange;
   const deskParam = searchParams.get("desk");
+  const patternIdParam = searchParams.get("pattern_id");
   const intradayDefault =
     searchParams.get("intraday") === "1" || searchParams.get("mode") === "intraday";
 
   const [tickers, setTickers] = useState<string[]>([]);
   const [ticker, setTicker] = useState(tickerParam);
+  const effectiveTicker = tickerParam.trim() ? tickerParam : ticker;
   const [range, setRange] = useState<ChartRange>(
     RANGES.some((r) => r.id === rangeParam) ? rangeParam : "1y",
   );
@@ -53,21 +65,27 @@ export function ChartWorkspace() {
       .catch(() => setTickers([]));
   }, []);
 
-  useEffect(() => {
-    if (tickerParam) setTicker(tickerParam);
-  }, [tickerParam]);
+  const prevTickerRef = useRef<string | null>(null);
 
-  const loadChart = useCallback(async (sym: string, rng: ChartRange) => {
+  const loadChart = useCallback(async (sym: string, rng: ChartRange, patternId?: string | null) => {
     if (!sym.trim()) {
       setData(null);
       return;
     }
+    const tickerChanged = prevTickerRef.current !== sym;
+    prevTickerRef.current = sym;
+    if (tickerChanged) {
+      setDesksReady(false);
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/chart?ticker=${encodeURIComponent(sym)}&range=${encodeURIComponent(rng)}`,
-      );
+      const params = new URLSearchParams({
+        ticker: sym,
+        range: rng,
+      });
+      if (patternId) params.set("pattern_id", patternId);
+      const res = await fetch(`/api/chart?${params.toString()}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load chart");
       const payload = json as ChartPayload;
@@ -101,12 +119,12 @@ export function ChartWorkspace() {
   }, [deskParam, desksReady]);
 
   useEffect(() => {
-    if (ticker) loadChart(ticker, range);
-  }, [ticker, range, loadChart]);
-
-  useEffect(() => {
-    setDesksReady(false);
-  }, [ticker]);
+    if (!effectiveTicker) return;
+    const handle = window.setTimeout(() => {
+      void loadChart(effectiveTicker, range, patternIdParam);
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [effectiveTicker, range, patternIdParam, loadChart]);
 
   const filteredTickers = useMemo(() => {
     const q = query.trim().toUpperCase();
@@ -117,31 +135,47 @@ export function ChartWorkspace() {
   const chartData = useMemo(() => {
     if (!data) return null;
     const merged = mergeDeskOverlaysClient(data.deskOverlays, enabledDesks);
-    const lines = data.lines.filter((l) => {
-      if (l.id === "sma50") return showSma50;
-      if (l.id === "sma200") return showSma200;
-      return true;
-    });
-    return { ...data, lines, ...merged };
+    const lines = [
+      ...data.lines.filter((l) => {
+        if (l.id === "sma50") return showSma50;
+        if (l.id === "sma200") return showSma200;
+        return true;
+      }),
+      ...merged.segments,
+    ];
+    return { ...data, lines, patternHighlight: merged.patternHighlight, ...merged };
   }, [data, enabledDesks, showSma50, showSma200]);
 
-  const pushUrl = (sym: string, rng: ChartRange, desk?: string | null) => {
+  const pushUrl = (
+    sym: string,
+    rng: ChartRange,
+    desk?: string | null,
+    patternId?: string | null,
+    intraday?: boolean,
+  ) => {
     const params = new URLSearchParams();
     params.set("ticker", sym);
     params.set("range", rng);
     if (desk) params.set("desk", desk);
+    if (patternId) params.set("pattern_id", patternId);
+    if (intraday) params.set("intraday", "1");
     router.replace(`/charts?${params.toString()}`);
   };
 
   const onSelectTicker = (sym: string) => {
     setTicker(sym);
     setQuery(shortSymbol(sym));
-    pushUrl(sym, range, deskParam);
+    pushUrl(sym, range, deskParam, patternIdParam, intradayDefault);
+  };
+
+  const commitSearch = () => {
+    const resolved = resolveTickerFromQuery(query, tickers);
+    if (resolved) onSelectTicker(resolved);
   };
 
   const onSelectRange = (rng: ChartRange) => {
     setRange(rng);
-    if (ticker) pushUrl(ticker, rng, deskParam);
+    if (effectiveTicker) pushUrl(effectiveTicker, rng, deskParam, patternIdParam, intradayDefault);
   };
 
   const toggleDesk = (deskId: string) => {
@@ -154,7 +188,7 @@ export function ChartWorkspace() {
   };
 
   const last = data?.meta.lastClose;
-  const symLabel = ticker ? shortSymbol(ticker) : "—";
+  const symLabel = effectiveTicker ? shortSymbol(effectiveTicker) : "—";
 
   return (
     <div className="space-y-4">
@@ -172,22 +206,36 @@ export function ChartWorkspace() {
             {data?.meta.last ? ` · ${data.meta.last}` : ""}
           </div>
           <div className="text-[10px] text-muted font-mono">
-            {data?.source === "cache" ? "cache" : "yahoo"} · {data?.meta.barCount ?? 0} bars
+            {data?.source ?? "—"} · {data?.meta.barCount ?? 0} bars
           </div>
         </div>
       </div>
 
       <div className="mx-4 sm:mx-6 card p-4 space-y-3">
         <div className="flex flex-wrap gap-3 items-center">
-          <div className="relative min-w-[200px] flex-1 max-w-xs">
+          <div className="relative min-w-[200px] flex-1 max-w-xs flex gap-2">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitSearch();
+              }}
+              onBlur={() => {
+                const resolved = resolveTickerFromQuery(query, tickers);
+                if (resolved && resolved !== effectiveTicker) commitSearch();
+              }}
               placeholder="Search ticker (ACC, INFY…)"
               className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm"
               list="chart-ticker-list"
             />
+            <button
+              type="button"
+              onClick={commitSearch}
+              className="shrink-0 px-3 py-2 rounded-lg bg-surface-2 border border-border text-xs hover:border-accent/40"
+            >
+              Go
+            </button>
             <datalist id="chart-ticker-list">
               {filteredTickers.map((t) => (
                 <option key={t} value={shortSymbol(t)} />
@@ -196,7 +244,7 @@ export function ChartWorkspace() {
           </div>
           <select
             className="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm max-w-[220px]"
-            value={ticker}
+            value={effectiveTicker}
             onChange={(e) => onSelectTicker(e.target.value)}
           >
             <option value="">Select ticker…</option>
@@ -282,41 +330,49 @@ export function ChartWorkspace() {
         ) : null}
       </div>
 
-      {loading ? (
-        <div className="mx-4 sm:mx-6 card p-12 text-center text-muted text-sm">Loading chart…</div>
-      ) : error ? (
+      {error ? (
         <div className="mx-4 sm:mx-6 card p-8 text-center text-bear text-sm">{error}</div>
-      ) : chartData ? (
+      ) : effectiveTicker ? (
         <div className="mx-4 sm:mx-6 space-y-3">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Daily</div>
-          <TradingChart data={chartData} />
-          {ticker ? <IntradayChartPanel ticker={ticker} defaultOpen={intradayDefault} /> : null}
-          <div className="flex flex-wrap gap-3 text-[10px] text-muted font-mono">
-            {chartData.lines.map((l) => (
-              <span key={l.id} style={{ color: l.color }}>
-                ● {l.label}
-              </span>
-            ))}
-            {chartData.hlines.map((h) => (
-              <span key={h.id} style={{ color: h.color }}>
-                — {h.label} {h.price.toFixed(2)}
-              </span>
-            ))}
-            {chartData.zones.map((z) => (
-              <span key={z.id} style={{ color: z.color ?? "#5b8cff" }}>
-                ▣ {z.label} {z.low.toFixed(2)}–{z.high.toFixed(2)}
-              </span>
-            ))}
-          </div>
-          {data?.deskOverlays.map((d) => (
-            <div key={d.deskId} className="text-[10px] text-muted">
-              <Link href={CHART_DESK_META.find((m) => m.id === d.deskId)?.href ?? "#"} className="hover:text-accent" style={{ color: d.color }}>
-                {d.deskLabel}
-              </Link>
-              {" · "}
-              {d.hlines.length} levels · {d.zones.length} zones · {d.markers.length} markers
-            </div>
-          ))}
+          {loading && !chartData ? (
+            <div className="card p-12 text-center text-muted text-sm">Loading chart…</div>
+          ) : chartData ? (
+            <>
+              <TradingChart data={chartData} />
+              <div className="flex flex-wrap gap-3 text-[10px] text-muted font-mono">
+                {chartData.lines.map((l) => (
+                  <span key={l.id} style={{ color: l.color }}>
+                    ● {l.label}
+                  </span>
+                ))}
+                {chartData.hlines.map((h) => (
+                  <span key={h.id} style={{ color: h.color }}>
+                    — {h.label} {h.price.toFixed(2)}
+                  </span>
+                ))}
+                {chartData.zones.map((z) => (
+                  <span key={z.id} style={{ color: z.color ?? "#5b8cff" }}>
+                    ▣ {z.label} {z.low.toFixed(2)}–{z.high.toFixed(2)}
+                  </span>
+                ))}
+              </div>
+              {data?.deskOverlays.map((d) => (
+                <div key={d.deskId} className="text-[10px] text-muted">
+                  <Link
+                    href={CHART_DESK_META.find((m) => m.id === d.deskId)?.href ?? "#"}
+                    className="hover:text-accent"
+                    style={{ color: d.color }}
+                  >
+                    {d.deskLabel}
+                  </Link>
+                  {" · "}
+                  {d.hlines.length} levels · {d.zones.length} zones · {d.markers.length} markers
+                </div>
+              ))}
+            </>
+          ) : null}
+          <IntradayChartPanel ticker={effectiveTicker} defaultOpen={intradayDefault} />
         </div>
       ) : (
         <div className="mx-4 sm:mx-6 card p-12 text-center text-muted text-sm">
@@ -324,7 +380,7 @@ export function ChartWorkspace() {
         </div>
       )}
 
-      {filteredTickers.length > 0 && !ticker ? (
+      {filteredTickers.length > 0 && !effectiveTicker ? (
         <div className="mx-4 sm:mx-6 card p-4">
           <div className="text-xs text-muted mb-2">Cached tickers</div>
           <div className="flex flex-wrap gap-2">

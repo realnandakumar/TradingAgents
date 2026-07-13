@@ -6,6 +6,8 @@ export interface DeskAction {
   cliArgs: string[];
   /** Relative path from repo root for script-based jobs (e.g. scripts/run_all_daily_now.py). */
   scriptPath?: string;
+  /** Extra CLI flags appended when running scriptPath (e.g. --force). */
+  scriptArgs?: string[];
   needsTicker?: boolean;
   /** Pass ticker as `--flag VALUE` (e.g. tech-analyze --ticker). */
   tickerAsOption?: boolean;
@@ -30,7 +32,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "swing",
     label: "Swing Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["swing"], variant: "secondary", description: "Screen swing candidates" },
       { id: "daily", label: "Daily run", cliArgs: ["swing-daily", "--yes"], variant: "primary", description: "Exits, opens, and daily portfolio job" },
       { id: "report", label: "Report", cliArgs: ["swing-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["swing-approve"], variant: "secondary" },
@@ -40,7 +41,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "momentum",
     label: "Momentum Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["momentum"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["momentum-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["momentum-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["momentum-approve"], variant: "secondary" },
@@ -50,7 +50,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "nss",
     label: "NSS Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["nss"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["nss-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["nss-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["nss-approve"], variant: "secondary" },
@@ -61,7 +60,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "supertrend-rsi",
     label: "SuperTrend RSI Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["supertrend-rsi"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["supertrend-rsi-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["supertrend-rsi-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["supertrend-rsi-approve"], variant: "secondary" },
@@ -72,7 +70,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "trama",
     label: "TRAMA Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["trama"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["trama-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["trama-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["trama-approve"], variant: "secondary" },
@@ -83,7 +80,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "gap-fill",
     label: "Gap Fill Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["gap-fill"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["gap-fill-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["gap-fill-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["gap-fill-approve"], variant: "secondary" },
@@ -94,7 +90,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "nw-envelope",
     label: "NW Envelope Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["nw-envelope"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["nw-envelope-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["nw-envelope-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["nw-envelope-approve"], variant: "secondary" },
@@ -105,7 +100,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "pattern-forecast",
     label: "Pattern Forecast Desk",
     actions: [
-      { id: "screener", label: "Run screener", cliArgs: ["pattern-forecast"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["pattern-forecast-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["pattern-forecast-report"], variant: "secondary" },
       { id: "approve", label: "Approve replacements", cliArgs: ["pattern-forecast-approve"], variant: "secondary" },
@@ -213,9 +207,7 @@ const DESK_CONFIGS: DeskConfig[] = [
   {
     id: "chart-patterns",
     label: "Chart Patterns",
-    actions: [
-      { id: "refresh", label: "Refresh screener", cliArgs: ["chart-patterns"], variant: "primary" },
-    ],
+    actions: [],
   },
   {
     id: "positions",
@@ -237,20 +229,40 @@ const DESK_CONFIGS: DeskConfig[] = [
     label: "Command Center",
     actions: [
       {
+        id: "eod-sync-now",
+        label: "Sync now",
+        cliArgs: [],
+        scriptPath: "scripts/run_eod_pipeline.py",
+        scriptArgs: ["--force"],
+        variant: "primary",
+        description:
+          "Manual full sync: refresh prices through last trading day, run all desk screeners and dailies",
+      },
+      {
+        id: "eod-pipeline",
+        label: "Run EOD pipeline",
+        cliArgs: [],
+        scriptPath: "scripts/run_eod_pipeline.py",
+        variant: "secondary",
+        supportsForce: true,
+        description:
+          "Same as scheduled EOD; skips price re-sync if already completed today (use Sync now to force)",
+      },
+      {
         id: "all-dailies",
         label: "Run all dailies",
         cliArgs: [],
         scriptPath: "scripts/run_all_daily_now.py",
-        variant: "primary",
+        variant: "secondary",
         description: "Shared download then sync all strategy paper books",
       },
       {
-        id: "all-screeners",
-        label: "Run all screeners",
-        cliArgs: [],
-        scriptPath: "scripts/run_all_screeners_now.py",
-        variant: "primary",
-        description: "Shared download then run every technical screener",
+        id: "custom-ticker-add",
+        label: "Add custom ticker",
+        cliArgs: ["custom-ticker", "add"],
+        needsTicker: true,
+        variant: "secondary",
+        description: "Add a ticker to the custom price-sync list and cache it",
       },
       {
         id: "rs-screen",

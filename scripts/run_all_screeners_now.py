@@ -1,7 +1,6 @@
-"""Run all technical screeners from a single shared Yahoo download.
+"""Run all technical screeners from a single shared price store.
 
-Every strategy uses the same NSE universe, so we fetch 2y of daily history
-once (a superset of each strategy's lookback) and pass it to all screeners.
+When the EOD pipeline already ran today, skips re-sync and reads from cache.
 """
 from __future__ import annotations
 
@@ -11,9 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.dataflows.ohlcv_store import manifest_eod_ran_today, sync_price_cache
+from tradingagents.dataflows.sync_symbols import collect_sync_symbols
 from tradingagents.screening.momentum_screener import screen_momentum
 from tradingagents.screening.nss_screener import screen_nss
-from tradingagents.screening.prices import download_history
+from tradingagents.screening.prices import read_history
 from tradingagents.screening.gap_fill_screener import screen_gap_fill
 from tradingagents.screening.chart_pattern_screener import screen_chart_patterns
 from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
@@ -21,9 +22,7 @@ from tradingagents.screening.pattern_forecast_screener import screen_pattern_for
 from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
 from tradingagents.screening.swing_screener import screen_swing
 from tradingagents.screening.trama_screener import screen_trama
-from tradingagents.screening.universe import load_universe
 
-# Longest lookback any screener needs; a superset for the 1y ST+RSI screen too.
 SHARED_PERIOD = "2y"
 
 
@@ -68,13 +67,25 @@ def _print_picks(title: str, picks: list, kind: str = "pick") -> None:
 
 def main() -> None:
     config = DEFAULT_CONFIG.copy()
-    universe = load_universe(
-        csv_path=config.get("screen_universe_csv"),
-        cache_dir=config.get("data_cache_dir"),
-    )
+    cache_dir = config.get("data_cache_dir")
+    symbols = collect_sync_symbols(config)
 
-    print(f"Downloading {SHARED_PERIOD} history once for {len(universe)} tickers...")
-    price_data = download_history(universe, period=SHARED_PERIOD)
+    if manifest_eod_ran_today(cache_dir):
+        print(f"EOD ran today — skipping sync, loading {SHARED_PERIOD} history for {len(symbols)} tickers...")
+    else:
+        print(f"Syncing price cache (incremental) for {len(symbols)} tickers...")
+        sync_report = sync_price_cache(
+            symbols,
+            mode="incremental",
+            cache_dir=cache_dir,
+        )
+        print(
+            f"Cache sync: synced={sync_report.synced} skipped={sync_report.skipped} "
+            f"failed={sync_report.failed}"
+        )
+        print(f"Loading {SHARED_PERIOD} history from cache...")
+
+    price_data = read_history(symbols, period=SHARED_PERIOD, cache_dir=cache_dir)
     print(f"Got usable history for {len(price_data)} tickers.\n")
 
     swing = screen_swing(config, price_data=price_data)

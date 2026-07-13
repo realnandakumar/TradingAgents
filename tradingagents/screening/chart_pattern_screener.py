@@ -148,7 +148,7 @@ def screen_chart_patterns(
             rows = []
             for i, p in enumerate(capped_group, 1):
                 s = p.signal
-                rows.append({
+                row = {
                     "rank": i,
                     "symbol": s.symbol,
                     "ticker": s.symbol.replace(".NS", "").replace(".BO", ""),
@@ -168,7 +168,22 @@ def screen_chart_patterns(
                     "support_level": s.support_level,
                     "resistance_level": s.resistance_level,
                     "detail": s.detail,
-                })
+                    "entry_level": s.entry_level,
+                    "stop_loss": s.stop_loss,
+                    "target_1": s.target_1,
+                    "target_2": s.target_2,
+                    "risk_reward_ratio": s.risk_reward_ratio,
+                    "risk_reward_market": s.risk_reward_market,
+                    "entry_type": s.entry_type,
+                    "market_entry": s.market_entry,
+                    "measured_move": s.measured_move,
+                    "levels_valid": s.levels_valid,
+                    "geometry_lines": s.geometry_lines,
+                    "pattern_window_start": s.pattern_window_start,
+                    "pattern_window_end": s.pattern_window_end,
+                    "pivots": s.pivots,
+                }
+                rows.append(row)
             groups_out.append({
                 "pattern_id": pattern_id,
                 "pattern_name": meta["label"],

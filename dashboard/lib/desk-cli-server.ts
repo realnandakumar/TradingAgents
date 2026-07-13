@@ -93,9 +93,13 @@ export function createJob(
     throw new Error(`Unknown desk action: ${deskId}/${actionId}`);
   }
   if (action.scriptPath) {
-    return createScriptJob(deskId, actionId, action.scriptPath);
+    const scriptArgs = [...(action.scriptArgs ?? [])];
+    if (options?.force && action.supportsForce) {
+      scriptArgs.push("--force");
+    }
+    return createScriptJob(deskId, actionId, action.scriptPath, scriptArgs);
   }
-  if (action.cliArgs.length === 0) {
+  if (action.cliArgs.length === 0 && actionId !== "analyze-stale") {
     throw new Error(`Action ${deskId}/${actionId} has no CLI args`);
   }
   if (action.needsTicker && !ticker?.trim()) {
@@ -142,16 +146,18 @@ export function createScriptJob(
   deskId: string,
   actionId: string,
   scriptPath: string,
+  scriptArgs: string[] = [],
 ): { jobId: string; job: DeskCliJob } {
   ensureDirs();
   const jobId = randomUUID();
+  const argsSuffix = scriptArgs.length ? ` ${scriptArgs.join(" ")}` : "";
   const job: DeskCliJob = {
     job_id: jobId,
     desk_id: deskId,
     action_id: actionId,
-    cli_args: [],
+    cli_args: scriptArgs,
     script: scriptPath,
-    command: `python ${scriptPath}`,
+    command: `python ${scriptPath}${argsSuffix}`,
     status: "pending",
     created_at: new Date().toISOString(),
   };

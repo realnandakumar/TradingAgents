@@ -1,8 +1,6 @@
-"""Run all daily paper-trade jobs from a single shared Yahoo download.
+"""Run all daily paper-trade jobs from a single shared price store.
 
-Downloads 2y of daily history once for the shared NSE universe, then runs
-each strategy's daily job (screen -> process exits -> open/replace) against
-that data. All strategy paper books are synced in one pass.
+When the EOD pipeline already ran today, skips re-sync and reads from cache.
 """
 from __future__ import annotations
 
@@ -15,8 +13,9 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.gap_fill import run_gap_fill_daily
 from tradingagents.momentum import run_momentum_daily
 from tradingagents.nss import run_nss_daily
-from tradingagents.screening.prices import download_history
-from tradingagents.screening.universe import load_universe
+from tradingagents.dataflows.ohlcv_store import manifest_eod_ran_today, sync_price_cache
+from tradingagents.dataflows.sync_symbols import collect_sync_symbols
+from tradingagents.screening.prices import read_history
 from tradingagents.nw_envelope import run_nw_envelope_daily
 from tradingagents.pattern_forecast import run_pattern_forecast_daily
 from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
@@ -38,19 +37,29 @@ def _summary(name: str, report: dict) -> None:
         f"open_now={report.get('open_positions', 0)} "
         f"pending={len(report.get('proposals', []))}"
     )
-    if report.get("opened"):
-        print(f"      opened: {', '.join(report['opened'])}")
 
 
 def main() -> None:
     config = DEFAULT_CONFIG.copy()
-    universe = load_universe(
-        csv_path=config.get("screen_universe_csv"),
-        cache_dir=config.get("data_cache_dir"),
-    )
+    cache_dir = config.get("data_cache_dir")
+    symbols = collect_sync_symbols(config)
 
-    print(f"Downloading {SHARED_PERIOD} history once for {len(universe)} tickers...")
-    price_data = download_history(universe, period=SHARED_PERIOD)
+    if manifest_eod_ran_today(cache_dir):
+        print(f"EOD ran today — skipping sync, loading {SHARED_PERIOD} history for {len(symbols)} tickers...")
+    else:
+        print(f"Syncing price cache (incremental) for {len(symbols)} tickers...")
+        sync_report = sync_price_cache(
+            symbols,
+            mode="incremental",
+            cache_dir=cache_dir,
+        )
+        print(
+            f"Cache sync: synced={sync_report.synced} skipped={sync_report.skipped} "
+            f"failed={sync_report.failed}"
+        )
+        print(f"Loading {SHARED_PERIOD} history from cache...")
+
+    price_data = read_history(symbols, period=SHARED_PERIOD, cache_dir=cache_dir)
     print(f"Got usable history for {len(price_data)} tickers.\n")
 
     print("Syncing paper books:")

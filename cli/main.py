@@ -1806,6 +1806,67 @@ def watchlist_remove(
     )
 
 
+custom_ticker_app = typer.Typer(help="Manage custom tickers for price sync.")
+app.add_typer(custom_ticker_app, name="custom-ticker")
+
+
+@custom_ticker_app.command("list")
+def custom_ticker_list():
+    """Show custom tickers included in price sync."""
+    from tradingagents.dataflows.custom_tickers import list_custom_tickers
+
+    symbols = list_custom_tickers()
+    if not symbols:
+        console.print("[dim]Custom tickers list is empty.[/dim]")
+        console.print(
+            "[dim]Add tickers with: tradingagents custom-ticker add RELIANCE TCS[/dim]"
+        )
+        return
+
+    table = Table(box=box.SIMPLE_HEAD, title="Custom price-sync tickers")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Ticker", style="bold")
+    for i, sym in enumerate(symbols, 1):
+        table.add_row(str(i), sym)
+    console.print(table)
+
+
+@custom_ticker_app.command("add")
+def custom_ticker_add(
+    tickers: list[str] = typer.Argument(..., help="Ticker symbol(s) to add."),
+):
+    """Add ticker(s) to the custom price-sync list."""
+    from tradingagents.dataflows.custom_tickers import add_custom_ticker
+    from tradingagents.dataflows.ohlcv_store import sync_symbol
+
+    config = DEFAULT_CONFIG.copy()
+    normalized = [normalize_ticker_symbol(t) for t in tickers]
+    updated = add_custom_ticker(normalized)
+    for sym in normalized:
+        try:
+            sync_symbol(sym, mode="incremental", cache_dir=config.get("data_cache_dir"))
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[yellow]Price sync for {sym} failed:[/yellow] {e}")
+    console.print(
+        f"[green]Added {len(tickers)} ticker(s).[/green] "
+        f"Custom list now has {len(updated)} symbol(s)."
+    )
+
+
+@custom_ticker_app.command("remove")
+def custom_ticker_remove(
+    tickers: list[str] = typer.Argument(..., help="Ticker symbol(s) to remove."),
+):
+    """Remove ticker(s) from the custom price-sync list."""
+    from tradingagents.dataflows.custom_tickers import remove_custom_ticker
+
+    updated = remove_custom_ticker([normalize_ticker_symbol(t) for t in tickers])
+    console.print(
+        f"[green]Removed {len(tickers)} ticker(s).[/green] "
+        f"Custom list now has {len(updated)} symbol(s)."
+    )
+
+
 @app.command()
 def sync():
     """Refresh the local dashboard snapshot from the current paper book.

@@ -29,6 +29,30 @@ export type ChartPatternScreenerPick = {
   support_level: number;
   resistance_level: number;
   detail: string;
+  entry_level?: number;
+  stop_loss?: number;
+  target_1?: number;
+  target_2?: number;
+  risk_reward_ratio?: number;
+  risk_reward_market?: number;
+  entry_type?: string;
+  market_entry?: number;
+  measured_move?: number;
+  levels_valid?: boolean;
+  geometry_lines?: {
+    id: string;
+    label: string;
+    color: string;
+    points: { time: string; value: number }[];
+  }[];
+  pattern_window_start?: string;
+  pattern_window_end?: string;
+  pivots?: {
+    time: string;
+    price: number;
+    role: string;
+    position: "belowBar" | "aboveBar";
+  }[];
 };
 
 export type ChartPatternScreenerGroup = {
@@ -58,6 +82,35 @@ export function chartPatternScreenerSnapshotPath(): string {
     process.env.TRADINGAGENTS_CHART_PATTERN_SCREENER_SNAPSHOT_PATH ??
     DEFAULT_SNAPSHOT
   );
+}
+
+const DEFAULT_AUDIT = path.join(
+  os.homedir(),
+  ".tradingagents",
+  "chart_patterns",
+  "audit.json",
+);
+
+export type ChartPatternAuditSummary = {
+  t1_hit_rate_pct?: number;
+  by_pattern?: Record<string, { t1_hit_rate_pct?: number; signals?: number }>;
+};
+
+export function chartPatternAuditPath(): string {
+  return (
+    process.env.CHART_PATTERN_AUDIT_PATH ??
+    process.env.TRADINGAGENTS_CHART_PATTERN_AUDIT_PATH ??
+    DEFAULT_AUDIT
+  );
+}
+
+export function readChartPatternAudit(): ChartPatternAuditSummary | null {
+  try {
+    const raw = fs.readFileSync(chartPatternAuditPath(), "utf-8");
+    return JSON.parse(raw) as ChartPatternAuditSummary;
+  } catch {
+    return null;
+  }
 }
 
 export function readChartPatternScreenerSnapshot(): ChartPatternScreenerSnapshot | null {

@@ -34,6 +34,9 @@ def ssl_context():
 # never escapes a containing directory when interpolated into a path.
 _TICKER_PATH_RE = re.compile(r"^[A-Za-z0-9._\-\^]+$")
 
+# After sanitising (e.g. ``&`` → ``_``), cache filenames must be safe on Windows.
+_CACHE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
+
 
 def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
     """Validate ``value`` is safe to interpolate into a filesystem path.
@@ -61,6 +64,30 @@ def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
     if set(value) == {"."}:
         raise ValueError(f"ticker cannot consist solely of dots: {value!r}")
     return value
+
+
+def symbol_cache_filename(symbol: str, *, max_len: int = 32) -> str:
+    """Return a filesystem-safe cache basename for a yfinance ticker.
+
+    NSE symbols like ``M&M.NS`` contain ``&``, which is invalid in Windows
+    paths. We map ``&`` → ``_`` for the on-disk filename while keeping the
+    original symbol for Yahoo API calls and manifest keys.
+    """
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError(f"ticker must be a non-empty string, got {symbol!r}")
+    sym = symbol.strip().upper()
+    if len(sym) > max_len:
+        raise ValueError(f"ticker exceeds {max_len} chars: {symbol!r}")
+    if "/" in sym or "\\" in sym or ".." in sym:
+        raise ValueError(f"ticker contains path traversal: {symbol!r}")
+    safe = sym.replace("&", "_")
+    if not _CACHE_FILENAME_RE.fullmatch(safe):
+        raise ValueError(
+            f"ticker contains characters not allowed in a cache filename: {symbol!r}"
+        )
+    if set(safe.replace(".", "")) == {""} or set(safe) == {"."}:
+        raise ValueError(f"ticker cannot consist solely of dots: {symbol!r}")
+    return safe
 
 
 def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType = None) -> None:

@@ -103,6 +103,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
     "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
     "TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS": "tech_desk_max_report_age_days",
+    "TRADINGAGENTS_CUSTOM_TICKERS_PATH": "custom_tickers_path",
+    "TRADINGAGENTS_PRICES_DB_PATH": "prices_db_path",
 }
 
 
@@ -133,6 +135,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
     # Quick tech-analyze watchlist and report output
     "tech_watchlist_path": os.path.join(_TRADINGAGENTS_HOME, "watchlist.txt"),
+    "custom_tickers_path": os.path.join(_TRADINGAGENTS_HOME, "custom_tickers.txt"),
+    "prices_db_path": os.path.join(_TRADINGAGENTS_HOME, "prices.db"),
     "tech_analyze_reports_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_reports"),
     # Tech Desk paper trading (batch PM over saved tech-analyze reports)
     "tech_desk_max_positions": 10,
@@ -469,7 +473,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "chart_pattern_top_n": 25,
     "chart_pattern_enabled": "all",
     "chart_pattern_min_confidence": 55,
-    "chart_pattern_max_age_days": 14,
+    "chart_pattern_max_age_days": 10,
     "chart_pattern_max_breakout_pct": 3.0,
     "chart_pattern_max_invalidation_pct": 5.0,
     "chart_pattern_require_actionable": True,
@@ -479,6 +483,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "chart_pattern_exclude_today": True,
     "chart_pattern_screener_snapshot_path": os.path.join(
         _TRADINGAGENTS_HOME, "chart_patterns", "screener.json"
+    ),
+    "chart_pattern_audit_path": os.path.join(
+        _TRADINGAGENTS_HOME, "chart_patterns", "audit.json"
     ),
     # Nadaraya-Watson Envelope [LuxAlgo] — contrarian band crosses
     "nwe_history_period": "2y",

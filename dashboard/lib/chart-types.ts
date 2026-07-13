@@ -17,6 +17,8 @@ export interface ChartLineSeries {
   label: string;
   color: string;
   data: { time: ChartTime; value: number }[];
+  deskId?: string;
+  lineWidth?: 1 | 2 | 3 | 4;
 }
 
 export interface ChartHLine {
@@ -45,11 +47,18 @@ export interface ChartMarker {
   position: "belowBar" | "aboveBar";
 }
 
+export interface ChartPatternHighlight {
+  windowStart: string;
+  windowEnd: string;
+  label: string;
+  color: string;
+}
+
 export interface ChartPayload {
   ticker: string;
   timeframe: ChartTimeframe;
   range: ChartRange | IntradayRange;
-  source: "cache" | "yahoo";
+  source: "cache" | "yahoo" | "cache+yahoo";
   cacheFile?: string | null;
   bars: ChartBar[];
   lines: ChartLineSeries[];
@@ -63,6 +72,8 @@ export interface ChartPayload {
     hlines: ChartHLine[];
     zones: ChartZone[];
     markers: ChartMarker[];
+    segments?: ChartLineSeries[];
+    patternHighlight?: ChartPatternHighlight | null;
   }[];
   meta: {
     barCount: number;
@@ -70,4 +81,5 @@ export interface ChartPayload {
     last: string | null;
     lastClose: number | null;
   };
+  patternHighlight?: ChartPatternHighlight | null;
 }

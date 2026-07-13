@@ -2,6 +2,7 @@ import { DeskActionsPanel } from "@/components/DeskActionsPanel";
 import { ChartPatternsBlotter } from "@/components/ChartPatternsBlotter";
 import {
   chartPatternScreenerSnapshotPath,
+  readChartPatternAudit,
   readChartPatternScreenerSnapshot,
 } from "@/lib/chart-patterns-server";
 
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default function ChartPatternsScreenerPage() {
   const snapshot = readChartPatternScreenerSnapshot();
+  const audit = readChartPatternAudit();
   const updated = snapshot?.updated_at
     ? new Date(snapshot.updated_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
     : null;
@@ -19,7 +21,9 @@ export default function ChartPatternsScreenerPage() {
       <div className="px-4 sm:px-6 py-3 border-b border-border bg-surface flex flex-wrap items-center gap-4">
         <div>
           <div className="text-sm font-semibold tracking-tight">NSE Chart Patterns</div>
-          <div className="text-[10px] font-mono text-muted uppercase">CHART_PATTERNS · PURE SCREENER</div>
+          <div className="text-[10px] font-mono text-muted uppercase">
+            CHART_PATTERNS · PURE SCREENER · bearish = short-bias (no auto-trade)
+          </div>
         </div>
         <div className="flex gap-1.5 text-[10px] font-mono uppercase">
           <span className="px-2 py-0.5 rounded bg-accent/20 text-accent">Screener</span>
@@ -28,6 +32,9 @@ export default function ChartPatternsScreenerPage() {
         </div>
         <div className="ml-auto text-right text-xs text-muted">
           {updated ? <div>Snapshot {updated} IST</div> : null}
+          {audit?.t1_hit_rate_pct != null ? (
+            <div className="text-accent">Audit T1 hit {audit.t1_hit_rate_pct}%</div>
+          ) : null}
           {snapshot ? (
             <div>
               {rowCount} row(s) · {snapshot.group_count} pattern table(s) · checked {snapshot.checked}
@@ -54,7 +61,7 @@ export default function ChartPatternsScreenerPage() {
         </div>
       ) : (
         <div className="m-4 sm:m-6">
-          <ChartPatternsBlotter groups={snapshot.groups} />
+          <ChartPatternsBlotter groups={snapshot.groups} auditByPattern={audit?.by_pattern} />
         </div>
       )}
     </div>

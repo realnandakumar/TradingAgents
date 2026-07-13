@@ -9,10 +9,12 @@ multi-index result into a plain ``{symbol: DataFrame}`` mapping.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
+
+from tradingagents.dataflows.ohlcv_store import read_history as _read_history
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,15 @@ def download_history(
                 out[sym] = df
 
     return out
+
+
+def read_history(
+    tickers: List[str],
+    period: str = "1y",
+    cache_dir: Optional[str] = None,
+) -> Dict[str, pd.DataFrame]:
+    """Read OHLCV from the canonical price cache, filtered to *period*."""
+    return _read_history(tickers, period=period, cache_dir=cache_dir)
 
 
 def _extract(raw: pd.DataFrame, symbol: str):

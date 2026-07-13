@@ -4,6 +4,7 @@ import path from "path";
 
 import { getPortfolioDeskSummaries } from "@/lib/command-center-server";
 import { checkLlmApiKey } from "@/lib/env-server";
+import { readCustomTickers } from "@/lib/custom-tickers-server";
 import { gapFillBookPath, readGapFillBook } from "@/lib/gap-fill-server";
 import { readGapScreenerSnapshot } from "@/lib/gap-screener-server";
 import { listRecentJobs } from "@/lib/desk-cli-server";
@@ -40,6 +41,32 @@ function fileMtime(filePath: string): string | null {
 
 export function getDataHealthRows(): DataHealthRow[] {
   const home = process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
+  const cacheDir = process.env.TRADINGAGENTS_CACHE_DIR ?? path.join(home, "cache");
+  const pricesDb =
+    process.env.TRADINGAGENTS_PRICES_DB_PATH ?? path.join(home, "prices.db");
+  const manifestPath = path.join(cacheDir, "manifest.json");
+  let manifest: {
+    last_eod_run?: string;
+    symbols?: Record<string, { last_bar?: string }>;
+  } = {};
+  if (fs.existsSync(manifestPath)) {
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as typeof manifest;
+    } catch {
+      manifest = {};
+    }
+  }
+  const today = new Date();
+  const staleCutoff = new Date(today);
+  staleCutoff.setDate(staleCutoff.getDate() - 2);
+  const staleCut = staleCutoff.toISOString().slice(0, 10);
+  let staleCount = 0;
+  for (const entry of Object.values(manifest.symbols ?? {})) {
+    const last = entry?.last_bar;
+    if (!last || last < staleCut) staleCount += 1;
+  }
+  const customTickers = readCustomTickers();
+
   const paper = getLatestPaper();
   const screen = getLatestScreen();
   const gapSnap = readGapScreenerSnapshot();
@@ -98,6 +125,38 @@ export function getDataHealthRows(): DataHealthRow[] {
       exists: fs.existsSync(path.join(home, "desk_cli", "jobs")),
       updatedAt: null,
       detail: `${listRecentJobs(50).length} recent job(s)`,
+    },
+    {
+      id: "prices-db",
+      label: "prices.db (SQLite)",
+      path: pricesDb,
+      exists: fs.existsSync(pricesDb),
+      updatedAt: fileMtime(pricesDb),
+      detail: `${Object.keys(manifest.symbols ?? {}).length} symbols in manifest`,
+    },
+    {
+      id: "eod-run",
+      label: "Last EOD pipeline",
+      path: manifestPath,
+      exists: Boolean(manifest.last_eod_run),
+      updatedAt: manifest.last_eod_run ?? null,
+      detail: manifest.last_eod_run ? `Ran ${manifest.last_eod_run}` : "Not run today",
+    },
+    {
+      id: "custom-tickers",
+      label: "Custom tickers",
+      path: customTickers.path,
+      exists: fs.existsSync(customTickers.path),
+      updatedAt: fileMtime(customTickers.path),
+      detail: `${customTickers.symbols.length} symbol(s)`,
+    },
+    {
+      id: "stale-prices",
+      label: "Stale price symbols",
+      path: manifestPath,
+      exists: fs.existsSync(manifestPath),
+      updatedAt: fileMtime(manifestPath),
+      detail: `${staleCount} symbol(s) >2 days behind`,
     },
   ];
 

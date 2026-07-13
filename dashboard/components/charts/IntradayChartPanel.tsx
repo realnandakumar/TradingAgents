@@ -52,6 +52,10 @@ export function IntradayChartPanel({
   }, []);
 
   useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
+
+  useEffect(() => {
     if (open && ticker) loadIntraday(ticker, interval, range);
   }, [open, ticker, interval, range, loadIntraday]);
 

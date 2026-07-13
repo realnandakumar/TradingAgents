@@ -8,8 +8,8 @@ import { notifyDeskJobStarted } from "@/lib/desk-cli-events";
 import { useDeskJob } from "@/lib/desk-job-context";
 
 const ACTIONS = [
-  { deskId: "control-center", actionId: "all-dailies", label: "All dailies", primary: true },
-  { deskId: "control-center", actionId: "all-screeners", label: "All screeners", primary: true },
+  { deskId: "control-center", actionId: "eod-sync-now", label: "Sync now", primary: true },
+  { deskId: "control-center", actionId: "all-dailies", label: "All dailies", primary: false },
   { deskId: "positions", actionId: "screen", label: "RS screen", primary: true },
   { deskId: "positions", actionId: "paper", label: "Refresh RS paper", primary: false },
 ] as const;

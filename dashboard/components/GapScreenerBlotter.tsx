@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { inr } from "@/lib/format";
 import type { GapScreenerPick } from "@/lib/gap-screener-server";
 
@@ -60,7 +61,9 @@ export function GapScreenerBlotter({
                   }`}
                 >
                   <td className="py-2 px-3 text-muted">{p.rank}</td>
-                  <td className="py-2 px-3 font-medium">{p.ticker}</td>
+                  <td className="py-2 px-3 font-medium">
+                    <ChartTickerLink ticker={p.symbol} desk="gap-fill" className="hover:text-accent" />
+                  </td>
                   <td className="py-2 px-3 text-muted max-w-[160px] truncate">{p.stock_name}</td>
                   <td className={`py-2 px-3 ${status.tone}`}>{status.label}</td>
                   <td

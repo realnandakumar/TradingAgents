@@ -19,7 +19,7 @@ BASE_CONFIG = {
     "chart_pattern_min_bars": 60,
     "chart_pattern_swing_order": 5,
     "chart_pattern_min_confidence": 0,
-    "chart_pattern_max_age_days": 14,
+    "chart_pattern_max_age_days": 10,
     "chart_pattern_max_distance_to_trigger_pct": 10.0,
 }
 
@@ -51,10 +51,10 @@ def _embed_trough(close: list[float], idx: int, level: float, order: int = 5) ->
 def _double_bottom_df() -> pd.DataFrame:
     n = 90
     close = [112.0] * n
-    _embed_trough(close, 28, 100.0)
-    _embed_trough(close, 78, 100.5)
-    for i in range(80, n - 1):
-        close[i] = 108.0 + (i - 80) * 0.15
+    _embed_trough(close, 68, 100.0)
+    _embed_trough(close, 82, 100.5)
+    for i in range(84, n - 1):
+        close[i] = 108.0 + (i - 84) * 0.15
     close[-1] = 110.5
     return _ohlc(close)
 
@@ -168,7 +168,7 @@ def test_scan_rejects_stale_pattern():
         {
             **BASE_CONFIG,
             "chart_pattern_enabled": "double_bottom",
-            "chart_pattern_max_age_days": 10,
+            "chart_pattern_max_age_days": 5,
         },
         symbol="TEST.NS",
     )

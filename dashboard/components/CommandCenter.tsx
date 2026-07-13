@@ -27,11 +27,19 @@ interface ActiveJob {
 }
 
 const BULK_ACTIONS = [
-  { actionId: "all-dailies", label: "Run all dailies", primary: true },
-  { actionId: "all-screeners", label: "Run all screeners", primary: true },
+  { actionId: "all-dailies", label: "Run all dailies", primary: false },
   { actionId: "rs-screen", label: "RS screen", primary: true },
   { actionId: "rs-paper", label: "RS paper refresh", primary: false },
 ] as const;
+
+interface EodStatus {
+  last_eod_run: string | null;
+  today_ist: string;
+  needs_sync: boolean;
+  symbol_count: number;
+  stale_symbol_count: number;
+  custom_ticker_count: number;
+}
 
 const TECH_ACTIONS: { actionId: string; label: string; primary?: boolean }[] = [
   { actionId: "analyze-stale", label: "Analyze stale" },
@@ -66,6 +74,10 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
   const [command, setCommand] = useState<string | null>(null);
   const [progress, setProgress] = useState<DeskCliJobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [eodStatus, setEodStatus] = useState<EodStatus | null>(null);
+  const [customTickers, setCustomTickers] = useState<string[]>([]);
+  const [customTickerInput, setCustomTickerInput] = useState("");
+  const [customTickerBusy, setCustomTickerBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -73,6 +85,24 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+  }, []);
+
+  const refreshEodAndCustom = useCallback(async () => {
+    try {
+      const [eodRes, customRes] = await Promise.all([
+        fetch("/api/eod-status"),
+        fetch("/api/custom-tickers"),
+      ]);
+      if (eodRes.ok) {
+        setEodStatus((await eodRes.json()) as EodStatus);
+      }
+      if (customRes.ok) {
+        const data = (await customRes.json()) as { symbols: string[] };
+        setCustomTickers(data.symbols ?? []);
+      }
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -93,6 +123,7 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
             setRunning(false);
             if (data.progress.status === "completed") {
               router.refresh();
+              void refreshEodAndCustom();
             }
           }
         } catch {
@@ -100,10 +131,58 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
         }
       }, 2000);
     },
-    [router, stopPolling],
+    [router, stopPolling, refreshEodAndCustom],
   );
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  useEffect(() => {
+    void refreshEodAndCustom();
+  }, [refreshEodAndCustom]);
+
+  const addCustomTicker = async () => {
+    const sym = customTickerInput.trim();
+    if (!sym || customTickerBusy) return;
+    setCustomTickerBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/custom-tickers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: [sym] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to add ticker");
+      setCustomTickers(data.symbols ?? []);
+      setCustomTickerInput("");
+      await refreshEodAndCustom();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add custom ticker");
+    } finally {
+      setCustomTickerBusy(false);
+    }
+  };
+
+  const removeCustomTicker = async (sym: string) => {
+    if (customTickerBusy) return;
+    setCustomTickerBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/custom-tickers", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: [sym] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to remove ticker");
+      setCustomTickers(data.symbols ?? []);
+      await refreshEodAndCustom();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove custom ticker");
+    } finally {
+      setCustomTickerBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (logRef.current) {
@@ -201,6 +280,60 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
         </div>
       </div>
 
+      {/* Manual sync — primary action */}
+      <section className="card p-4 sm:p-5 border border-accent/25 bg-accent/5 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium">Price &amp; screener sync</h2>
+            <p className="text-xs text-muted mt-1 max-w-xl">
+              Refreshes all prices through the last trading day, then runs every desk screener
+              and daily job. Scheduled at 4:10 PM IST; catch-up runs at logon if the PC was off.
+            </p>
+            {eodStatus ? (
+              <p className="text-xs mt-2">
+                <span className="text-muted">Last sync:</span>{" "}
+                <span className="font-mono">{eodStatus.last_eod_run ?? "never"}</span>
+                <span className="text-muted mx-2">·</span>
+                <span className="text-muted">{eodStatus.symbol_count} symbols</span>
+                {eodStatus.stale_symbol_count > 0 ? (
+                  <span className="text-bear ml-2">
+                    {eodStatus.stale_symbol_count} stale
+                  </span>
+                ) : null}
+                {eodStatus.needs_sync ? (
+                  <span className="text-bear ml-2 font-medium">— sync recommended</span>
+                ) : (
+                  <span className="text-bull ml-2">— up to date today</span>
+                )}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() =>
+                runAction("control-center", "eod-sync-now", "Sync now")
+              }
+              disabled={running || isJobRunning}
+              className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+            >
+              Sync now
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                runAction("control-center", "eod-pipeline", "Run EOD pipeline")
+              }
+              disabled={running || isJobRunning}
+              title="Skip price re-sync if already completed today"
+              className="px-3 py-2.5 rounded-lg bg-surface-2 border border-border text-xs font-medium disabled:opacity-50 hover:bg-surface-2/80 transition-colors"
+            >
+              EOD (skip if done)
+            </button>
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-6 lg:grid-cols-[1fr_220px]">
         <div className="space-y-6">
           {/* Bulk operations */}
@@ -208,7 +341,7 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
             <div>
               <h2 className="text-sm font-medium">Bulk operations</h2>
               <p className="text-xs text-muted mt-0.5">
-                Shared-download scripts and RS paper tools
+                EOD pipeline, shared-download scripts, and RS paper tools
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -243,6 +376,57 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
                 );
               })}
             </div>
+          </section>
+
+          {/* Custom tickers */}
+          <section className="card p-4 sm:p-5 space-y-4">
+            <div>
+              <h2 className="text-sm font-medium">Custom tickers</h2>
+              <p className="text-xs text-muted mt-0.5">
+                Extra symbols included in price sync (beyond Nifty 500 universe)
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={customTickerInput}
+                onChange={(e) => setCustomTickerInput(e.target.value)}
+                placeholder="RELIANCE"
+                disabled={customTickerBusy}
+                className="flex-1 min-w-[140px] px-3 py-2 rounded-lg bg-surface-2 border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => void addCustomTicker()}
+                disabled={customTickerBusy || !customTickerInput.trim()}
+                className="px-3 py-2 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+            {customTickers.length === 0 ? (
+              <p className="text-xs text-muted">No custom tickers yet.</p>
+            ) : (
+              <ul className="flex flex-wrap gap-2">
+                {customTickers.map((sym) => (
+                  <li
+                    key={sym}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-2 border border-border text-xs font-mono"
+                  >
+                    {sym}
+                    <button
+                      type="button"
+                      onClick={() => void removeCustomTicker(sym)}
+                      disabled={customTickerBusy}
+                      className="text-muted hover:text-bear disabled:opacity-50"
+                      aria-label={`Remove ${sym}`}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           {/* Portfolio desks */}
@@ -286,18 +470,6 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
                         className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                       >
                         Daily
-                      </button>
-                    ) : null}
-                    {getDeskConfig(desk.id)?.actions.some((a) => a.id === "screener") ? (
-                      <button
-                        type="button"
-                        disabled={running || isJobRunning}
-                        onClick={() =>
-                          runAction(desk.id, "screener", `${desk.label} screener`)
-                        }
-                        className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-xs font-medium disabled:opacity-50 hover:bg-surface-2/80 transition-colors"
-                      >
-                        Screener
                       </button>
                     ) : null}
                     {getDeskConfig(desk.id)?.actions.some((a) => a.id === "approve") ? (

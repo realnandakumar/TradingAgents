@@ -1,13 +1,27 @@
+import { spawn } from "child_process";
 import { NextRequest, NextResponse } from "next/server";
 
+import { pythonExecutable, repoRootFromDashboard } from "@/lib/desk-cli-server";
 import {
   addToWatchlist,
+  normalizeSymbol,
   readWatchlist,
   removeFromWatchlist,
   saveWatchlist,
 } from "@/lib/watchlist-server";
 
 export const dynamic = "force-dynamic";
+
+function ensureSymbolCachedBackground(ticker: string): void {
+  const cwd = repoRootFromDashboard();
+  const pythonCmd = pythonExecutable();
+  const child = spawn(pythonCmd, ["scripts/ensure_symbol_cached.py", ticker], {
+    cwd,
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
 
 export async function GET() {
   try {
@@ -49,7 +63,13 @@ export async function PATCH(req: NextRequest) {
 
     let result = readWatchlist();
     if (hasRemove) result = removeFromWatchlist(body.remove!);
-    if (hasAdd) result = addToWatchlist(body.add!);
+    if (hasAdd) {
+      result = addToWatchlist(body.add!);
+      for (const sym of body.add!) {
+        const norm = normalizeSymbol(sym);
+        if (norm) ensureSymbolCachedBackground(norm);
+      }
+    }
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to update watchlist";

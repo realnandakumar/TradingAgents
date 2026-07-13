@@ -8,11 +8,16 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
+from tradingagents.screening.chart_pattern_geometry import build_pattern_geometry
+from tradingagents.screening.chart_pattern_levels import (
+    NEAR_BREAKOUT_STATUSES,
+    compute_pattern_trade_levels,
+)
 from tradingagents.screening.patterns import _swing_points
 
 STRATEGY_ID = "chart_patterns"
 STRATEGY_NAME = "Chart Patterns"
-STRATEGY_VERSION = "1.3"
+STRATEGY_VERSION = "1.5"
 
 PATTERN_CATALOG: Dict[str, dict] = {
     "head_shoulders": {
@@ -109,39 +114,6 @@ _SWING_ORDER_PATTERNS = frozenset({
 })
 
 
-_NEAR_BREAKOUT_STATUSES = frozenset({"APPROACHING", "AT_TRIGGER", "NEAR_TOP", "NEAR_BOTTOM"})
-
-
-def _compute_trade_levels(
-    bias: str,
-    setup_status: str,
-    trigger: float,
-    support: float,
-    resistance: float,
-) -> Optional[dict]:
-    if setup_status not in _NEAR_BREAKOUT_STATUSES:
-        return None
-    height = resistance - support if resistance > support else 0.0
-    entry = stop = t1 = 0.0
-    if bias == "BULLISH":
-        entry, stop, t1 = trigger, support, trigger + height
-    elif bias == "BEARISH":
-        entry, stop, t1 = trigger, resistance, trigger - height
-    elif setup_status == "NEAR_TOP":
-        entry, stop, t1 = resistance, support, resistance + height
-    elif setup_status == "NEAR_BOTTOM":
-        entry, stop, t1 = support, resistance, support - height
-    else:
-        return None
-    if entry <= 0 or stop <= 0:
-        return None
-    risk = abs(entry - stop)
-    if risk <= 0:
-        return None
-    reward = abs(t1 - entry)
-    return {"stop": stop, "t1": t1, "risk_reward": reward / risk}
-
-
 @dataclass
 class ChartPatternSignal:
     symbol: str
@@ -167,6 +139,20 @@ class ChartPatternSignal:
     stock_name: str = ""
     sector: str = ""
     reasons: List[str] = field(default_factory=list)
+    entry_level: float = 0.0
+    stop_loss: float = 0.0
+    target_1: float = 0.0
+    target_2: float = 0.0
+    risk_reward_ratio: float = 0.0
+    risk_reward_market: float = 0.0
+    entry_type: str = "trigger"
+    market_entry: float = 0.0
+    measured_move: float = 0.0
+    levels_valid: bool = False
+    geometry_lines: List[dict] = field(default_factory=list)
+    pattern_window_start: str = ""
+    pattern_window_end: str = ""
+    pivots: List[dict] = field(default_factory=list)
 
     @property
     def stars_label(self) -> str:
@@ -201,17 +187,23 @@ class ChartPatternSignal:
             "sector": self.sector,
             "reasons": self.reasons,
         }
-        levels = _compute_trade_levels(
-            self.bias,
-            self.setup_status,
-            self.trigger_level,
-            self.support_level,
-            self.resistance_level,
-        )
-        if levels:
-            out["stop_loss"] = levels["stop"]
-            out["target_1"] = levels["t1"]
-            out["risk_reward_ratio"] = round(levels["risk_reward"], 2)
+        if self.levels_valid:
+            out.update({
+                "entry_level": self.entry_level,
+                "stop_loss": self.stop_loss,
+                "target_1": self.target_1,
+                "target_2": self.target_2,
+                "risk_reward_ratio": self.risk_reward_ratio,
+                "risk_reward_market": self.risk_reward_market,
+                "entry_type": self.entry_type,
+                "market_entry": self.market_entry,
+                "measured_move": self.measured_move,
+                "levels_valid": True,
+                "geometry_lines": self.geometry_lines,
+                "pattern_window_start": self.pattern_window_start,
+                "pattern_window_end": self.pattern_window_end,
+                "pivots": self.pivots,
+            })
         return out
 
 
@@ -222,6 +214,14 @@ class PatternMatch:
     end_idx: int
     support: Optional[float] = None
     resistance: Optional[float] = None
+    pole_height: float = 0.0
+    pole_bullish: bool = True
+    shoulder_stop: float = 0.0
+    handle_low: float = 0.0
+    handle_high: float = 0.0
+    wedge_height: float = 0.0
+    high_swing_idx: List[int] = field(default_factory=list)
+    low_swing_idx: List[int] = field(default_factory=list)
 
 
 def _completed_df(df: pd.DataFrame, exclude_today: bool) -> pd.DataFrame:
@@ -257,7 +257,7 @@ def _assess_setup(
     bias: str,
     config: dict,
 ) -> SetupAssessment:
-    max_age = int(config.get("chart_pattern_max_age_days", 14))
+    max_age = int(config.get("chart_pattern_max_age_days", 10))
     max_breakout = float(config.get("chart_pattern_max_breakout_pct", 3.0)) / 100.0
     max_inval = float(config.get("chart_pattern_max_invalidation_pct", 5.0)) / 100.0
     max_dist = float(config.get("chart_pattern_max_distance_to_trigger_pct", 5.0))
@@ -354,6 +354,12 @@ def _window(df: pd.DataFrame, bars: int) -> pd.DataFrame:
     return df.iloc[-bars:] if len(df) > bars else df
 
 
+def _ohlc_swings(frame: pd.DataFrame, order: int) -> Tuple[List[int], List[int]]:
+    highs, _ = _swing_points(frame["High"], order=order)
+    _, lows = _swing_points(frame["Low"], order=order)
+    return highs, lows
+
+
 def _pct_diff(a: float, b: float) -> float:
     base = max(abs(a), abs(b), 1e-9)
     return abs(a - b) / base
@@ -399,13 +405,31 @@ def _hit(
         f"Setup: {assessment.status} · actionability {assessment.score:.0f}/100",
         f"Distance to trigger: {assessment.distance_pct:.1f}%",
         f"Position in pattern: {assessment.position_pct:.0f}% (support to resistance)",
-        f"Pattern age: {age} trading days (must be <{config.get('chart_pattern_max_age_days', 14)})",
+        f"Pattern age: {age} trading days (must be <{config.get('chart_pattern_max_age_days', 10)})",
         f"Trigger: {trigger:.2f}" if trigger else "Trigger: n/a",
     ]
     if bool(config.get("chart_pattern_exclude_today", True)):
         reasons.append("Evaluated on completed sessions only; today's bar excluded")
     reasons.append(match.detail)
-    return ChartPatternSignal(
+
+    levels = compute_pattern_trade_levels(
+        pattern_id,
+        meta["bias"],
+        assessment.status,
+        trigger or 0.0,
+        match.support or 0.0,
+        match.resistance or 0.0,
+        close,
+        pole_height=match.pole_height,
+        shoulder_stop=match.shoulder_stop,
+        handle_low=match.handle_low,
+        handle_high=match.handle_high,
+        wedge_height=match.wedge_height,
+        pole_bullish=match.pole_bullish,
+    )
+    geometry = build_pattern_geometry(pattern_id, match, df)
+
+    sig = ChartPatternSignal(
         symbol=symbol,
         pattern_id=pattern_id,
         pattern_name=meta["label"],
@@ -426,23 +450,44 @@ def _hit(
         detail=detail,
         reasons=reasons,
     )
+    if levels:
+        sig.entry_level = levels.entry
+        sig.stop_loss = levels.stop
+        sig.target_1 = levels.target_1
+        sig.target_2 = levels.target_2
+        sig.risk_reward_ratio = levels.risk_reward
+        sig.risk_reward_market = levels.risk_reward_market
+        sig.entry_type = levels.entry_type
+        sig.market_entry = levels.market_entry
+        sig.measured_move = levels.measured_move
+        sig.levels_valid = True
+        reasons.append(
+            f"Plan @ trigger {levels.entry:.2f}: stop {levels.stop:.2f}, "
+            f"T1 {levels.target_1:.2f}, T2 {levels.target_2:.2f}, R:R {levels.risk_reward:.1f}:1 "
+            f"(market R:R {levels.risk_reward_market:.1f}:1)"
+        )
+    sig.geometry_lines = geometry.get("lines", [])
+    sig.pattern_window_start = geometry.get("window_start", "")
+    sig.pattern_window_end = geometry.get("window_end", "")
+    sig.pivots = geometry.get("pivots", [])
+    return sig
 
 
 def detect_double_top(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.025) -> Optional[PatternMatch]:
     window = _window(df, 120)
     close = window["Close"]
-    highs, _ = _swing_points(close, order=order)
+    highs, _ = _ohlc_swings(window, order=order)
     if len(highs) < 2:
         return None
     h_idx = highs[-2:]
-    h_vals = [float(close.iloc[i]) for i in h_idx]
+    h_vals = [float(window["High"].iloc[i]) for i in h_idx]
     if _pct_diff(h_vals[0], h_vals[1]) > flat_tol:
         return None
     level = (h_vals[0] + h_vals[1]) / 2.0
     last = float(close.iloc[-1])
     if last > level * 1.03:
         return None
-    neckline = float(close.iloc[h_idx[0]: h_idx[1] + 1].min())
+    neckline = float(window["Low"].iloc[h_idx[0]: h_idx[1] + 1].min())
     conf = 70.0 + 30.0 * (1.0 - _pct_diff(h_vals[0], h_vals[1]) / flat_tol)
     offset = _window_offset(df, window)
     return PatternMatch(
@@ -451,24 +496,25 @@ def detect_double_top(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.025)
         end_idx=offset + h_idx[-1],
         support=neckline,
         resistance=level,
+        high_swing_idx=[offset + i for i in h_idx],
     )
 
 
 def detect_double_bottom(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.025) -> Optional[PatternMatch]:
     window = _window(df, 120)
     close = window["Close"]
-    _, lows = _swing_points(close, order=order)
+    _, lows = _ohlc_swings(window, order=order)
     if len(lows) < 2:
         return None
     l_idx = lows[-2:]
-    l_vals = [float(close.iloc[i]) for i in l_idx]
+    l_vals = [float(window["Low"].iloc[i]) for i in l_idx]
     if _pct_diff(l_vals[0], l_vals[1]) > flat_tol:
         return None
     level = (l_vals[0] + l_vals[1]) / 2.0
     last = float(close.iloc[-1])
     if last < level * 0.97:
         return None
-    neckline = float(close.iloc[l_idx[0]: l_idx[1] + 1].max())
+    neckline = float(window["High"].iloc[l_idx[0]: l_idx[1] + 1].max())
     conf = 70.0 + 30.0 * (1.0 - _pct_diff(l_vals[0], l_vals[1]) / flat_tol)
     offset = _window_offset(df, window)
     return PatternMatch(
@@ -477,23 +523,24 @@ def detect_double_bottom(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.0
         end_idx=offset + l_idx[-1],
         support=level,
         resistance=neckline,
+        low_swing_idx=[offset + i for i in l_idx],
     )
 
 
 def detect_head_shoulders(df: pd.DataFrame, order: int = 5, shoulder_tol: float = 0.04) -> Optional[PatternMatch]:
     window = _window(df, 140)
     close = window["Close"]
-    highs, _ = _swing_points(close, order=order)
+    highs, _ = _ohlc_swings(window, order=order)
     if len(highs) < 3:
         return None
     idx = highs[-3:]
-    vals = [float(close.iloc[i]) for i in idx]
+    vals = [float(window["High"].iloc[i]) for i in idx]
     left, head, right = vals
     if not (head > left * 1.03 and head > right * 1.03):
         return None
     if _pct_diff(left, right) > shoulder_tol:
         return None
-    neckline = min(float(close.iloc[idx[0]: idx[2] + 1].min()), left, right)
+    neckline = min(float(window["Low"].iloc[idx[0]: idx[2] + 1].min()), left, right)
     last = float(close.iloc[-1])
     conf = 65.0 + 35.0 * (1.0 - _pct_diff(left, right) / shoulder_tol)
     offset = _window_offset(df, window)
@@ -503,23 +550,25 @@ def detect_head_shoulders(df: pd.DataFrame, order: int = 5, shoulder_tol: float 
         end_idx=offset + idx[-1],
         support=neckline,
         resistance=head,
+        shoulder_stop=max(left, right) * 1.01,
+        high_swing_idx=[offset + i for i in idx],
     )
 
 
 def detect_inverse_head_shoulders(df: pd.DataFrame, order: int = 5, shoulder_tol: float = 0.04) -> Optional[PatternMatch]:
     window = _window(df, 140)
     close = window["Close"]
-    _, lows = _swing_points(close, order=order)
+    _, lows = _ohlc_swings(window, order=order)
     if len(lows) < 3:
         return None
     idx = lows[-3:]
-    vals = [float(close.iloc[i]) for i in idx]
+    vals = [float(window["Low"].iloc[i]) for i in idx]
     left, head, right = vals
     if not (head < left * 0.97 and head < right * 0.97):
         return None
     if _pct_diff(left, right) > shoulder_tol:
         return None
-    neckline = max(float(close.iloc[idx[0]: idx[2] + 1].max()), left, right)
+    neckline = max(float(window["High"].iloc[idx[0]: idx[2] + 1].max()), left, right)
     last = float(close.iloc[-1])
     conf = 65.0 + 35.0 * (1.0 - _pct_diff(left, right) / shoulder_tol)
     offset = _window_offset(df, window)
@@ -529,17 +578,19 @@ def detect_inverse_head_shoulders(df: pd.DataFrame, order: int = 5, shoulder_tol
         end_idx=offset + idx[-1],
         support=head,
         resistance=neckline,
+        shoulder_stop=min(left, right) * 0.99,
+        low_swing_idx=[offset + i for i in idx],
     )
 
 
 def detect_descending_triangle(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.025) -> Optional[PatternMatch]:
     window = _window(df, 90)
     close = window["Close"]
-    highs, lows = _swing_points(close, order=order)
+    highs, lows = _ohlc_swings(window, order=order)
     if len(highs) < 2 or len(lows) < 2:
         return None
-    low_vals = [float(close.iloc[i]) for i in lows[-3:]]
-    high_vals = [float(close.iloc[i]) for i in highs[-3:]]
+    low_vals = [float(window["Low"].iloc[i]) for i in lows[-3:]]
+    high_vals = [float(window["High"].iloc[i]) for i in highs[-3:]]
     flat = (max(low_vals) - min(low_vals)) / max(low_vals) <= flat_tol
     falling = all(b < a for a, b in zip(high_vals, high_vals[1:]))
     if not (flat and falling):
@@ -551,22 +602,24 @@ def detect_descending_triangle(df: pd.DataFrame, order: int = 5, flat_tol: float
         end_idx=offset + max(highs[-1], lows[-1]),
         support=min(low_vals),
         resistance=max(high_vals),
+        high_swing_idx=[offset + i for i in highs[-3:]],
+        low_swing_idx=[offset + i for i in lows[-3:]],
     )
 
 
 def detect_rising_wedge(df: pd.DataFrame, order: int = 5) -> Optional[PatternMatch]:
     window = _window(df, 90)
     close = window["Close"]
-    highs, lows = _swing_points(close, order=order)
+    highs, lows = _ohlc_swings(window, order=order)
     if len(highs) < 3 or len(lows) < 3:
         return None
-    h_idx, h_vals = highs[-3:], [float(close.iloc[i]) for i in highs[-3:]]
-    l_idx, l_vals = lows[-3:], [float(close.iloc[i]) for i in lows[-3:]]
+    h_idx, h_vals = highs[-3:], [float(window["High"].iloc[i]) for i in highs[-3:]]
+    l_idx, l_vals = lows[-3:], [float(window["Low"].iloc[i]) for i in lows[-3:]]
     hs, ls = _line_slope(h_idx, h_vals), _line_slope(l_idx, l_vals)
     if hs <= 0 or ls <= 0 or hs >= ls:
         return None
-    span_start = float(close.iloc[h_idx[0]] - close.iloc[l_idx[0]])
-    span_end = float(close.iloc[h_idx[-1]] - close.iloc[l_idx[-1]])
+    span_start = float(window["High"].iloc[h_idx[0]] - window["Low"].iloc[l_idx[0]])
+    span_end = float(window["High"].iloc[h_idx[-1]] - window["Low"].iloc[l_idx[-1]])
     if span_end >= span_start * 0.85:
         return None
     offset = _window_offset(df, window)
@@ -576,22 +629,25 @@ def detect_rising_wedge(df: pd.DataFrame, order: int = 5) -> Optional[PatternMat
         end_idx=offset + max(h_idx[-1], l_idx[-1]),
         support=l_vals[-1],
         resistance=h_vals[-1],
+        wedge_height=span_start,
+        high_swing_idx=[offset + i for i in h_idx],
+        low_swing_idx=[offset + i for i in l_idx],
     )
 
 
 def detect_falling_wedge(df: pd.DataFrame, order: int = 5) -> Optional[PatternMatch]:
     window = _window(df, 90)
     close = window["Close"]
-    highs, lows = _swing_points(close, order=order)
+    highs, lows = _ohlc_swings(window, order=order)
     if len(highs) < 3 or len(lows) < 3:
         return None
-    h_idx, h_vals = highs[-3:], [float(close.iloc[i]) for i in highs[-3:]]
-    l_idx, l_vals = lows[-3:], [float(close.iloc[i]) for i in lows[-3:]]
+    h_idx, h_vals = highs[-3:], [float(window["High"].iloc[i]) for i in highs[-3:]]
+    l_idx, l_vals = lows[-3:], [float(window["Low"].iloc[i]) for i in lows[-3:]]
     hs, ls = _line_slope(h_idx, h_vals), _line_slope(l_idx, l_vals)
     if hs >= 0 or ls >= 0 or abs(ls) >= abs(hs):
         return None
-    span_start = float(close.iloc[h_idx[0]] - close.iloc[l_idx[0]])
-    span_end = float(close.iloc[h_idx[-1]] - close.iloc[l_idx[-1]])
+    span_start = float(window["High"].iloc[h_idx[0]] - window["Low"].iloc[l_idx[0]])
+    span_end = float(window["High"].iloc[h_idx[-1]] - window["Low"].iloc[l_idx[-1]])
     if span_end >= span_start * 0.85:
         return None
     offset = _window_offset(df, window)
@@ -601,6 +657,9 @@ def detect_falling_wedge(df: pd.DataFrame, order: int = 5) -> Optional[PatternMa
         end_idx=offset + max(h_idx[-1], l_idx[-1]),
         support=l_vals[-1],
         resistance=h_vals[-1],
+        wedge_height=span_start,
+        high_swing_idx=[offset + i for i in h_idx],
+        low_swing_idx=[offset + i for i in l_idx],
     )
 
 
@@ -618,12 +677,15 @@ def detect_bull_flag(df: pd.DataFrame, pole_bars: int = 15, flag_bars: int = 12)
     flag_range = (flag_high - flag_low) / pole_end
     if flag_range > 0.08 or float(flag.iloc[-1]) < float(flag.iloc[0]) * 0.97:
         return None
+    pole_height = pole_end - pole_start
     return PatternMatch(
         confidence=62.0,
         detail=f"pole +{pole_ret * 100:.0f}% then tight flag ({flag_range * 100:.1f}% range)",
         end_idx=len(df) - 1,
         support=flag_low,
         resistance=flag_high,
+        pole_height=pole_height,
+        pole_bullish=True,
     )
 
 
@@ -641,12 +703,15 @@ def detect_bear_flag(df: pd.DataFrame, pole_bars: int = 15, flag_bars: int = 12)
     flag_range = (flag_high - flag_low) / abs(pole_end)
     if flag_range > 0.08 or float(flag.iloc[-1]) > float(flag.iloc[0]) * 1.03:
         return None
+    pole_height = pole_start - pole_end
     return PatternMatch(
         confidence=62.0,
         detail=f"pole {pole_ret * 100:.0f}% then tight flag ({flag_range * 100:.1f}% range)",
         end_idx=len(df) - 1,
         support=flag_low,
         resistance=flag_high,
+        pole_height=pole_height,
+        pole_bullish=False,
     )
 
 
@@ -656,35 +721,38 @@ def detect_pennant(df: pd.DataFrame, pole_bars: int = 15, pennant_bars: int = 12
         return None
     pole_start = float(close.iloc[-(pole_bars + pennant_bars)])
     pole_end = float(close.iloc[-pennant_bars])
-    pole_ret = abs((pole_end - pole_start) / pole_start)
-    if pole_ret < 0.08:
+    pole_ret = (pole_end - pole_start) / pole_start
+    if abs(pole_ret) < 0.08:
         return None
-    seg = close.iloc[-pennant_bars:]
-    highs, lows = _swing_points(seg, order=3)
+    pennant_df = df.iloc[-pennant_bars:]
+    highs, lows = _ohlc_swings(pennant_df, order=3)
     if len(highs) < 2 or len(lows) < 2:
         return None
-    h_slope = _line_slope(highs[-2:], [float(seg.iloc[i]) for i in highs[-2:]])
-    l_slope = _line_slope(lows[-2:], [float(seg.iloc[i]) for i in lows[-2:]])
+    h_slope = _line_slope(highs[-2:], [float(pennant_df["High"].iloc[i]) for i in highs[-2:]])
+    l_slope = _line_slope(lows[-2:], [float(pennant_df["Low"].iloc[i]) for i in lows[-2:]])
     if h_slope >= 0 or l_slope <= 0:
         return None
-    pennant_high, pennant_low = float(seg.max()), float(seg.min())
+    pennant_high, pennant_low = float(pennant_df["High"].max()), float(pennant_df["Low"].min())
+    pole_height = abs(pole_end - pole_start)
     return PatternMatch(
         confidence=60.0,
         detail=f"sharp move then converging pennant after {pole_ret * 100:.0f}% pole",
         end_idx=len(df) - 1,
         support=pennant_low,
         resistance=pennant_high,
+        pole_height=pole_height,
+        pole_bullish=pole_ret > 0,
     )
 
 
 def detect_rectangle(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.03) -> Optional[PatternMatch]:
     window = _window(df, 100)
     close = window["Close"]
-    highs, lows = _swing_points(close, order=order)
+    highs, lows = _ohlc_swings(window, order=order)
     if len(highs) < 2 or len(lows) < 2:
         return None
-    h_vals = [float(close.iloc[i]) for i in highs[-3:]]
-    l_vals = [float(close.iloc[i]) for i in lows[-3:]]
+    h_vals = [float(window["High"].iloc[i]) for i in highs[-3:]]
+    l_vals = [float(window["Low"].iloc[i]) for i in lows[-3:]]
     flat_top = (max(h_vals) - min(h_vals)) / max(h_vals) <= flat_tol
     flat_bot = (max(l_vals) - min(l_vals)) / max(l_vals) <= flat_tol
     if not (flat_top and flat_bot):
@@ -700,6 +768,8 @@ def detect_rectangle(df: pd.DataFrame, order: int = 5, flat_tol: float = 0.03) -
         end_idx=offset + max(highs[-1], lows[-1]),
         support=bottom,
         resistance=top,
+        high_swing_idx=[offset + i for i in highs[-3:]],
+        low_swing_idx=[offset + i for i in lows[-3:]],
     )
 
 
@@ -707,12 +777,12 @@ def _detect_ascending_triangle(df: pd.DataFrame, order: int = 5) -> Optional[Pat
     close = df["Close"]
     if len(close) < 40:
         return None
-    window = close.iloc[-90:]
-    highs, lows = _swing_points(window, order=order)
+    window = df.iloc[-90:]
+    highs, lows = _ohlc_swings(window, order=order)
     if len(highs) < 2 or len(lows) < 2:
         return None
-    high_vals = [float(window.iloc[i]) for i in highs[-3:]]
-    low_vals = [float(window.iloc[i]) for i in lows[-3:]]
+    high_vals = [float(window["High"].iloc[i]) for i in highs[-3:]]
+    low_vals = [float(window["Low"].iloc[i]) for i in lows[-3:]]
     flat_tol = 0.025
     flat = (max(high_vals) - min(high_vals)) / max(high_vals) <= flat_tol
     rising = all(b > a for a, b in zip(low_vals, low_vals[1:]))
@@ -725,6 +795,8 @@ def _detect_ascending_triangle(df: pd.DataFrame, order: int = 5) -> Optional[Pat
         end_idx=offset + max(highs[-1], lows[-1]),
         support=min(low_vals),
         resistance=max(high_vals),
+        high_swing_idx=[offset + i for i in highs[-3:]],
+        low_swing_idx=[offset + i for i in lows[-3:]],
     )
 
 
@@ -749,6 +821,8 @@ def _detect_cup_and_handle(df: pd.DataFrame) -> Optional[PatternMatch]:
     near_rim = last >= left_rim * 0.9
     if not (0.12 <= depth <= 0.5 and recovered and 0 < handle <= 0.15 and near_rim):
         return None
+    handle_low = float(right_section.min())
+    handle_high = float(right_section.max())
     conf = min(90.0, 55.0 + depth * 50.0)
     detail = f"cup depth {depth * 100:.0f}%, handle {handle * 100:.0f}%"
     return PatternMatch(
@@ -757,6 +831,8 @@ def _detect_cup_and_handle(df: pd.DataFrame) -> Optional[PatternMatch]:
         end_idx=len(df) - 1,
         support=trough,
         resistance=max(left_rim, right_rim),
+        handle_low=handle_low,
+        handle_high=handle_high,
     )
 
 

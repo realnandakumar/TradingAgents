@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { spawn } from "child_process";
 
 import type {
   ChartBar,
@@ -25,6 +26,37 @@ import { readWatchlist } from "@/lib/watchlist-server";
 const TRADINGAGENTS_HOME =
   process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
 
+const CHART_ALLOW_YAHOO_FALLBACK =
+  (process.env.CHART_ALLOW_YAHOO_FALLBACK ?? "false").toLowerCase() === "true";
+
+function repoRootFromDashboard(): string {
+  return path.resolve(process.cwd(), "..");
+}
+
+function pythonExecutable(): string {
+  const repoRoot = repoRootFromDashboard();
+  if (process.platform === "win32") {
+    const venvPython = path.join(repoRoot, ".venv", "Scripts", "python.exe");
+    if (fs.existsSync(venvPython)) return venvPython;
+    return "python";
+  }
+  const venvPython = path.join(repoRoot, ".venv", "bin", "python");
+  if (fs.existsSync(venvPython)) return venvPython;
+  return "python3";
+}
+
+/** Spawn background sync when cache is missing or stale. */
+export function ensureSymbolCached(ticker: string): void {
+  const cwd = repoRootFromDashboard();
+  const pythonCmd = pythonExecutable();
+  const child = spawn(pythonCmd, ["scripts/ensure_symbol_cached.py", ticker], {
+    cwd,
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
 export function chartCacheDir(): string {
   return process.env.TRADINGAGENTS_CACHE_DIR ?? path.join(TRADINGAGENTS_HOME, "cache");
 }
@@ -33,14 +65,49 @@ export function normalizeTicker(raw: string): string {
   return normalizeChartTicker(raw);
 }
 
+/** Filesystem-safe cache filename for tickers with ``&`` (e.g. M&M.NS → M_M.NS). */
+export function symbolCacheFilename(ticker: string): string {
+  const sym = ticker.trim().toUpperCase();
+  if (!sym || sym.includes("/") || sym.includes("\\") || sym.includes("..")) {
+    throw new Error(`invalid ticker: ${ticker}`);
+  }
+  const safe = sym.replace(/&/g, "_");
+  if (!/^[A-Za-z0-9._-]+$/.test(safe)) {
+    throw new Error(`invalid ticker for cache filename: ${ticker}`);
+  }
+  return safe;
+}
+
 export function listCachedTickers(): string[] {
   const dir = chartCacheDir();
   if (!fs.existsSync(dir)) return [];
+
+  const manifestPath = path.join(dir, "manifest.json");
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as {
+        symbols?: Record<string, unknown>;
+      };
+      const keys = Object.keys(manifest.symbols ?? {});
+      if (keys.length > 0) return keys.sort();
+    } catch {
+      /* fall through to directory scan */
+    }
+  }
+
   const latest = new Map<string, number>();
   for (const file of fs.readdirSync(dir)) {
-    const m = file.match(/^(.+)-YFin-data-.+\.csv$/i);
-    if (!m) continue;
-    const ticker = m[1].toUpperCase();
+    const legacy = file.match(/^(.+)-YFin-data-.+\.csv$/i);
+    if (legacy) {
+      const ticker = legacy[1].toUpperCase();
+      const mtime = fs.statSync(path.join(dir, file)).mtimeMs;
+      const prev = latest.get(ticker) ?? 0;
+      if (mtime > prev) latest.set(ticker, mtime);
+      continue;
+    }
+    const canonical = file.match(/^(.+)\.csv$/i);
+    if (!canonical || canonical[1].toLowerCase() === "manifest") continue;
+    const ticker = canonical[1].toUpperCase();
     const mtime = fs.statSync(path.join(dir, file)).mtimeMs;
     const prev = latest.get(ticker) ?? 0;
     if (mtime > prev) latest.set(ticker, mtime);
@@ -62,6 +129,15 @@ export function listChartSymbolOptions(): string[] {
 function resolveCacheFile(ticker: string): string | null {
   const dir = chartCacheDir();
   if (!fs.existsSync(dir)) return null;
+
+  let canonical: string;
+  try {
+    canonical = path.join(dir, `${symbolCacheFilename(ticker)}.csv`);
+  } catch {
+    canonical = path.join(dir, `${ticker}.csv`);
+  }
+  if (fs.existsSync(canonical)) return canonical;
+
   const prefix = `${ticker}-YFin-data-`;
   let best: { path: string; mtime: number } | null = null;
   for (const file of fs.readdirSync(dir)) {
@@ -105,6 +181,40 @@ function parseCsvBars(filePath: string): ChartBar[] {
     });
   }
   return bars.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+}
+
+function barDateKey(time: ChartBar["time"]): string {
+  if (typeof time === "number") {
+    return new Date(time * 1000).toISOString().slice(0, 10);
+  }
+  return time.slice(0, 10);
+}
+
+/** True when the last cached daily bar is more than ~2 calendar days behind today. */
+export function isDailyCacheStale(bars: ChartBar[], today = new Date()): boolean {
+  if (bars.length === 0) return false;
+  const lastDate = barDateKey(bars[bars.length - 1].time);
+  const last = new Date(`${lastDate}T12:00:00Z`);
+  const t = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 12),
+  );
+  const daysBehind = Math.floor((t.getTime() - last.getTime()) / (24 * 60 * 60 * 1000));
+  return daysBehind > 2;
+}
+
+/** Append Yahoo bars newer than the cache tail; dedupe by date, sort ascending. */
+export function mergeDailyBars(cacheBars: ChartBar[], yahooBars: ChartBar[]): ChartBar[] {
+  if (cacheBars.length === 0) return yahooBars;
+  if (yahooBars.length === 0) return cacheBars;
+  const lastCacheDate = barDateKey(cacheBars[cacheBars.length - 1].time);
+  const tail = yahooBars.filter((b) => barDateKey(b.time) > lastCacheDate);
+  if (tail.length === 0) return cacheBars;
+  const byDate = new Map<string, ChartBar>();
+  for (const b of cacheBars) byDate.set(barDateKey(b.time), b);
+  for (const b of tail) byDate.set(barDateKey(b.time), b);
+  return Array.from(byDate.values()).sort((a, b) =>
+    barDateKey(a.time).localeCompare(barDateKey(b.time)),
+  );
 }
 
 function filterByRange(bars: ChartBar[], range: ChartRange): ChartBar[] {
@@ -238,6 +348,7 @@ export async function loadChartPayload(
   rawTicker: string,
   range: ChartRange = "1y",
   enabledDesks?: Set<string>,
+  patternId?: string | null,
 ): Promise<ChartPayload> {
   const ticker = normalizeTicker(rawTicker);
   const empty: ChartPayload = {
@@ -258,11 +369,24 @@ export async function loadChartPayload(
 
   const cacheFile = resolveCacheFile(ticker);
   let bars = cacheFile ? parseCsvBars(cacheFile) : [];
-  let source: "cache" | "yahoo" = "cache";
+  let source: ChartPayload["source"] = "cache";
 
   if (bars.length === 0) {
-    bars = await fetchBarsFromYahoo(ticker, range);
-    source = "yahoo";
+    ensureSymbolCached(ticker);
+    if (CHART_ALLOW_YAHOO_FALLBACK) {
+      bars = await fetchBarsFromYahoo(ticker, range);
+      source = "yahoo";
+    }
+  } else if (isDailyCacheStale(bars)) {
+    ensureSymbolCached(ticker);
+    if (CHART_ALLOW_YAHOO_FALLBACK) {
+      const yahooBars = await fetchBarsFromYahoo(ticker, range);
+      const merged = mergeDailyBars(bars, yahooBars);
+      if (merged.length > bars.length) {
+        bars = merged;
+        source = "cache+yahoo";
+      }
+    }
   }
 
   bars = filterByRange(bars, range);
@@ -281,7 +405,7 @@ export async function loadChartPayload(
     },
   ];
 
-  const deskOverlays = collectDeskOverlays(ticker);
+  const deskOverlays = collectDeskOverlays(ticker, patternId);
   const merged = mergeDeskOverlays(deskOverlays, enabledDesks);
 
   return {
@@ -296,6 +420,7 @@ export async function loadChartPayload(
     zones: merged.zones,
     markers: merged.markers,
     deskOverlays,
+    patternHighlight: merged.patternHighlight,
     meta: {
       barCount: bars.length,
       first: formatMetaTime(bars[0]?.time),

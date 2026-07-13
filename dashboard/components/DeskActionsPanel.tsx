@@ -191,7 +191,9 @@ export function DeskActionsPanel({ deskId }: Props) {
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          {config.actions.map((action) => {
+          {config.actions
+            .filter((action) => action.id !== "screener")
+            .map((action) => {
             const isPrimary = action.variant === "primary";
             return (
               <button

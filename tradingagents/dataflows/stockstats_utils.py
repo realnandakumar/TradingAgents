@@ -9,7 +9,8 @@ from stockstats import wrap
 from typing import Annotated
 import os
 from .config import get_config
-from .utils import safe_ticker_component
+from .ohlcv_store import read_bars, sync_symbol
+from .utils import safe_ticker_component, symbol_cache_filename
 
 logger = logging.getLogger(__name__)
 
@@ -81,64 +82,28 @@ def _clean_dataframe(data: pd.DataFrame) -> pd.DataFrame:
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
-    Downloads 15 years of data up to today and caches per symbol. On
-    subsequent calls the cache is reused. Rows after curr_date are
-    filtered out so backtests never see future prices.
+    Reads from the canonical OHLCV store and incrementally syncs from Yahoo
+    when data is missing or stale. Rows after *curr_date* are filtered out
+    so backtests never see future prices.
     """
-    # Reject ticker values that would escape the cache directory when
-    # interpolated into the cache filename (e.g. ``../../tmp/x``).
-    safe_symbol = safe_ticker_component(symbol)
+    symbol_cache_filename(symbol)
 
     config = get_config()
+    cache_dir = config["data_cache_dir"]
     curr_date_dt = pd.to_datetime(curr_date)
 
-    # Cache uses a fixed window (15y to today) so one file per symbol
-    today_date = pd.Timestamp.today()
-    start_date = today_date - pd.DateOffset(years=5)
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = today_date.strftime("%Y-%m-%d")
+    os.makedirs(cache_dir, exist_ok=True)
+    data = read_bars(symbol, cache_dir=cache_dir)
 
-    os.makedirs(config["data_cache_dir"], exist_ok=True)
-    data_file = os.path.join(
-        config["data_cache_dir"],
-        f"{safe_symbol}-YFin-data-{start_str}-{end_str}.csv",
-    )
-
-    if os.path.exists(data_file):
-        try:
-            data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
-        except pd.errors.EmptyDataError:
-            data = yf_retry(lambda: yf.download(
-                symbol,
-                start=start_str,
-                end=end_str,
-                multi_level_index=False,
-                progress=False,
-                auto_adjust=True,
-            ))
-            data = data.reset_index()
-            if "Date" not in data.columns and "index" in data.columns:
-                data = data.rename(columns={"index": "Date"})
-            _atomic_write_csv(data, data_file)
-    else:
-        data = yf_retry(lambda: yf.download(
-            symbol,
-            start=start_str,
-            end=end_str,
-            multi_level_index=False,
-            progress=False,
-            auto_adjust=True,
-        ))
-        data = data.reset_index()
-        if "Date" not in data.columns and "index" in data.columns:
-            data = data.rename(columns={"index": "Date"})
-        _atomic_write_csv(data, data_file)
+    today = pd.Timestamp.today().normalize()
+    cutoff = today - pd.Timedelta(days=2)
+    last_bar = pd.to_datetime(data["Date"].iloc[-1]).normalize() if not data.empty else None
+    if data.empty or last_bar is None or last_bar <= cutoff:
+        sync_symbol(symbol, mode="incremental", period="5y", cache_dir=cache_dir)
+        data = read_bars(symbol, cache_dir=cache_dir)
 
     data = _clean_dataframe(data)
-
-    # Filter to curr_date to prevent look-ahead bias in backtesting
     data = data[data["Date"] <= curr_date_dt]
-
     return data
 
 

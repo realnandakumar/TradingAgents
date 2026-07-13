@@ -11,10 +11,10 @@ import {
   readChartPatternScreenerSnapshot,
   type ChartPatternScreenerPick,
 } from "@/lib/chart-patterns-server";
-import { computePatternTradeLevels } from "@/lib/chart-pattern-levels";
+import { pickTradeLevels } from "@/lib/chart-pattern-levels";
 
 import { CHART_DESK_META, type ChartDeskMeta } from "./chart-desks";
-import type { ChartHLine, ChartMarker, ChartZone } from "./chart-types";
+import type { ChartHLine, ChartLineSeries, ChartMarker, ChartPatternHighlight, ChartZone } from "./chart-types";
 
 export { CHART_DESK_META, type ChartDeskMeta };
 
@@ -25,6 +25,8 @@ export interface DeskChartOverlay {
   hlines: ChartHLine[];
   zones: ChartZone[];
   markers: ChartMarker[];
+  segments: ChartLineSeries[];
+  patternHighlight?: ChartPatternHighlight | null;
 }
 
 export function normalizeChartTicker(raw: string): string {
@@ -61,6 +63,8 @@ function emptyOverlay(deskId: string): DeskChartOverlay {
     hlines: [],
     zones: [],
     markers: [],
+    segments: [],
+    patternHighlight: null,
   };
 }
 
@@ -154,9 +158,6 @@ function techDeskOverlay(norm: string): DeskChartOverlay {
     const row = swingPositionOverlay("tech-desk", p as unknown as Record<string, unknown>);
     out.hlines.push(...row.hlines);
     out.markers.push(...row.markers);
-    if (p.target_2 != null) {
-      pushHline(out, "t2", num(p.target_2), "T2");
-    }
   }
 
   for (const pe of readTechDeskPending()) {
@@ -186,9 +187,17 @@ function techDeskOverlay(norm: string): DeskChartOverlay {
   return out;
 }
 
-function findBestPatternPick(norm: string): ChartPatternScreenerPick | null {
+function findPatternPick(norm: string, patternId?: string | null): ChartPatternScreenerPick | null {
   const snapshot = readChartPatternScreenerSnapshot();
   if (!snapshot) return null;
+
+  if (patternId?.trim()) {
+    for (const g of snapshot.groups) {
+      for (const p of g.picks) {
+        if (p.pattern_id === patternId && matchesTicker(p.ticker, norm)) return p;
+      }
+    }
+  }
 
   let best: ChartPatternScreenerPick | null = null;
   for (const g of snapshot.groups) {
@@ -202,24 +211,23 @@ function findBestPatternPick(norm: string): ChartPatternScreenerPick | null {
   return best;
 }
 
-function chartPatternOverlay(norm: string): DeskChartOverlay {
+function chartPatternOverlay(norm: string, patternId?: string | null): DeskChartOverlay {
   const out = emptyOverlay("chart-patterns");
-  const pick = findBestPatternPick(norm);
+  const pick = findPatternPick(norm, patternId);
   if (!pick) return out;
 
-  const levels = computePatternTradeLevels(pick);
+  const levels = pickTradeLevels(pick);
+  if (!levels) return out;
+
   const support = num(pick.support_level);
   const resistance = num(pick.resistance_level);
   const trigger = num(pick.trigger_level);
+  const rr = levels.riskReward.toFixed(1);
 
   pushHline(out, "trigger", trigger, "trigger", "solid");
-  pushHline(out, "support", support, "support");
-  pushHline(out, "resistance", resistance, "resistance");
-
-  if (levels) {
-    pushHline(out, "stop", levels.stop, "stop");
-    pushHline(out, "t1", levels.t1, "T1");
-  }
+  pushHline(out, "stop", levels.stop, "stop");
+  pushHline(out, "t1", levels.t1, `T1 (${rr}:1)`);
+  pushHline(out, "t2", levels.t2, "T2 (2R)");
 
   if (support != null && resistance != null && resistance > support) {
     out.zones.push({
@@ -230,6 +238,37 @@ function chartPatternOverlay(norm: string): DeskChartOverlay {
       label: `${out.deskLabel} ${pick.pattern_name}`,
       color: out.color,
     });
+  }
+
+  for (const line of pick.geometry_lines ?? []) {
+    if (!line.points?.length) continue;
+    out.segments.push({
+      id: line.id,
+      label: line.label,
+      color: line.color ?? out.color,
+      deskId: out.deskId,
+      lineWidth: 2,
+      data: line.points.map((p) => ({ time: p.time, value: p.value })),
+    });
+  }
+
+  for (const p of pick.pivots ?? []) {
+    out.markers.push({
+      deskId: out.deskId,
+      time: p.time,
+      text: p.role.replace(/_/g, " "),
+      color: out.color,
+      position: p.position,
+    });
+  }
+
+  if (pick.pattern_window_start && pick.pattern_window_end) {
+    out.patternHighlight = {
+      windowStart: pick.pattern_window_start,
+      windowEnd: pick.pattern_window_end,
+      label: `${pick.pattern_name} · ${pick.setup_status}`,
+      color: out.color,
+    };
   }
 
   return out;
@@ -252,9 +291,13 @@ function appendBundle(target: DeskChartOverlay, row: DeskChartOverlay): void {
   target.hlines.push(...row.hlines);
   target.zones.push(...row.zones);
   target.markers.push(...row.markers);
+  target.segments.push(...row.segments);
 }
 
-export function collectDeskOverlays(ticker: string): DeskChartOverlay[] {
+export function collectDeskOverlays(
+  ticker: string,
+  patternId?: string | null,
+): DeskChartOverlay[] {
   const norm = normalizeChartTicker(ticker);
   if (!norm) return [];
 
@@ -278,8 +321,13 @@ export function collectDeskOverlays(ticker: string): DeskChartOverlay[] {
     overlays.push(tech);
   }
 
-  const patterns = chartPatternOverlay(norm);
-  if (patterns.hlines.length || patterns.zones.length || patterns.markers.length) {
+  const patterns = chartPatternOverlay(norm, patternId);
+  if (
+    patterns.hlines.length ||
+    patterns.zones.length ||
+    patterns.markers.length ||
+    patterns.segments.length
+  ) {
     overlays.push(patterns);
   }
 
@@ -289,19 +337,23 @@ export function collectDeskOverlays(ticker: string): DeskChartOverlay[] {
 export function mergeDeskOverlays(
   desks: DeskChartOverlay[],
   enabledDeskIds?: Set<string>,
-): { hlines: ChartHLine[]; zones: ChartZone[]; markers: ChartMarker[] } {
+): { hlines: ChartHLine[]; zones: ChartZone[]; markers: ChartMarker[]; segments: ChartLineSeries[]; patternHighlight: ChartPatternHighlight | null } {
   const hlines: ChartHLine[] = [];
   const zones: ChartZone[] = [];
   const markers: ChartMarker[] = [];
+  const segments: ChartLineSeries[] = [];
+  let patternHighlight: ChartPatternHighlight | null = null;
 
   for (const d of desks) {
     if (enabledDeskIds && !enabledDeskIds.has(d.deskId)) continue;
     hlines.push(...d.hlines);
     zones.push(...d.zones);
     markers.push(...d.markers);
+    segments.push(...d.segments);
+    if (d.patternHighlight) patternHighlight = d.patternHighlight;
   }
 
-  return { hlines, zones, markers };
+  return { hlines, zones, markers, segments, patternHighlight };
 }
 
 export function parseDeskFilter(raw: string | null | undefined): Set<string> | undefined {

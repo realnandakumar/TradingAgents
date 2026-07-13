@@ -126,7 +126,7 @@ def run_desk_cli_job(job: dict, progress_path: Path, repo_root: Optional[Path] =
 
     if script_rel:
         script_path = root / script_rel
-        cmd = [sys.executable, str(script_path)]
+        cmd = [sys.executable, str(script_path), *cli_args]
     else:
         cmd = [sys.executable, "-m", "cli.main", *cli_args]
     env = os.environ.copy()

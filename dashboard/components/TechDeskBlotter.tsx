@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
+import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { MarkdownViewer } from "@/components/MarkdownViewer";
 import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
@@ -120,7 +122,9 @@ export function TechDeskBlotter({
                   tight ? "bg-bear/5" : ""
                 }`}
               >
-                <td className="py-2 px-3 font-medium">{shortSymbol(p.ticker)}</td>
+                <td className="py-2 px-3 font-medium">
+                  <ChartTickerLink ticker={p.ticker} desk="tech-desk" />
+                </td>
                 <DeskOpenMetaCells p={p} />
                 <td className="py-2 px-2 text-right tabular-nums">{p.confidence ?? "—"}</td>
                 <td className="py-2 px-2 text-right tabular-nums">{inr(live)}</td>

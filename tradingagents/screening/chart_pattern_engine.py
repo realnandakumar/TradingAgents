@@ -109,6 +109,39 @@ _SWING_ORDER_PATTERNS = frozenset({
 })
 
 
+_NEAR_BREAKOUT_STATUSES = frozenset({"APPROACHING", "AT_TRIGGER", "NEAR_TOP", "NEAR_BOTTOM"})
+
+
+def _compute_trade_levels(
+    bias: str,
+    setup_status: str,
+    trigger: float,
+    support: float,
+    resistance: float,
+) -> Optional[dict]:
+    if setup_status not in _NEAR_BREAKOUT_STATUSES:
+        return None
+    height = resistance - support if resistance > support else 0.0
+    entry = stop = t1 = 0.0
+    if bias == "BULLISH":
+        entry, stop, t1 = trigger, support, trigger + height
+    elif bias == "BEARISH":
+        entry, stop, t1 = trigger, resistance, trigger - height
+    elif setup_status == "NEAR_TOP":
+        entry, stop, t1 = resistance, support, resistance + height
+    elif setup_status == "NEAR_BOTTOM":
+        entry, stop, t1 = support, resistance, support - height
+    else:
+        return None
+    if entry <= 0 or stop <= 0:
+        return None
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return None
+    reward = abs(t1 - entry)
+    return {"stop": stop, "t1": t1, "risk_reward": reward / risk}
+
+
 @dataclass
 class ChartPatternSignal:
     symbol: str
@@ -140,7 +173,7 @@ class ChartPatternSignal:
         return "*" * self.reliability
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "strategy_id": STRATEGY_ID,
             "strategy_name": STRATEGY_NAME,
             "version": STRATEGY_VERSION,
@@ -168,6 +201,18 @@ class ChartPatternSignal:
             "sector": self.sector,
             "reasons": self.reasons,
         }
+        levels = _compute_trade_levels(
+            self.bias,
+            self.setup_status,
+            self.trigger_level,
+            self.support_level,
+            self.resistance_level,
+        )
+        if levels:
+            out["stop_loss"] = levels["stop"]
+            out["target_1"] = levels["t1"]
+            out["risk_reward_ratio"] = round(levels["risk_reward"], 2)
+        return out
 
 
 @dataclass

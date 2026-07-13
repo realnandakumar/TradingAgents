@@ -4,6 +4,7 @@ import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { NwEnvelopePosition } from "@/lib/nw-envelope-server";
 import { shortSector } from "@/lib/swing-types";
+import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 10;
@@ -117,7 +118,9 @@ export function NwEnvelopeBlotter({ positions }: { positions: NwEnvelopePosition
                       tight ? "bg-bear/5" : ""
                     }`}
                   >
-                    <td className="py-2 px-3 font-medium">{shortSymbol(p.ticker)}</td>
+                    <td className="py-2 px-3 font-medium">
+                      <ChartTickerLink ticker={p.ticker} desk="nw-envelope" className="hover:text-accent" />
+                    </td>
                     <DeskOpenMetaCells p={p} />
                     <td className="py-2 px-2 text-right tabular-nums">{crossAge ?? "—"}</td>
                     <td className="py-2 px-2 text-right tabular-nums">

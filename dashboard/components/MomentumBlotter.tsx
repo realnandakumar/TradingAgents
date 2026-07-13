@@ -4,6 +4,7 @@ import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { MomentumPosition } from "@/lib/momentum-server";
 import { shortSector } from "@/lib/swing-types";
+import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 20;
@@ -107,7 +108,9 @@ export function MomentumBlotter({ positions }: { positions: MomentumPosition[] }
                     key={p.ticker}
                     className={`border-b border-border/40 hover:bg-surface-2/30 ${tight ? "bg-bear/5" : ""}`}
                   >
-                    <td className="py-2 px-2 font-semibold">{shortSymbol(p.ticker)}</td>
+                    <td className="py-2 px-2 font-semibold">
+                      <ChartTickerLink ticker={p.ticker} desk="momentum" className="font-semibold hover:text-accent" />
+                    </td>
                     <td className="py-2 px-2 text-muted max-w-[140px] truncate">{p.stock_name.replace(" Ltd.", "")}</td>
                     <td className="py-2 px-2 text-muted">{shortSector(p.sector)}</td>
                     <DeskOpenMetaCells p={p} />

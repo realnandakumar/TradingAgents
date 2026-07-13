@@ -68,7 +68,7 @@ export default function TechDeskPage() {
           <h2 className="font-medium mb-2">No Tech Desk book yet</h2>
           <p className="text-muted text-sm mb-4 max-w-md mx-auto">
             Use the watchlist above, run <strong>Analyze entire watchlist</strong>, then{" "}
-            <strong>Process zones</strong>. Run <strong>Daily run</strong> each trading day.
+            <strong>Process zones</strong>. Run <strong>Daily run</strong> each day.
           </p>
           <p className="text-muted text-xs font-mono">{techDeskBookPath()}</p>
         </div>

@@ -51,6 +51,37 @@ Volume-Based Indicators:
 - Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names. Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ In addition to the indicators, describe the price's swing/wave structure: is the stock in an uptrend, and where does it sit within the move (e.g. resuming after a pullback, or extended)? Note any classic chart setups you can see — ascending triangle (flat resistance with higher lows), cup-and-handle, or a tight consolidation just under resistance ("about to break out") — and whether momentum (RSI) is breaking out. Be explicit that wave/pattern reads are interpretive, not precise counts."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+            + """
+
+**Required report structure** — use these exact numbered section headings in order:
+## 8. Chart Pattern & Structural Assessment
+## 9. Summary Risk Assessment
+## 10. Actionable Insights & Trading Considerations
+Then a ## Summary Table with rows for **50 SMA**, **200 SMA**, **ATR**, **Next Support**, **Next Resistance**.
+End with a line: FINAL TRANSACTION PROPOSAL: **BUY** or **HOLD** or **WAIT** or **SELL** (one word in bold).
+Then append this JSON block (fill from your analysis):
+
+```json pm_summary
+{
+  "pm_summary": {
+    "proposal": "HOLD",
+    "bias": "bullish",
+    "confidence": 65,
+    "entry_zone_low": 0,
+    "entry_zone_high": 0,
+    "stop": 0,
+    "target_1": 0,
+    "target_2": 0,
+    "atr": 0,
+    "sma_50": 0,
+    "sma_200": 0,
+    "key_support": "",
+    "key_resistance": "",
+    "invalidation": ""
+  }
+}
+```
+Use real numbers and zones; set entry_zone_low/high to 0 only if not applicable."""
             + """ When you deliver the final report (no more tool calls), begin immediately with a markdown heading such as ## Technical Analysis — do NOT preface with meta narration ("Now I have all the data", "Let me analyze", "I will now write", etc.). Jump straight into the report content."""
             + get_language_instruction()
         )

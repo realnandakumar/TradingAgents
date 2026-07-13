@@ -112,8 +112,9 @@ def _stream_reader(pipe, writer: DeskCliProgressWriter, stream: str) -> None:
 
 
 def run_desk_cli_job(job: dict, progress_path: Path, repo_root: Optional[Path] = None) -> dict:
-    """Execute cli.main with job cli_args and stream output to progress_path."""
+    """Execute cli.main or a repo script and stream output to progress_path."""
     job_id = job["job_id"]
+    script_rel = job.get("script")
     cli_args: List[str] = job.get("cli_args") or []
     root = repo_root or _repo_root()
     job_path = jobs_dir() / f"{job_id}.json"
@@ -123,7 +124,11 @@ def run_desk_cli_job(job: dict, progress_path: Path, repo_root: Optional[Path] =
 
     _update_job_file(job_path, status="running", started_at=writer.started_at)
 
-    cmd = [sys.executable, "-m", "cli.main", *cli_args]
+    if script_rel:
+        script_path = root / script_rel
+        cmd = [sys.executable, str(script_path)]
+    else:
+        cmd = [sys.executable, "-m", "cli.main", *cli_args]
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")

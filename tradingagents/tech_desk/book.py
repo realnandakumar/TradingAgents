@@ -46,6 +46,11 @@ class TechDeskPositionBook:
         )
         self.pending_path = Path(pending).expanduser()
         self.pending_path.parent.mkdir(parents=True, exist_ok=True)
+        dismissed = cfg.get("tech_desk_pending_dismissed_path") or os.path.join(
+            _DEFAULT_HOME, "tech_desk", "pending_dismissed.json"
+        )
+        self.dismissed_path = Path(dismissed).expanduser()
+        self.dismissed_path.parent.mkdir(parents=True, exist_ok=True)
         self.holding_days = int(cfg.get("tech_desk_holding_days", 20))
         self.max_positions = int(cfg.get("tech_desk_max_positions", 10))
         self.min_confidence = int(cfg.get("tech_desk_min_confidence", 60))
@@ -106,6 +111,67 @@ class TechDeskPositionBook:
         tmp.write_text(json.dumps({"pending": pending}, indent=2), encoding="utf-8")
         tmp.replace(self.pending_path)
 
+    def _load_dismissed(self) -> List[dict]:
+        if not self.dismissed_path.exists():
+            return []
+        try:
+            return json.loads(self.dismissed_path.read_text(encoding="utf-8")).get("dismissed", [])
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _save_dismissed(self, dismissed: List[dict]) -> None:
+        tmp = self.dismissed_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"dismissed": dismissed}, indent=2), encoding="utf-8")
+        tmp.replace(self.dismissed_path)
+
+    def is_pending_dismissed(self, ticker: str, report_date: Optional[str] = None) -> Optional[str]:
+        """Return dismiss reason if ticker must not be re-queued."""
+        for row in self._load_dismissed():
+            if row.get("ticker") != ticker:
+                continue
+            dismissed_report = row.get("report_date") or ""
+            if not report_date or not dismissed_report:
+                return str(row.get("reason") or "dismissed")
+            if report_date <= dismissed_report:
+                return str(row.get("reason") or "dismissed")
+        return None
+
+    def record_pending_dismissal(
+        self,
+        ticker: str,
+        reason: str,
+        *,
+        report_date: Optional[str] = None,
+        plan_date: Optional[str] = None,
+    ) -> None:
+        dismissed = [d for d in self._load_dismissed() if d.get("ticker") != ticker]
+        dismissed.append(
+            {
+                "ticker": ticker,
+                "reason": reason,
+                "report_date": report_date,
+                "plan_date": plan_date,
+                "dismissed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        self._save_dismissed(dismissed)
+
+    def dismiss_pending(
+        self,
+        ticker: str,
+        reason: str,
+        *,
+        report_date: Optional[str] = None,
+        plan_date: Optional[str] = None,
+    ) -> None:
+        self.record_pending_dismissal(
+            ticker,
+            reason,
+            report_date=report_date,
+            plan_date=plan_date,
+        )
+        self.remove_pending(ticker)
+
     @property
     def positions(self) -> List[dict]:
         return self._state["positions"]
@@ -160,6 +226,10 @@ class TechDeskPositionBook:
         report_date: Optional[str] = None,
         current_price: Optional[float] = None,
     ) -> Optional[dict]:
+        blocked = self.is_pending_dismissed(plan.ticker, report_date)
+        if blocked:
+            logger.info("Reject pending %s — dismissed (%s)", plan.ticker, blocked)
+            return None
         err = self.validate_pending_plan(plan, current_price)
         if err:
             logger.info("Reject pending %s — %s", plan.ticker, err)
@@ -183,6 +253,9 @@ class TechDeskPositionBook:
             "report_path": report_path,
             "report_date": report_date,
             "added_at": datetime.now().isoformat(timespec="seconds"),
+            "peak_since_added": current_price,
+            "peak_date": plan_date,
+            "setup_status": "active",
         }
         pending.append(row)
         self._save_pending(pending)
@@ -257,6 +330,7 @@ class TechDeskPositionBook:
         }
         self.positions.append(row)
         self._save()
+        self.remove_pending(plan.ticker)
         return row
 
     def _history(self, symbol: str, start: str, end: str) -> Optional[pd.DataFrame]:
@@ -307,12 +381,87 @@ class TechDeskPositionBook:
         self._save()
         return {"closed": events, "open_positions": self.open_count()}
 
+    def evaluate_pending_lifecycle(self, as_of: Optional[str] = None) -> dict:
+        """Update peaks and remove invalidated/expired/exhausted pending entries."""
+        from .pending_lifecycle import (
+            history_from_plan_date,
+            is_pending_expired,
+            is_pending_invalidated,
+            is_setup_exhausted,
+            update_pending_peak,
+        )
+
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        pending = self._load_pending()
+        if not pending:
+            return {"removed": [], "updated": 0}
+
+        remaining: List[dict] = []
+        removed: List[dict] = []
+
+        for entry in pending:
+            ticker = entry["ticker"]
+            plan_date = entry.get("plan_date") or as_of
+            start = plan_date
+            end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            hist = self._history(ticker, start, end)
+            if hist is not None and not hist.empty:
+                entry = update_pending_peak(entry, hist)
+
+            if is_pending_expired(entry, as_of, self.config):
+                removed.append({"ticker": ticker, "reason": "expired"})
+                self.record_pending_dismissal(
+                    ticker,
+                    "expired",
+                    report_date=entry.get("report_date"),
+                    plan_date=plan_date,
+                )
+                continue
+
+            hist_slice = history_from_plan_date(hist, plan_date, as_of)
+            hist_for_rules = hist_slice if hist_slice is not None else hist
+            if hist_for_rules is None:
+                hist_for_rules = pd.DataFrame()
+            invalidated, inv_reason = is_pending_invalidated(entry, hist_for_rules, self.config)
+            if invalidated:
+                removed.append({"ticker": ticker, "reason": inv_reason})
+                self.record_pending_dismissal(
+                    ticker,
+                    inv_reason,
+                    report_date=entry.get("report_date"),
+                    plan_date=plan_date,
+                )
+                continue
+
+            exhausted, ex_reason = is_setup_exhausted(entry, hist_for_rules, self.config)
+            if exhausted:
+                removed.append({"ticker": ticker, "reason": ex_reason})
+                self.record_pending_dismissal(
+                    ticker,
+                    ex_reason,
+                    report_date=entry.get("report_date"),
+                    plan_date=plan_date,
+                )
+                continue
+
+            remaining.append(entry)
+
+        if len(remaining) != len(pending):
+            self._save_pending(remaining)
+        elif remaining:
+            self._save_pending(remaining)
+
+        return {"removed": removed, "updated": len(remaining)}
+
     def evaluate_pending_fills(self, as_of: Optional[str] = None) -> List[dict]:
         as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        self.evaluate_pending_lifecycle(as_of=as_of)
         filled: List[dict] = []
         pending = self._load_pending()
         if not pending:
             return filled
+
+        from .pending_lifecycle import history_from_plan_date, is_setup_exhausted
 
         remaining_pending: List[dict] = []
         for entry in pending:
@@ -328,11 +477,24 @@ class TechDeskPositionBook:
             if zone_low <= 0 or zone_high <= zone_low:
                 continue
 
-            start = (datetime.strptime(as_of, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d")
+            plan_date = entry.get("plan_date") or as_of
+            start = plan_date
             end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
             hist = self._history(ticker, start, end)
             if hist is None or hist.empty:
                 remaining_pending.append(entry)
+                continue
+
+            hist_slice = history_from_plan_date(hist, plan_date, as_of)
+            hist_for_rules = hist_slice if hist_slice is not None else hist
+            exhausted, ex_reason = is_setup_exhausted(entry, hist_for_rules, self.config)
+            if exhausted:
+                self.dismiss_pending(
+                    ticker,
+                    ex_reason,
+                    report_date=entry.get("report_date"),
+                    plan_date=plan_date,
+                )
                 continue
 
             last = hist.iloc[-1]

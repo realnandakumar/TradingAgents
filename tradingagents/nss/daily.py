@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from tradingagents.screening.nss_screener import screen_nss
-from tradingagents.swing.exits import is_nse_trading_day
 from tradingagents.nss.manager import NSSPaperTradeManager, ReplacementProposal
 
 if TYPE_CHECKING:
@@ -23,9 +22,6 @@ def run_nss_daily(
     def _log(msg: str):
         if progress:
             progress(msg)
-
-    if not force and not is_nse_trading_day():
-        return {"skipped": True, "reason": "not_a_trading_day"}
 
     _log("Running NSS screener (daily 1D bars)...")
     picks = screen_nss(config, progress=progress, price_data=price_data)

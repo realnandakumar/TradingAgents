@@ -354,8 +354,8 @@ class SuperTrendRSIPositionBook:
                     partial=False,
                 )
                 hist = self._history(
+                    p["ticker"],
                     p["screen_date"],
-                    exit_date,
                     (datetime.strptime(exit_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
                 )
                 self._apply_action(p, action, hist)

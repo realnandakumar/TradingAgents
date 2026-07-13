@@ -4,6 +4,7 @@ import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { GapFillPosition } from "@/lib/gap-fill-server";
 import { shortSector } from "@/lib/swing-types";
+import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 const MAX_POSITIONS = 10;
@@ -18,7 +19,16 @@ function cushionPct(last: number | null, stop: number): number | null {
   return ((last - stop) / last) * 100;
 }
 
-export function GapFillBlotter({ positions }: { positions: GapFillPosition[] }) {
+export function GapFillBlotter({
+  positions,
+  screenerTickers = [],
+  maxFillPct = 50,
+}: {
+  positions: GapFillPosition[];
+  screenerTickers?: string[];
+  maxFillPct?: number;
+}) {
+  const screenerSet = new Set(screenerTickers);
   const { quotes, loading } = useQuotes(positions.map((p) => p.ticker));
   const open = positions.filter((p) => p.status === "open");
 
@@ -111,20 +121,36 @@ export function GapFillBlotter({ positions }: { positions: GapFillPosition[] }) 
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ p, live, stop, mtmPct, cushion, tight, gapAge, gapPct, fillPct, fillTarget }) => (
+                {rows.map(({ p, live, stop, mtmPct, cushion, tight, gapAge, gapPct, fillPct, fillTarget }) => {
+                  const pastFillBand = fillPct != null && fillPct > maxFillPct;
+                  const notInScreener = screenerSet.size > 0 && !screenerSet.has(p.ticker);
+                  return (
                   <tr
                     key={p.ticker}
                     className={`border-b border-border/40 hover:bg-surface-2/40 ${
-                      tight ? "bg-bear/5" : ""
+                      tight ? "bg-bear/5" : pastFillBand ? "bg-bear/5" : notInScreener ? "bg-surface-2/30" : ""
                     }`}
                   >
-                    <td className="py-2 px-3 font-medium">{shortSymbol(p.ticker)}</td>
+                    <td className="py-2 px-3 font-medium">
+                      <ChartTickerLink ticker={p.ticker} desk="gap-fill" className="hover:text-accent" />
+                    </td>
                     <DeskOpenMetaCells p={p} />
                     <td className="py-2 px-2 text-right tabular-nums">{gapAge ?? "—"}</td>
                     <td className="py-2 px-2 text-right tabular-nums">
                       {gapPct != null ? pct(gapPct, 1) : "—"}
                     </td>
-                    <td className="py-2 px-2 text-right tabular-nums">
+                    <td
+                      className={`py-2 px-2 text-right tabular-nums ${
+                        pastFillBand ? "text-bear font-medium" : ""
+                      }`}
+                      title={
+                        pastFillBand
+                          ? `>${maxFillPct}% filled — would not enter today`
+                          : notInScreener
+                            ? "Not in latest screener snapshot"
+                            : undefined
+                      }
+                    >
                       {fillPct != null ? `${fillPct.toFixed(0)}%` : "—"}
                     </td>
                     <td className="py-2 px-2 text-right tabular-nums">{inr(live)}</td>
@@ -150,7 +176,8 @@ export function GapFillBlotter({ positions }: { positions: GapFillPosition[] }) 
                       {shortSector(p.sector)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

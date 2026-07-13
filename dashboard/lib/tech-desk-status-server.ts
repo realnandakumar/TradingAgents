@@ -139,14 +139,14 @@ function computeNextAction(
   }
   if (dailyOps.dailyDue) {
     return {
-      message: "Trading day — Daily run not completed yet (exits + zone fills)",
+      message: "Daily run not completed yet today (exits + zone fills)",
       actionId: "daily",
       tone: "accent",
     };
   }
   if (reports.fresh === reports.total && reports.total > 0) {
     return {
-      message: "Research pipeline healthy — run Daily each trading day; Review weekly if needed",
+      message: "Research pipeline healthy — run Daily each day; Review weekly if needed",
       tone: "bull",
     };
   }
@@ -177,7 +177,7 @@ export function getTechDeskStatus(): TechDeskStatus {
   const todayIst = todayIstIso();
   const lastDailyDate = (latestDaily?.date as string | undefined) ?? null;
   const isTradingDay = isTradingDayIst();
-  const dailyDue = isTradingDay && lastDailyDate !== todayIst;
+  const dailyDue = lastDailyDate !== todayIst;
 
   const dailyOps: DailyOpsStatus = {
     isTradingDay,

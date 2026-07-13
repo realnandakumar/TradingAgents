@@ -10,6 +10,7 @@ from tradingagents.screening.gap_fill_engine import (
     GapFillSignal,
     evaluate_gap_fill,
     explain_gap_fill,
+    pick_passes_long_entry,
 )
 from tradingagents.screening.gap_fill_screener import GapFillPick, screen_gap_fill
 from tradingagents.swing.exits import ExitReason, is_nse_trading_day
@@ -26,6 +27,7 @@ __all__ = [
     "ReplacementProposal",
     "evaluate_gap_fill",
     "explain_gap_fill",
+    "pick_passes_long_entry",
     "screen_gap_fill",
     "run_gap_fill_daily",
     "ExitReason",

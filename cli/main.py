@@ -39,6 +39,45 @@ from cli.stats_handler import StatsCallbackHandler
 
 console = Console()
 
+
+def _portfolio_approve(
+    desk_id: str,
+    *,
+    yes: bool = False,
+    ids: Optional[str] = None,
+) -> None:
+    from tradingagents.replacements.approve import approve_portfolio_replacements, parse_ids_option
+
+    selected = parse_ids_option(ids)
+    auto = yes or selected is not None
+
+    def confirm(prop) -> bool:
+        return (
+            questionary.confirm(
+                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
+                default=False,
+            ).ask()
+            or False
+        )
+
+    result = approve_portfolio_replacements(
+        desk_id,
+        yes=auto,
+        ids=selected,
+        confirm=None if auto else confirm,
+    )
+    if result["approved"] == 0 and result["messages"]:
+        first = result["messages"][0]
+        if first.startswith("No pending"):
+            console.print(f"[green]{first}[/green]")
+            raise typer.Exit()
+    for msg in result["messages"]:
+        if msg.startswith("Approved:"):
+            console.print(f"[green]{msg}[/green]")
+        elif msg.startswith("Skip"):
+            console.print(f"[yellow]{msg}[/yellow]")
+    console.print(f"\n[dim]{result['approved']} replacement(s) executed.[/dim]")
+
 app = typer.Typer(
     name="TradingAgents",
     help="TradingAgents CLI: Multi-Agents LLM Financial Trading Framework",
@@ -1467,6 +1506,10 @@ def tech_desk_apply_process(
     date: Optional[str] = typer.Option(
         None, "--date", help="Process log date (YYYY-MM-DD). Default: today."
     ),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated replacement ids (foreclose->open)."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Apply all pending replacements."),
 ):
     """Apply queued portfolio replacements from a prior tech-desk-process run."""
     from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
@@ -1474,9 +1517,15 @@ def tech_desk_apply_process(
     config = DEFAULT_CONFIG.copy()
     manager = TechDeskPaperTradeManager(config)
     proc_date = date or datetime.datetime.now().strftime("%Y-%m-%d")
+    selected = None
+    if ids:
+        selected = [part.strip() for part in ids.split(",") if part.strip()]
 
     with console.status("[bold green]Applying replacements...", spinner="dots"):
-        result = manager.apply_pending_replacements(process_date=proc_date)
+        result = manager.apply_pending_replacements(
+            process_date=proc_date,
+            selected_ids=None if yes and not selected else selected,
+        )
 
     if result.get("error"):
         console.print(f"[red]{result['error']}[/red]")
@@ -1507,7 +1556,7 @@ def tech_desk_apply_process(
 
 @app.command("tech-desk-daily")
 def tech_desk_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends (testing)."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
 ):
     """Rules-only daily job: stop/target/time exits + pending zone fills (no LLM)."""
     from tradingagents.tech_desk import run_tech_desk_daily
@@ -2237,14 +2286,14 @@ def swing_positions():
 @app.command("swing-daily")
 def swing_daily(
     force: bool = typer.Option(
-        False, "--force", help="Run even on weekends (for testing).",
+        False, "--force", help="Deprecated no-op; daily runs every calendar day.",
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y",
         help="Auto-approve replacement proposals (foreclosure). Default: ask permission.",
     ),
 ):
-    """Daily swing portfolio job (9:30 / 11:45 / 14:30 IST on trading days).
+    """Daily swing portfolio job (9:30 / 11:45 / 14:30 IST every day).
 
     Screens on daily (1D) charts, processes stop/T2 partial/trail/time exits,
     opens new picks (max 20), and queues replacement proposals when full."""
@@ -2297,37 +2346,12 @@ def swing_daily(
 @app.command("swing-approve")
 def swing_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending portfolio replacement proposals (foreclosure)."""
-    from tradingagents.screening.swing_screener import screen_swing
-    from tradingagents.swing import PortfolioPaperTradeManager
-
-    manager = PortfolioPaperTradeManager(DEFAULT_CONFIG.copy())
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[green]No pending replacement proposals.[/green]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_swing(DEFAULT_CONFIG.copy())}
-    approved = 0
-    for prop in pending:
-        pick = picks.get(prop.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = True
-        else:
-            ok = questionary.confirm(
-                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
-                default=False,
-            ).ask() or False
-        if ok and manager.approve_replacement(prop.id, pick):
-            approved += 1
-            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
-
-    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+    _portfolio_approve("swing", yes=yes, ids=ids)
 
 
 @app.command("swing-report")
@@ -2554,10 +2578,10 @@ def momentum_positions():
 
 @app.command("momentum-daily")
 def momentum_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily momentum portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily momentum portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.momentum import MomentumPaperTradeManager, ReplacementProposal, run_momentum_daily
 
     config = DEFAULT_CONFIG.copy()
@@ -2607,36 +2631,12 @@ def momentum_daily(
 @app.command("momentum-approve")
 def momentum_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending momentum portfolio replacement proposals."""
-    from tradingagents.screening.momentum_screener import screen_momentum
-    from tradingagents.momentum import MomentumPaperTradeManager
-
-    manager = MomentumPaperTradeManager(DEFAULT_CONFIG.copy())
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[green]No pending replacement proposals.[/green]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_momentum(DEFAULT_CONFIG.copy())}
-    approved = 0
-    for prop in pending:
-        pick = picks.get(prop.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
-            continue
-        ok = yes or (
-            questionary.confirm(
-                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
-                default=False,
-            ).ask()
-            or False
-        )
-        if ok and manager.approve_replacement(prop.id, pick):
-            approved += 1
-            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
-
-    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+    _portfolio_approve("momentum", yes=yes, ids=ids)
 
 
 @app.command("momentum-report")
@@ -2866,10 +2866,10 @@ def nss_positions():
 
 @app.command("nss-daily")
 def nss_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily NSS portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily NSS portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.nss import NSSPaperTradeManager, ReplacementProposal, run_nss_daily
 
     config = DEFAULT_CONFIG.copy()
@@ -2919,36 +2919,12 @@ def nss_daily(
 @app.command("nss-approve")
 def nss_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending replacements."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending NSS portfolio replacement proposals."""
-    from tradingagents.screening.nss_screener import screen_nss
-    from tradingagents.nss import NSSPaperTradeManager
-
-    manager = NSSPaperTradeManager(DEFAULT_CONFIG.copy())
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[green]No pending replacement proposals.[/green]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_nss(DEFAULT_CONFIG.copy())}
-    approved = 0
-    for prop in pending:
-        pick = picks.get(prop.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {prop.new_ticker} — not in today's screener.[/yellow]")
-            continue
-        ok = yes or (
-            questionary.confirm(
-                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
-                default=False,
-            ).ask()
-            or False
-        )
-        if ok and manager.approve_replacement(prop.id, pick):
-            approved += 1
-            console.print(f"[green]Approved:[/green] {prop.close_ticker} → {prop.new_ticker}")
-
-    console.print(f"\n[dim]{approved} replacement(s) executed.[/dim]")
+    _portfolio_approve("nss", yes=yes, ids=ids)
 
 
 @app.command("nss-report")
@@ -3363,10 +3339,10 @@ def supertrend_rsi_positions():
 
 @app.command("supertrend-rsi-daily")
 def supertrend_rsi_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily SuperTrend+RSI portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily SuperTrend+RSI portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.supertrend_rsi import (
         ReplacementProposal,
         SuperTrendRSIPaperTradeManager,
@@ -3420,42 +3396,12 @@ def supertrend_rsi_daily(
 @app.command("supertrend-rsi-approve")
 def supertrend_rsi_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending ST+RSI portfolio replacement proposals."""
-    from tradingagents.screening.supertrend_rsi_screener import screen_supertrend_rsi
-    from tradingagents.supertrend_rsi import SuperTrendRSIPaperTradeManager
-
-    config = DEFAULT_CONFIG.copy()
-    manager = SuperTrendRSIPaperTradeManager(config)
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[yellow]No pending ST+RSI replacement proposals.[/yellow]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_supertrend_rsi(config) if p.direction == "BUY"}
-    approved = 0
-    for proposal in pending:
-        pick = picks.get(proposal.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = manager.approve_replacement(proposal.id, pick)
-        else:
-            console.print(
-                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-                f"(score {proposal.close_score:.0f}) with "
-                f"[bold]{proposal.new_stock_name}[/bold] "
-                f"(score {proposal.new_signal_score})?"
-            )
-            if questionary.confirm("Approve?", default=False).ask():
-                ok = manager.approve_replacement(proposal.id, pick)
-        if ok:
-            approved += 1
-            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
-
-    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+    _portfolio_approve("supertrend-rsi", yes=yes, ids=ids)
 
 
 @app.command("supertrend-rsi-report")
@@ -3777,10 +3723,10 @@ def trama_positions():
 
 @app.command("trama-daily")
 def trama_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily TRAMA portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily TRAMA portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.trama import ReplacementProposal, run_trama_daily
 
     config = DEFAULT_CONFIG.copy()
@@ -3830,42 +3776,12 @@ def trama_daily(
 @app.command("trama-approve")
 def trama_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending TRAMA portfolio replacement proposals."""
-    from tradingagents.screening.trama_screener import screen_trama
-    from tradingagents.trama import TramaPaperTradeManager
-
-    config = DEFAULT_CONFIG.copy()
-    manager = TramaPaperTradeManager(config)
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[yellow]No pending TRAMA replacement proposals.[/yellow]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_trama(config) if p.direction == "BUY"}
-    approved = 0
-    for proposal in pending:
-        pick = picks.get(proposal.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = manager.approve_replacement(proposal.id, pick)
-        else:
-            console.print(
-                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-                f"(dist {proposal.close_score:.1f}%) with "
-                f"[bold]{proposal.new_stock_name}[/bold] "
-                f"(dist {proposal.new_signal_score:.1f}%, age {proposal.new_flip_age})?"
-            )
-            if questionary.confirm("Approve?", default=False).ask():
-                ok = manager.approve_replacement(proposal.id, pick)
-        if ok:
-            approved += 1
-            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
-
-    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+    _portfolio_approve("trama", yes=yes, ids=ids)
 
 
 @app.command("trama-report")
@@ -4124,12 +4040,34 @@ def gap_fill_positions():
     console.print("[dim]Daily report:[/dim] [bold]tradingagents gap-fill-report[/bold]")
 
 
+@app.command("gap-fill-reset")
+def gap_fill_reset(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm reset without prompt."),
+):
+    """Clear Gap Fill paper book and pending replacement proposals."""
+    from tradingagents.gap_fill import GapFillPaperTradeManager
+
+    if not yes:
+        confirmed = questionary.confirm(
+            "Reset Gap Fill paper book and pending replacements?",
+            default=False,
+        ).ask()
+        if not confirmed:
+            raise typer.Exit(0)
+
+    manager = GapFillPaperTradeManager(DEFAULT_CONFIG.copy())
+    manager.reset_portfolio()
+    console.print("[green]Gap Fill paper book reset.[/green]")
+    console.print(f"[dim]Book:[/dim] {manager.book.path}")
+    console.print("[dim]Next:[/dim] [bold]tradingagents gap-fill-daily --yes[/bold]")
+
+
 @app.command("gap-fill-daily")
 def gap_fill_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily Gap Fill portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily Gap Fill portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.gap_fill import ReplacementProposal, run_gap_fill_daily
 
     config = DEFAULT_CONFIG.copy()
@@ -4179,42 +4117,12 @@ def gap_fill_daily(
 @app.command("gap-fill-approve")
 def gap_fill_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending Gap Fill portfolio replacement proposals."""
-    from tradingagents.screening.gap_fill_screener import screen_gap_fill
-    from tradingagents.gap_fill import GapFillPaperTradeManager
-
-    config = DEFAULT_CONFIG.copy()
-    manager = GapFillPaperTradeManager(config)
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[yellow]No pending Gap Fill replacement proposals.[/yellow]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_gap_fill(config) if p.direction == "BUY"}
-    approved = 0
-    for proposal in pending:
-        pick = picks.get(proposal.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = manager.approve_replacement(proposal.id, pick)
-        else:
-            console.print(
-                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-                f"(fill {proposal.close_score:.0f}%) with "
-                f"[bold]{proposal.new_stock_name}[/bold] "
-                f"(score {proposal.new_signal_score:.1f}, age {proposal.new_flip_age})?"
-            )
-            if questionary.confirm("Approve?", default=False).ask():
-                ok = manager.approve_replacement(proposal.id, pick)
-        if ok:
-            approved += 1
-            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
-
-    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+    _portfolio_approve("gap-fill", yes=yes, ids=ids)
 
 
 @app.command("gap-fill-report")
@@ -4705,10 +4613,10 @@ def nw_envelope_positions():
 
 @app.command("nw-envelope-daily")
 def nw_envelope_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
-    """Daily NW Envelope portfolio job (9:30 / 11:45 / 14:30 IST on trading days)."""
+    """Daily NW Envelope portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.nw_envelope import ReplacementProposal, run_nw_envelope_daily
 
     config = DEFAULT_CONFIG.copy()
@@ -4758,42 +4666,12 @@ def nw_envelope_daily(
 @app.command("nw-envelope-approve")
 def nw_envelope_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending NW Envelope portfolio replacement proposals."""
-    from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
-    from tradingagents.nw_envelope import NwEnvelopePaperTradeManager
-
-    config = DEFAULT_CONFIG.copy()
-    manager = NwEnvelopePaperTradeManager(config)
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[yellow]No pending NW Envelope replacement proposals.[/yellow]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_nw_envelope(config) if p.direction == "BUY"}
-    approved = 0
-    for proposal in pending:
-        pick = picks.get(proposal.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's BUY picks[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = manager.approve_replacement(proposal.id, pick)
-        else:
-            console.print(
-                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-                f"(dist {proposal.close_score:.1f}%) with "
-                f"[bold]{proposal.new_stock_name}[/bold] "
-                f"(dist {proposal.new_signal_score:.1f}%, age {proposal.new_flip_age})?"
-            )
-            if questionary.confirm("Approve?", default=False).ask():
-                ok = manager.approve_replacement(proposal.id, pick)
-        if ok:
-            approved += 1
-            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
-
-    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+    _portfolio_approve("nw-envelope", yes=yes, ids=ids)
 
 
 @app.command("nw-envelope-report")
@@ -4998,7 +4876,7 @@ def pattern_forecast_positions():
 
 @app.command("pattern-forecast-daily")
 def pattern_forecast_daily(
-    force: bool = typer.Option(False, "--force", help="Run even on weekends."),
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Run Pattern Forecast screener and update 5-day paper book."""
@@ -5027,7 +4905,7 @@ def pattern_forecast_daily(
         )
 
     if report.get("skipped"):
-        console.print("[yellow]Skipped: not an NSE trading day.[/yellow]")
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
         raise typer.Exit()
 
     console.print(Panel.fit(
@@ -5045,43 +4923,12 @@ def pattern_forecast_daily(
 @app.command("pattern-forecast-approve")
 def pattern_forecast_approve(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve all pending proposals."),
+    ids: Optional[str] = typer.Option(
+        None, "--ids", help="Comma-separated proposal ids to approve."
+    ),
 ):
     """Approve pending Pattern Forecast replacement proposals."""
-    from tradingagents.pattern_forecast import PatternForecastPaperTradeManager
-    from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
-
-    config = DEFAULT_CONFIG.copy()
-    config["pattern_forecast_directions"] = "UP"
-    manager = PatternForecastPaperTradeManager(config)
-    pending = manager.pending_proposals()
-    if not pending:
-        console.print("[yellow]No pending Pattern Forecast replacement proposals.[/yellow]")
-        raise typer.Exit()
-
-    picks = {p.symbol: p for p in screen_pattern_forecast(config) if p.direction == "UP"}
-    approved = 0
-    for proposal in pending:
-        pick = picks.get(proposal.new_ticker)
-        if pick is None:
-            console.print(f"[yellow]Skip {proposal.new_ticker}: not in today's UP picks[/yellow]")
-            continue
-        ok = False
-        if yes:
-            ok = manager.approve_replacement(proposal.id, pick)
-        else:
-            console.print(
-                f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-                f"(prob {proposal.close_score:.1f}%) with "
-                f"[bold]{proposal.new_stock_name}[/bold] "
-                f"(prob {proposal.new_probability:.1f}%)?"
-            )
-            if questionary.confirm("Approve?", default=False).ask():
-                ok = manager.approve_replacement(proposal.id, pick)
-        if ok:
-            approved += 1
-            console.print(f"  [green]✓[/green] {proposal.close_ticker} → {proposal.new_ticker}")
-
-    console.print(f"\n[green]Approved {approved} replacement(s).[/green]")
+    _portfolio_approve("pattern-forecast", yes=yes, ids=ids)
 
 
 @app.command("pattern-forecast-report")

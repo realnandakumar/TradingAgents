@@ -14,6 +14,8 @@ from tradingagents.screening.gap_fill_engine import (
     STRATEGY_VERSION,
     GapFillSignal,
     evaluate_gap_fill,
+    gap_trade_side,
+    pick_passes_long_entry,
 )
 from tradingagents.screening.screener_snapshot import save_screener_snapshot
 from tradingagents.screening.universe import load_universe, load_universe_metadata
@@ -42,6 +44,18 @@ class GapFillPick:
     @property
     def remark(self) -> str:
         return self.signal.remark
+
+    @property
+    def trade_side(self) -> Optional[str]:
+        return gap_trade_side(self.direction)
+
+    @property
+    def is_long_candidate(self) -> bool:
+        return self.trade_side == "BUY"
+
+    def passes_long_entry(self, config: Optional[dict] = None) -> bool:
+        ok, _ = pick_passes_long_entry(self.signal, config)
+        return ok
 
 
 def screen_gap_fill(
@@ -134,6 +148,7 @@ def screen_gap_fill(
             "filters": {
                 "max_age": max_age,
                 "min_pct": config.get("gap_fill_min_pct"),
+                "max_fill_pct": config.get("gap_fill_max_progress"),
                 "directions": directions,
                 "exclude_today": config.get("gap_fill_exclude_today", True),
             },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,10 +14,9 @@ from tradingagents.analysis.tech_analyze import strip_market_report_preamble
 from tradingagents.paper.sizing import compute_position_size
 from tradingagents.tech_desk.book import TechDeskPositionBook
 from tradingagents.tech_desk.exits import zone_fill_price
-from tradingagents.tech_desk.agents.portfolio_manager import (
-    _format_report_excerpt,
-    _parse_key_levels,
-)
+from tradingagents.tech_desk.pm_validation import enforce_entry_timing
+from tradingagents.tech_desk.report_excerpt import extract_pm_summary, format_report_excerpt, parse_key_levels
+from tradingagents.tech_desk.report_loader import TechReportSnapshot
 from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
 from tradingagents.tech_desk.report_loader import load_tech_reports
 from tradingagents.tech_desk.schemas import (
@@ -244,15 +244,15 @@ Wait for pullback to ₹256-260.
 **FINAL TRANSACTION PROPOSAL: HOLD** — wait for pullback.
 """
 
-    def test_full_report_when_no_section_eight(self):
+    def test_tail_slice_when_no_anchor(self):
         long_text = "START" + ("x" * 5000) + "END_TABLE"
-        excerpt = _format_report_excerpt(long_text)
-        self.assertIn("START", excerpt)
+        excerpt = format_report_excerpt(long_text)
+        self.assertNotIn("START", excerpt)
         self.assertIn("END_TABLE", excerpt)
 
     def test_short_report_includes_full_body(self):
         short = "## 1. Intro\n\nBrief note.\n"
-        excerpt = _format_report_excerpt(
+        excerpt = format_report_excerpt(
             short,
             ticker="TCS.NS",
             report_date="2026-07-10",
@@ -261,7 +261,7 @@ Wait for pullback to ₹256-260.
         self.assertIn("Ticker: TCS.NS", excerpt)
 
     def test_section_eight_slice_with_header_and_key_levels(self):
-        excerpt = _format_report_excerpt(
+        excerpt = format_report_excerpt(
             self._SWIGGY_FIXTURE,
             ticker="SWIGGY.NS",
             report_date="2026-07-10",
@@ -286,13 +286,13 @@ Wait for pullback to ₹256-260.
             "## 8. Chart Pattern\n\nPattern body.\n\n"
             "## Summary Table\n\n| **Next Support** | ₹100 |\n"
         )
-        excerpt = _format_report_excerpt(text, ticker="X.NS", report_date="2026-07-01")
+        excerpt = format_report_excerpt(text, ticker="X.NS", report_date="2026-07-01")
         self.assertIn("## 8. Chart Pattern", excerpt)
         self.assertIn("Pattern body.", excerpt)
         self.assertNotIn("## 1. Intro", excerpt)
 
     def test_parse_key_levels_from_summary_table(self):
-        levels = _parse_key_levels(self._SWIGGY_FIXTURE)
+        levels = parse_key_levels(self._SWIGGY_FIXTURE)
         self.assertEqual(levels["50_sma"], "256.04")
         self.assertEqual(levels["200_sma"], "331.18")
         self.assertEqual(levels["atr"], "9.68")
@@ -304,7 +304,7 @@ Wait for pullback to ₹256-260.
         if not path.exists():
             self.skipTest("SWIGGY report not on disk")
         text = path.read_text(encoding="utf-8")
-        excerpt = _format_report_excerpt(
+        excerpt = format_report_excerpt(
             text,
             ticker="SWIGGY.NS",
             report_date="2026-07-10",
@@ -314,6 +314,54 @@ Wait for pullback to ₹256-260.
         self.assertIn("FINAL TRANSACTION PROPOSAL", excerpt)
         self.assertNotIn("## 1. Big-Picture", excerpt)
         self.assertNotIn("## 7. Volume", excerpt)
+
+    def test_summary_table_anchor_tcs_style(self):
+        text = (
+            "## 1) Trend\n\nEarly narrative.\n\n"
+            "## Summary table\n\n"
+            "| Component | Latest |\n"
+            "|---|---:|\n"
+            "| Price vs **10 EMA** | Close ~2259 vs 10 EMA ~2285 |\n"
+            "| **ATR** | ~51 |\n"
+        )
+        excerpt = format_report_excerpt(
+            text, ticker="TCS.NS", report_date="2026-05-31", as_of="2026-07-12"
+        )
+        self.assertIn("## Summary table", excerpt)
+        self.assertNotIn("## 1) Trend", excerpt)
+        self.assertIn("Report age:", excerpt)
+
+    def test_extract_pm_summary_json_block(self):
+        text = (
+            "Body\n\n```json pm_summary\n"
+            '{"pm_summary": {"proposal": "HOLD", "entry_zone_low": 256, "entry_zone_high": 260}}\n'
+            "```\n"
+        )
+        summary = extract_pm_summary(text)
+        self.assertEqual(summary["proposal"], "HOLD")
+        self.assertEqual(summary["entry_zone_low"], 256)
+
+    def test_enforce_entry_timing_anti_chase(self):
+        plan = _sample_plan("SWIGGY.NS").model_copy(
+            update={"entry_type": EntryType.MARKET, "zone_low": 256, "zone_high": 260}
+        )
+        decision = TechDeskBatchDecision(opens=[plan])
+        snap = TechReportSnapshot(
+            ticker="SWIGGY.NS",
+            report_date="2026-07-10",
+            report_dir=Path("."),
+            market_text="",
+            source_file="market.md",
+            pm_summary={"proposal": "HOLD", "entry_zone_low": 256, "entry_zone_high": 260},
+        )
+        adjusted = enforce_entry_timing(
+            decision,
+            {"SWIGGY.NS": 273.0},
+            {"SWIGGY.NS": snap},
+        )
+        self.assertEqual(len(adjusted.opens), 0)
+        self.assertEqual(len(adjusted.waits), 1)
+        self.assertEqual(adjusted.waits[0].entry_type, EntryType.LIMIT_ZONE)
 
 
 class ZoneFillTests(unittest.TestCase):
@@ -480,6 +528,46 @@ class ProcessBatchTests(unittest.TestCase):
             self.assertFalse(manager.book.has_open_position("RELIANCE.NS"))
             self.assertTrue(manager.book.has_open_position("HDFCBANK.NS"))
 
+    def test_apply_pending_replacements_selective(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = TechDeskPaperTradeManager(self._cfg(tmp))
+            manager.book.open_from_plan(_sample_plan("RELIANCE.NS"), 2500.0, "2026-07-10")
+            manager.book.open_from_plan(_sample_plan("TCS.NS", entry=3500.0), 3500.0, "2026-07-10")
+
+            plans = [
+                _sample_plan("HDFCBANK.NS", entry=1600.0),
+                _sample_plan("INFY.NS", entry=1800.0),
+            ]
+            decision = TechDeskBatchDecision(opens=plans, waits=[], skips=[], closes=[])
+            with patch.object(TechDeskPaperTradeManager, "_weakest_open") as mock_weak:
+                mock_weak.side_effect = [
+                    manager.book.positions[0],
+                    manager.book.positions[1],
+                ]
+                manager.process_batch(
+                    decision,
+                    {"HDFCBANK.NS": 1600.0, "INFY.NS": 1800.0},
+                    process_date="2026-07-11",
+                )
+
+            replacement_id = "RELIANCE.NS->HDFCBANK.NS"
+            with patch.object(TechDeskPositionBook, "latest_price", return_value=2480.0):
+                result = manager.apply_pending_replacements(
+                    process_date="2026-07-11",
+                    prices={"RELIANCE.NS": 2480.0, "HDFCBANK.NS": 1600.0, "INFY.NS": 1800.0},
+                    selected_ids=[replacement_id],
+                )
+
+            self.assertEqual(len(result["applied"]), 1)
+            self.assertFalse(manager.book.has_open_position("RELIANCE.NS"))
+            self.assertTrue(manager.book.has_open_position("HDFCBANK.NS"))
+            self.assertTrue(manager.book.has_open_position("TCS.NS"))
+
+            log_path = Path(tmp) / "process" / "2026-07-11.json"
+            log = json.loads(log_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(log["pending_replacements"]), 1)
+            self.assertEqual(log["pending_replacements"][0]["open"], "INFY.NS")
+
 
 class ProcessOrchestrationTests(unittest.TestCase):
     @patch("tradingagents.tech_desk.process.load_watchlist")
@@ -535,6 +623,147 @@ class ApplyReviewTests(unittest.TestCase):
                 applied = manager.apply_review(review, as_of="2026-07-10")
             self.assertIn("RELIANCE.NS", applied["closed"])
             self.assertFalse(manager.book.has_open_position("RELIANCE.NS"))
+
+
+class EntryRulesTests(unittest.TestCase):
+    def test_proximity_promotes_near_zone_with_trend(self):
+        from tradingagents.tech_desk.entry_rules import evaluate_proximity_entry, promote_proximity_entries
+
+        plan = TechTradePlan(
+            ticker="IDFCFIRSTB.NS",
+            action=PlanAction.WAIT,
+            entry_type=EntryType.LIMIT_ZONE,
+            zone_low=79.0,
+            zone_high=80.0,
+            stop_loss=74.0,
+            target_1=87.0,
+            confidence=70,
+            bias=Bias.BULLISH,
+            invalidation="Below 75",
+            rationale="Golden cross setup; wait for 79-80 pullback.",
+        )
+        cfg = {
+            "tech_desk_zone_proximity_pct": 1.5,
+            "tech_desk_min_reward_to_zone_ratio": 2.5,
+            "tech_desk_proximity_min_confidence": 65,
+            "tech_desk_proximity_stop_at_zone_low": True,
+        }
+        promoted = evaluate_proximity_entry(plan, 80.83, {"proposal": "HOLD", "sma_50": 75.0}, cfg)
+        self.assertIsNotNone(promoted)
+        self.assertEqual(promoted.entry_type, EntryType.MARKET_NEAR_SUPPORT)
+        self.assertEqual(promoted.stop_loss, 79.0)
+
+        decision = TechDeskBatchDecision(waits=[plan])
+        out = promote_proximity_entries(decision, {"IDFCFIRSTB.NS": 80.83}, {}, cfg)
+        self.assertEqual(len(out.opens), 1)
+        self.assertEqual(len(out.waits), 0)
+
+    def test_proximity_blocks_counter_trend(self):
+        from tradingagents.tech_desk.entry_rules import evaluate_proximity_entry
+
+        plan = TechTradePlan(
+            ticker="INFY.NS",
+            action=PlanAction.WAIT,
+            entry_type=EntryType.LIMIT_ZONE,
+            zone_low=1041.0,
+            zone_high=1055.0,
+            stop_loss=998.0,
+            target_1=1113.0,
+            confidence=60,
+            bias=Bias.BULLISH,
+            invalidation="Below 982",
+            rationale="Tactical long on pullbacks; trend remains decisively bearish.",
+        )
+        cfg = {"tech_desk_zone_proximity_pct": 1.5, "tech_desk_min_reward_to_zone_ratio": 2.5}
+        self.assertIsNone(
+            evaluate_proximity_entry(
+                plan,
+                1068.0,
+                {"proposal": "HOLD", "sma_50": 1113.0},
+                cfg,
+            )
+        )
+
+    def test_proximity_blocks_explicit_wait_language(self):
+        from tradingagents.tech_desk.entry_rules import evaluate_proximity_entry
+
+        plan = TechTradePlan(
+            ticker="SWIGGY.NS",
+            action=PlanAction.WAIT,
+            entry_type=EntryType.LIMIT_ZONE,
+            zone_low=256.0,
+            zone_high=260.0,
+            stop_loss=248.0,
+            target_1=289.0,
+            confidence=70,
+            bias=Bias.BULLISH,
+            invalidation="Below 256",
+            rationale="Wait for a pullback to the 256-260 zone; do not chase.",
+        )
+        cfg = {"tech_desk_zone_proximity_pct": 1.5, "tech_desk_min_reward_to_zone_ratio": 2.5}
+        self.assertIsNone(
+            evaluate_proximity_entry(plan, 262.0, {"proposal": "HOLD"}, cfg)
+        )
+
+
+class PendingLifecycleTests(unittest.TestCase):
+    def test_post_target_pullback_blocks_fill(self):
+        from tradingagents.tech_desk.pending_lifecycle import is_setup_exhausted
+
+        entry = {
+            "zone_low": 98.0,
+            "zone_high": 100.0,
+            "target_1": 110.0,
+            "plan_date": "2026-07-10",
+        }
+        hist = pd.DataFrame(
+            {
+                "High": [109.0, 99.5],
+                "Low": [105.0, 98.5],
+                "Close": [108.0, 99.0],
+            },
+            index=pd.to_datetime(["2026-07-11", "2026-07-12"]),
+        )
+        exhausted, reason = is_setup_exhausted(entry, hist, {"tech_desk_target_path_skip_pct": 0.80})
+        self.assertTrue(exhausted)
+        self.assertEqual(reason, "post_target_pullback")
+
+    def test_direct_pullback_to_zone_not_exhausted(self):
+        from tradingagents.tech_desk.pending_lifecycle import is_setup_exhausted
+
+        entry = {"zone_low": 98.0, "zone_high": 100.0, "target_1": 110.0}
+        hist = pd.DataFrame(
+            {"High": [101.0, 99.5], "Low": [99.0, 98.5], "Close": [100.5, 99.0]},
+            index=pd.to_datetime(["2026-07-11", "2026-07-12"]),
+        )
+        exhausted, _ = is_setup_exhausted(entry, hist, {"tech_desk_target_path_skip_pct": 0.80})
+        self.assertFalse(exhausted)
+
+    def test_dismissed_pending_not_requeued(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cfg = {
+                "desk_capital": 100_000.0,
+                "tech_desk_min_confidence": 60,
+                "tech_desk_book_path": str(base / "positions.json"),
+                "tech_desk_pending_path": str(base / "pending.json"),
+                "tech_desk_pending_dismissed_path": str(base / "dismissed.json"),
+            }
+            book = TechDeskPositionBook(cfg)
+            plan = _sample_plan("TCS.NS", entry=100.0).model_copy(
+                update={
+                    "action": PlanAction.WAIT,
+                    "entry_type": EntryType.LIMIT_ZONE,
+                    "zone_low": 98.0,
+                    "zone_high": 102.0,
+                    "stop_loss": 95.0,
+                    "target_1": 110.0,
+                }
+            )
+            book.record_pending_dismissal("TCS.NS", "post_target_pullback", report_date="2026-07-10")
+            row = book.add_pending_entry(plan, "2026-07-12", report_date="2026-07-10", current_price=100.0)
+            self.assertIsNone(row)
+            self.assertTrue(book.is_pending_dismissed("TCS.NS", "2026-07-10"))
 
 
 if __name__ == "__main__":

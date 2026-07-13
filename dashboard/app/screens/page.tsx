@@ -12,7 +12,7 @@ export default async function ScreensPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Screen history</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Screen history</h1>
         <p className="text-muted text-sm">
           Each run: high-RS NSE stocks ranked by technical signals, then deep-analyzed by the AI.
         </p>
@@ -23,7 +23,7 @@ export default async function ScreensPage() {
       {screens.length === 0 ? (
         <EmptyState
           title="No screens published yet"
-          hint="Run `tradingagents screen` on your machine."
+          hint="Use Run screen in Desk actions above, or Quick actions on Overview."
         />
       ) : (
         screens.map((s) => {

@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from tradingagents.screening.swing_screener import screen_swing
-from tradingagents.swing.exits import is_nse_trading_day
 from tradingagents.swing.manager import PortfolioPaperTradeManager, ReplacementProposal
 
 if TYPE_CHECKING:
@@ -23,9 +22,6 @@ def run_swing_daily(
     def _log(msg: str):
         if progress:
             progress(msg)
-
-    if not force and not is_nse_trading_day():
-        return {"skipped": True, "reason": "not_a_trading_day"}
 
     _log("Running swing screener (daily 1D bars)...")
     picks = screen_swing(config, progress=progress, price_data=price_data)

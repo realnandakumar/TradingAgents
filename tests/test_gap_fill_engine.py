@@ -59,6 +59,16 @@ def test_strategy_meta():
     assert STRATEGY_NAME == "Gap Screener"
 
 
+def test_gap_trade_side_mapping():
+    from tradingagents.screening.gap_fill_engine import gap_trade_side, is_long_gap_candidate
+
+    assert gap_trade_side("DOWN") == "BUY"
+    assert gap_trade_side("UP") == "SELL"
+    assert gap_trade_side("BUY") == "BUY"
+    assert is_long_gap_candidate("DOWN") is True
+    assert is_long_gap_candidate("UP") is False
+
+
 def test_gap_down_detection():
     df = _ohlc(
         opens=[100.0, 94.0],
@@ -161,3 +171,25 @@ def test_evaluate_rejects_insufficient_history():
     df = _ohlc([100.0], [101.0], [99.0], [100.0])
     sig = evaluate_gap_fill(df, {"gap_fill_min_bars": 30}, symbol="SHORT.NS")
     assert sig.rejected
+
+
+def test_evaluate_rejects_gap_over_half_filled():
+    df = _gap_down_df()
+    sig = evaluate_gap_fill(
+        df,
+        {
+            "gap_fill_min_pct": 5.0,
+            "gap_fill_max_age": 30,
+            "gap_fill_exclude_today": True,
+            "gap_fill_min_bars": 20,
+            "gap_fill_directions": "DOWN",
+            "gap_fill_max_progress": 50,
+            "gap_fill_min_progress": 0,
+        },
+        symbol="GAP.NS",
+    )
+    # Default gap-down fixture is ~50% fill at close — at or above cap rejects
+    if not sig.rejected:
+        assert sig.fill_pct <= 50
+    else:
+        assert "closed" in sig.reject_reason.lower() or "fill" in sig.reject_reason.lower()

@@ -134,7 +134,9 @@ class TechDeskPaperTradeManager:
             if row:
                 report["waits"].append(plan.ticker)
             else:
-                report["skipped"].append({"ticker": plan.ticker, "reason": "pending validation failed"})
+                dismissed = self.book.is_pending_dismissed(plan.ticker, meta.get("report_date"))
+                reason = f"dismissed ({dismissed})" if dismissed else "pending validation failed"
+                report["skipped"].append({"ticker": plan.ticker, "reason": reason})
 
         for skip in decision.skips:
             report["skipped"].append({"ticker": skip.ticker, "reason": skip.reason})
@@ -150,6 +152,7 @@ class TechDeskPaperTradeManager:
                     report["skipped"].append({"ticker": plan.ticker, "reason": "portfolio full"})
                     continue
                 report["pending_replacements"].append({
+                    "id": f"{weak['ticker']}->{plan.ticker}",
                     "foreclose": weak["ticker"],
                     "open": plan.ticker,
                     "plan": plan.model_dump(),
@@ -177,7 +180,15 @@ class TechDeskPaperTradeManager:
                 if row:
                     report["waits"].append(plan.ticker)
                 else:
-                    report["skipped"].append({"ticker": plan.ticker, "reason": "pending validation failed"})
+                    dismissed = self.book.is_pending_dismissed(
+                        plan.ticker, meta.get("report_date")
+                    )
+                    reason = f"dismissed ({dismissed})" if dismissed else "pending validation failed"
+                    report["skipped"].append({"ticker": plan.ticker, "reason": reason})
+                continue
+
+            if plan.entry_type not in (EntryType.MARKET, EntryType.MARKET_NEAR_SUPPORT):
+                report["skipped"].append({"ticker": plan.ticker, "reason": "unsupported entry type"})
                 continue
 
             entry_price = prices.get(plan.ticker) or self.book.latest_price(plan.ticker)
@@ -206,10 +217,19 @@ class TechDeskPaperTradeManager:
         out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         return report
 
+    @staticmethod
+    def replacement_id(item: dict) -> str:
+        if item.get("id"):
+            return str(item["id"])
+        foreclose = item.get("foreclose") or ""
+        open_ticker = item.get("open") or ""
+        return f"{foreclose}->{open_ticker}"
+
     def apply_pending_replacements(
         self,
         process_date: Optional[str] = None,
         prices: Optional[Dict[str, float]] = None,
+        selected_ids: Optional[List[str]] = None,
     ) -> dict:
         """Execute queued portfolio replacements from a process log (explicit approval)."""
         process_date = process_date or datetime.now().strftime("%Y-%m-%d")
@@ -222,12 +242,18 @@ class TechDeskPaperTradeManager:
         if not pending:
             return {"applied": [], "skipped": [], "message": "no pending replacements"}
 
+        selected = set(selected_ids) if selected_ids else None
         from .schemas import EntryType, TechTradePlan
 
         applied: List[dict] = []
         skipped: List[dict] = []
+        remaining: List[dict] = []
 
         for item in pending:
+            item_id = self.replacement_id(item)
+            if selected is not None and item_id not in selected:
+                remaining.append(item)
+                continue
             foreclose = item.get("foreclose")
             plan_data = item.get("plan")
             if not foreclose or not plan_data:
@@ -283,7 +309,10 @@ class TechDeskPaperTradeManager:
             else:
                 skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "open rejected"})
 
-        log["pending_replacements"] = []
+        if selected is None:
+            log["pending_replacements"] = []
+        else:
+            log["pending_replacements"] = remaining
         log["replacements_applied"] = applied
         log["replacements_skipped"] = skipped
         log_path.write_text(json.dumps(log, indent=2, default=str), encoding="utf-8")
@@ -357,10 +386,14 @@ class TechDeskPaperTradeManager:
             "date": as_of,
             "exits": [],
             "zone_fills": [],
+            "pending_removed": [],
         }
 
         exit_summary = self.book.evaluate_and_close_exits(as_of=as_of)
         report["exits"] = exit_summary.get("closed", [])
+
+        lifecycle = self.book.evaluate_pending_lifecycle(as_of=as_of)
+        report["pending_removed"] = lifecycle.get("removed", [])
 
         fills = self.book.evaluate_pending_fills(as_of=as_of)
         report["zone_fills"] = fills
@@ -400,11 +433,22 @@ class TechDeskPaperTradeManager:
         snap_by_ticker = {s.ticker.upper(): s for s in snapshots}
         prices = {p["ticker"]: self.book.latest_price(p["ticker"]) for p in open_positions}
 
+        from tradingagents.tech_desk.report_excerpt import format_report_excerpt
+
         blocks: List[str] = []
         for p in open_positions:
             ticker = p["ticker"]
             snap = snap_by_ticker.get(ticker.upper())
-            report_excerpt = snap.market_text[:3000] if snap else "(no saved report)"
+            if snap:
+                report_excerpt = format_report_excerpt(
+                    snap.market_text,
+                    ticker=snap.ticker,
+                    report_date=snap.report_date,
+                    as_of=as_of,
+                    pm_summary=snap.pm_summary,
+                )
+            else:
+                report_excerpt = "(no saved report)"
             price = prices.get(ticker) or float(p.get("entry_price") or 0)
             blocks.append(
                 f"### {ticker}\n"

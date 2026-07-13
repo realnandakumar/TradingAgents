@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,6 +32,28 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
 STRATEGY_NAME = "trama_crossover"
+
+
+def _finite_price(value) -> Optional[float]:
+    """Return a positive finite price, or None when Yahoo/exit math yields junk."""
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return price
+
+
+def _sanitize_for_json(value):
+    """Replace non-finite floats so books stay strict JSON for the dashboard."""
+    if isinstance(value, float):
+        return None if not math.isfinite(value) else value
+    if isinstance(value, dict):
+        return {key: _sanitize_for_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_json(item) for item in value]
+    return value
 
 
 class TramaPositionBook:
@@ -88,7 +111,8 @@ class TramaPositionBook:
     def _load(self) -> dict:
         if self.path.exists():
             try:
-                return json.loads(self.path.read_text(encoding="utf-8"))
+                state = json.loads(self.path.read_text(encoding="utf-8"))
+                return _sanitize_for_json(state)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Could not read TRAMA book (%s); starting fresh", e)
         return {"strategy": STRATEGY_NAME, "positions": []}
@@ -96,8 +120,9 @@ class TramaPositionBook:
     def _save(self) -> None:
         self._state["strategy"] = STRATEGY_NAME
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        payload = _sanitize_for_json(self._state)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
         tmp.replace(self.path)
 
     @property
@@ -216,7 +241,7 @@ class TramaPositionBook:
         df = self._history(symbol, start, end)
         if df is None or df.empty:
             return None
-        return float(df["Close"].iloc[-1])
+        return _finite_price(df["Close"].iloc[-1])
 
     def _update_trailing_stop(self, p: dict, history: pd.DataFrame) -> None:
         trama_val = latest_trama_line(history, length=self.trama_length)
@@ -352,8 +377,8 @@ class TramaPositionBook:
                     partial=False,
                 )
                 hist = self._history(
+                    p["ticker"],
                     p["screen_date"],
-                    exit_date,
                     (datetime.strptime(exit_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
                 )
                 self._apply_action(p, action, hist)

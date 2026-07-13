@@ -1,9 +1,11 @@
 import { CandidatesTable } from "@/components/CandidatesTable";
+import { OverviewQuickActions } from "@/components/OverviewQuickActions";
 import { ReliabilityChart } from "@/components/ReliabilityChart";
 import { EmptyState } from "@/components/SetupNotice";
 import { StatCard } from "@/components/StatCard";
 import { getLatestPaper, getLatestScreen } from "@/lib/paper-server";
 import { inr, pct, timeAgo } from "@/lib/format";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -17,15 +19,21 @@ export default async function OverviewPage() {
     <div className="space-y-8">
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
           <p className="text-muted text-sm">
             High relative-strength NSE stocks, AI-vetted, paper-traded for reliability.
           </p>
         </div>
-        {paper && <span className="text-muted text-xs">Updated {timeAgo(paper.created_at)}</span>}
+        <div className="flex items-center gap-3 text-xs text-muted">
+          {paper ? <span>Updated {timeAgo(paper.created_at)}</span> : null}
+          <Link href="/data-health" className="text-accent hover:underline">
+            Data health
+          </Link>
+        </div>
       </div>
 
-      {/* Reliability stat cards */}
+      <OverviewQuickActions />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Win rate"
@@ -48,22 +56,26 @@ export default async function OverviewPage() {
         <StatCard
           label="Realized P&L"
           value={inr(o?.total_pnl)}
-          sub={`${stats?.open_positions ?? 0} open positions`}
+          sub={`${stats?.open_positions ?? 0} open · `}
           tone={o?.total_pnl ? (o.total_pnl >= 0 ? "bull" : "bear") : "default"}
         />
       </div>
+      {(stats?.open_positions ?? 0) > 0 ? (
+        <p className="text-xs text-muted -mt-4">
+          <Link href="/positions" className="text-accent hover:underline">
+            View open RS positions →
+          </Link>
+        </p>
+      ) : null}
 
-      {/* Reliability by signal */}
       <section className="card p-5">
         <h2 className="font-medium mb-1">Reliability by signal</h2>
         <p className="text-muted text-xs mb-3">
-          Win rate of closed paper trades, grouped by which technical signal fired. This is how we
-          learn which patterns actually predict winners.
+          Win rate of closed paper trades, grouped by which technical signal fired.
         </p>
         {stats ? <ReliabilityChart stats={stats} /> : <EmptyState title="No paper data yet" />}
       </section>
 
-      {/* Latest screen */}
       <section className="card p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-medium">Latest screen</h2>
@@ -78,7 +90,7 @@ export default async function OverviewPage() {
         ) : (
           <EmptyState
             title="No screens yet"
-            hint="Run `tradingagents screen` on your machine to publish picks here."
+            hint="Use Quick actions above to run an RS screen from the dashboard."
           />
         )}
       </section>

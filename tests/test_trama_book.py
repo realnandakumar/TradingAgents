@@ -1,10 +1,13 @@
 """Unit tests for TRAMA position book."""
 
+import json
+import math
+
 import pytest
 
 from tradingagents.screening.trama_engine import TramaSignal
 from tradingagents.screening.trama_screener import TramaPick
-from tradingagents.trama.book import STRATEGY_NAME, TramaPositionBook
+from tradingagents.trama.book import STRATEGY_NAME, TramaPositionBook, _finite_price, _sanitize_for_json
 
 pytestmark = pytest.mark.unit
 
@@ -87,3 +90,45 @@ def test_save_picks_only_buy(tmp_path):
     ])
     assert len(saved) == 2
     assert book.open_count() == 2
+
+
+def test_finite_price_rejects_nan():
+    assert _finite_price(float("nan")) is None
+    assert _finite_price(float("inf")) is None
+    assert _finite_price(123.45) == 123.45
+
+
+def test_save_writes_strict_json_without_nan(tmp_path):
+    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 10}
+    book = TramaPositionBook(cfg)
+    book.open_position(_make_pick(), "2026-07-08")
+    book.positions[0]["exit_price"] = float("nan")
+    book.positions[0]["partial_exits"] = [{"price": float("nan"), "return": float("nan")}]
+    book._save()
+
+    raw = (tmp_path / "positions.json").read_text(encoding="utf-8")
+    assert "NaN" not in raw
+    parsed = json.loads(raw)
+    assert parsed["positions"][0]["exit_price"] is None
+
+
+def test_latest_price_rejects_nan_close(tmp_path, monkeypatch):
+    cfg = {"trama_book_path": str(tmp_path / "positions.json")}
+    book = TramaPositionBook(cfg)
+
+    import pandas as pd
+
+    def fake_history(symbol, start, end):
+        idx = pd.to_datetime(["2026-07-12"])
+        return pd.DataFrame(
+            {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [float("nan")], "Volume": [1.0]},
+            index=idx,
+        )
+
+    monkeypatch.setattr(book, "_history", fake_history)
+    assert book.latest_price("TEST.NS") is None
+
+
+def test_sanitize_for_json_nested():
+    cleaned = _sanitize_for_json({"a": float("nan"), "b": [{"c": math.inf}]})
+    assert cleaned == {"a": None, "b": [{"c": None}]}

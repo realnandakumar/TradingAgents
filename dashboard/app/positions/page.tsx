@@ -1,5 +1,4 @@
 import { DeskActionsPanel } from "@/components/DeskActionsPanel";
-import { SignalList } from "@/components/Badges";
 import { OpenPositionsLive } from "@/components/OpenPositionsLive";
 import { DeskClosedLedger } from "@/components/DeskClosedLedger";
 import { EmptyState } from "@/components/SetupNotice";

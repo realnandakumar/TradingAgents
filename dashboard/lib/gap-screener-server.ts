@@ -50,7 +50,16 @@ export function readGapScreenerSnapshot(): GapScreenerSnapshot | null {
   const snapshotPath = gapScreenerSnapshotPath();
   try {
     const raw = fs.readFileSync(snapshotPath, "utf-8");
-    return JSON.parse(raw) as GapScreenerSnapshot;
+    const data = JSON.parse(raw) as GapScreenerSnapshot;
+    const maxFill =
+      typeof data.filters?.max_fill_pct === "number"
+        ? (data.filters.max_fill_pct as number)
+        : 50;
+    return {
+      ...data,
+      picks: data.picks.filter((p) => p.fill_pct <= maxFill),
+      total_hits: data.picks.filter((p) => p.fill_pct <= maxFill).length,
+    };
   } catch {
     return null;
   }

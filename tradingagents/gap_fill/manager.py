@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, TYPE_CHECKING
 
 from .book import GapFillPositionBook
+from tradingagents.screening.gap_fill_engine import pick_passes_long_entry
 from tradingagents.swing.exits import ExitReason
 
 if TYPE_CHECKING:
@@ -127,6 +128,11 @@ class GapFillPaperTradeManager:
         self._save_pending(pending)
         return True
 
+    def reset_portfolio(self) -> None:
+        """Reset paper book and clear pending replacement proposals."""
+        self.book.reset_book()
+        self._save_pending([])
+
     def run_daily(
         self,
         picks: List["GapFillPick"],
@@ -134,11 +140,21 @@ class GapFillPaperTradeManager:
         approve: Optional[Callable[[ReplacementProposal], bool]] = None,
     ) -> dict:
         screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
-        buy_picks = [p for p in picks if p.direction == "BUY"]
+        buy_picks: List["GapFillPick"] = []
+        skipped_rules: List[dict] = []
+        for pick in picks:
+            if not pick.is_long_candidate:
+                continue
+            ok, reason = pick_passes_long_entry(pick.signal, self.config)
+            if ok:
+                buy_picks.append(pick)
+            else:
+                skipped_rules.append({"symbol": pick.symbol, "reason": reason})
         report: dict = {
             "date": screen_date,
             "chart_timeframe": "1d",
             "screener_picks": len(buy_picks),
+            "skipped_rules": skipped_rules,
             "exits": [],
             "opened": [],
             "skipped_duplicate": [],

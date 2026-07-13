@@ -4,6 +4,8 @@ export interface DeskAction {
   id: string;
   label: string;
   cliArgs: string[];
+  /** Relative path from repo root for script-based jobs (e.g. scripts/run_all_daily_now.py). */
+  scriptPath?: string;
   needsTicker?: boolean;
   /** Pass ticker as `--flag VALUE` (e.g. tech-analyze --ticker). */
   tickerAsOption?: boolean;
@@ -31,7 +33,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["swing"], variant: "secondary", description: "Screen swing candidates" },
       { id: "daily", label: "Daily run", cliArgs: ["swing-daily", "--yes"], variant: "primary", description: "Exits, opens, and daily portfolio job" },
       { id: "report", label: "Report", cliArgs: ["swing-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["swing-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["swing-approve"], variant: "secondary" },
     ],
   },
   {
@@ -41,7 +43,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["momentum"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["momentum-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["momentum-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["momentum-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["momentum-approve"], variant: "secondary" },
     ],
   },
   {
@@ -51,7 +53,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["nss"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["nss-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["nss-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["nss-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["nss-approve"], variant: "secondary" },
       { id: "diagnostics", label: "Diagnostics", cliArgs: ["nss-diagnostics"], variant: "secondary" },
     ],
   },
@@ -62,7 +64,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["supertrend-rsi"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["supertrend-rsi-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["supertrend-rsi-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["supertrend-rsi-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["supertrend-rsi-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["supertrend-rsi-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -73,7 +75,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["trama"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["trama-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["trama-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["trama-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["trama-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["trama-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -84,7 +86,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["gap-fill"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["gap-fill-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["gap-fill-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["gap-fill-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["gap-fill-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["gap-fill-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -95,7 +97,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["nw-envelope"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["nw-envelope-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["nw-envelope-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["nw-envelope-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["nw-envelope-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["nw-envelope-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -106,7 +108,7 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screener", label: "Run screener", cliArgs: ["pattern-forecast"], variant: "secondary" },
       { id: "daily", label: "Daily run", cliArgs: ["pattern-forecast-daily", "--yes"], variant: "primary" },
       { id: "report", label: "Report", cliArgs: ["pattern-forecast-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["pattern-forecast-approve", "--yes"], variant: "secondary" },
+      { id: "approve", label: "Approve replacements", cliArgs: ["pattern-forecast-approve"], variant: "secondary" },
     ],
   },
   {
@@ -172,10 +174,9 @@ const DESK_CONFIGS: DeskConfig[] = [
         label: "Daily run",
         cliArgs: ["tech-desk-daily"],
         variant: "primary",
-        supportsForce: true,
         group: "desk",
         description:
-          "Rules-only daily job: stop loss, targets, time exits, and pending zone fills. No LLM cost — run on each trading day after the close.",
+          "Rules-only daily job: stop loss, targets, time exits, and pending zone fills. No LLM cost — run each day after the close.",
       },
       {
         id: "review",
@@ -210,13 +211,6 @@ const DESK_CONFIGS: DeskConfig[] = [
     ],
   },
   {
-    id: "gap-screener",
-    label: "Gap Screener",
-    actions: [
-      { id: "refresh", label: "Refresh screener", cliArgs: ["gap-fill"], variant: "primary", description: "Run gap-fill screener snapshot" },
-    ],
-  },
-  {
     id: "chart-patterns",
     label: "Chart Patterns",
     actions: [
@@ -238,10 +232,75 @@ const DESK_CONFIGS: DeskConfig[] = [
       { id: "screen", label: "Run screen", cliArgs: ["screen", "--yes"], variant: "primary", description: "Screen and paper-trade top picks" },
     ],
   },
+  {
+    id: "control-center",
+    label: "Command Center",
+    actions: [
+      {
+        id: "all-dailies",
+        label: "Run all dailies",
+        cliArgs: [],
+        scriptPath: "scripts/run_all_daily_now.py",
+        variant: "primary",
+        description: "Shared download then sync all strategy paper books",
+      },
+      {
+        id: "all-screeners",
+        label: "Run all screeners",
+        cliArgs: [],
+        scriptPath: "scripts/run_all_screeners_now.py",
+        variant: "primary",
+        description: "Shared download then run every technical screener",
+      },
+      {
+        id: "rs-screen",
+        label: "RS screen",
+        cliArgs: ["screen", "--yes"],
+        variant: "primary",
+        description: "Screen and paper-trade top RS picks",
+      },
+      {
+        id: "rs-paper",
+        label: "RS paper refresh",
+        cliArgs: ["paper"],
+        variant: "secondary",
+        description: "Mark to market and refresh RS paper snapshot",
+      },
+    ],
+  },
 ];
+
+const PORTFOLIO_DESK_IDS = [
+  "swing",
+  "momentum",
+  "nss",
+  "supertrend-rsi",
+  "trama",
+  "gap-fill",
+  "nw-envelope",
+  "pattern-forecast",
+  "tech-desk",
+] as const;
+
+export function listDeskConfigs(): DeskConfig[] {
+  return DESK_CONFIGS;
+}
+
+export function listPortfolioDesks(): DeskConfig[] {
+  return DESK_CONFIGS.filter((d) =>
+    (PORTFOLIO_DESK_IDS as readonly string[]).includes(d.id),
+  );
+}
 
 export function getDeskConfig(deskId: string): DeskConfig | undefined {
   return DESK_CONFIGS.find((d) => d.id === deskId);
+}
+
+export function getDeskActionLabel(deskId: string, actionId: string): string {
+  const action = getDeskAction(deskId, actionId);
+  const desk = getDeskConfig(deskId);
+  if (action?.label && desk?.label) return `${desk.label} · ${action.label}`;
+  return action?.label ?? `${deskId}/${actionId}`;
 }
 
 export function getDeskAction(deskId: string, actionId: string): DeskAction | undefined {

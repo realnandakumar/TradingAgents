@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.gap_fill import run_gap_fill_daily
 from tradingagents.momentum import run_momentum_daily
 from tradingagents.nss import run_nss_daily
 from tradingagents.screening.prices import download_history
@@ -20,6 +21,7 @@ from tradingagents.nw_envelope import run_nw_envelope_daily
 from tradingagents.pattern_forecast import run_pattern_forecast_daily
 from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
 from tradingagents.swing import run_swing_daily
+from tradingagents.tech_desk import run_tech_desk_daily
 from tradingagents.trama import run_trama_daily
 
 SHARED_PERIOD = "2y"
@@ -51,27 +53,40 @@ def main() -> None:
     price_data = download_history(universe, period=SHARED_PERIOD)
     print(f"Got usable history for {len(price_data)} tickers.\n")
 
-    print("Syncing paper books (force=True):")
-    swing = run_swing_daily(config, force=True, price_data=price_data)
+    print("Syncing paper books:")
+    swing = run_swing_daily(config, price_data=price_data)
     _summary("swing", swing)
 
-    momentum = run_momentum_daily(config, force=True, price_data=price_data)
+    momentum = run_momentum_daily(config, price_data=price_data)
     _summary("momentum", momentum)
 
-    nss = run_nss_daily(config, force=True, price_data=price_data)
+    nss = run_nss_daily(config, price_data=price_data)
     _summary("nss", nss)
 
-    strsi = run_supertrend_rsi_daily(config, force=True, price_data=price_data)
+    strsi = run_supertrend_rsi_daily(config, price_data=price_data)
     _summary("supertrend_rsi", strsi)
 
-    trama = run_trama_daily(config, force=True, price_data=price_data)
+    trama = run_trama_daily(config, price_data=price_data)
     _summary("trama", trama)
 
-    nwe = run_nw_envelope_daily(config, force=True, price_data=price_data)
+    nwe = run_nw_envelope_daily(config, price_data=price_data)
     _summary("nw_envelope", nwe)
 
-    pf = run_pattern_forecast_daily(config, force=True, price_data=price_data)
+    pf = run_pattern_forecast_daily(config, price_data=price_data)
     _summary("pattern_forecast", pf)
+
+    gap_fill = run_gap_fill_daily(config, price_data=price_data)
+    _summary("gap_fill", gap_fill)
+
+    tech_desk = run_tech_desk_daily(config)
+    if tech_desk.get("skipped"):
+        print(f"  {'tech_desk':<16} skipped ({tech_desk.get('reason')})")
+    else:
+        print(
+            f"  {'tech_desk':<16} exits={len(tech_desk.get('exits', []))} "
+            f"fills={len(tech_desk.get('zone_fills', []))} "
+            f"open_now={tech_desk.get('open_positions', 0)}"
+        )
 
     print("\nDone. Any pending replacements need approval via the *-approve commands.")
 

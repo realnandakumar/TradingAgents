@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
-from tradingagents.swing.exits import is_nse_trading_day
 from tradingagents.nw_envelope.manager import ReplacementProposal, NwEnvelopePaperTradeManager
 
 if TYPE_CHECKING:
@@ -23,9 +22,6 @@ def run_nw_envelope_daily(
     def _log(msg: str):
         if progress:
             progress(msg)
-
-    if not force and not is_nse_trading_day():
-        return {"skipped": True, "reason": "not_a_trading_day"}
 
     _log("Running NW Envelope screener (daily 1D bars)...")
     picks = screen_nw_envelope(config, progress=progress, price_data=price_data)

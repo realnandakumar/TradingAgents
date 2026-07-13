@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents.analysts.market_analyst_tech import create_tech_market_analyst
+from tradingagents.tech_desk.report_excerpt import extract_pm_summary
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.agents.utils.agent_utils import (
     create_msg_delete,
@@ -176,6 +178,13 @@ def save_tech_report(result: dict, output_dir: Path) -> Path:
     market_report = result.get("market_report", "")
 
     (output_dir / "market.md").write_text(market_report, encoding="utf-8")
+
+    summary = extract_pm_summary(market_report)
+    if summary:
+        (output_dir / "pm_summary.json").write_text(
+            json.dumps({"pm_summary": summary}, indent=2),
+            encoding="utf-8",
+        )
 
     header = (
         f"# Technical Analysis Report: {ticker}\n\n"

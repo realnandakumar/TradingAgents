@@ -17,6 +17,7 @@ class PlanAction(str, Enum):
 class EntryType(str, Enum):
     MARKET = "market"
     LIMIT_ZONE = "limit_zone"
+    MARKET_NEAR_SUPPORT = "market_near_support"
 
 
 class Bias(str, Enum):
@@ -33,7 +34,8 @@ class TechTradePlan(BaseModel):
         description="open = enter now or on zone fill; wait = limit zone only; skip = pass"
     )
     entry_type: EntryType = Field(
-        description="market = enter at current price; limit_zone = wait for pullback zone"
+        description="market = enter at current price; limit_zone = wait for pullback zone; "
+        "market_near_support = enter near support with tight stop at zone_low",
     )
     zone_low: Optional[float] = Field(
         default=None,
@@ -119,8 +121,108 @@ class TechDeskPositionReview(BaseModel):
     reviews: List[PositionReviewItem] = Field(default_factory=list)
 
 
-def render_batch_decision(decision: TechDeskBatchDecision) -> str:
+def _price_vs_zone(
+    price: Optional[float],
+    zone_low: Optional[float],
+    zone_high: Optional[float],
+) -> str:
+    if price is None or zone_low is None or zone_high is None:
+        return "—"
+    if zone_low <= price <= zone_high:
+        return "inside zone"
+    if price > zone_high:
+        return "above zone"
+    return "below zone"
+
+
+def _dist_to_zone_pct(
+    price: Optional[float],
+    zone_low: Optional[float],
+    zone_high: Optional[float],
+) -> str:
+    if price is None or zone_low is None or zone_high is None:
+        return "—"
+    if zone_low <= price <= zone_high:
+        return "0% (in zone)"
+    if price > zone_high:
+        pct = (price - zone_high) / price * 100
+        return f"+{pct:.1f}% above"
+    pct = (zone_low - price) / price * 100
+    return f"+{pct:.1f}% below"
+
+
+def _dist_to_tgt_pct(price: Optional[float], target: Optional[float]) -> str:
+    if price is None or target is None:
+        return "—"
+    pct = (target - price) / price * 100
+    return f"{pct:+.1f}%"
+
+
+def render_batch_decision(
+    decision: TechDeskBatchDecision,
+    prices: Optional[dict[str, float]] = None,
+) -> str:
     lines = ["# Tech Desk Batch Decision", ""]
+
+    if prices:
+        rows: list[tuple[str, str, str, str, str, str, str]] = []
+        for p in decision.opens:
+            px = prices.get(p.ticker)
+            cur = f"{px:.2f}" if px is not None else "?"
+            zone = (
+                f"{p.zone_low:.2f}–{p.zone_high:.2f}"
+                if p.entry_type == EntryType.LIMIT_ZONE
+                and p.zone_low is not None
+                and p.zone_high is not None
+                else "market"
+            )
+            rows.append(
+                (
+                    p.ticker,
+                    cur,
+                    zone,
+                    _price_vs_zone(px, p.zone_low, p.zone_high),
+                    _dist_to_zone_pct(px, p.zone_low, p.zone_high),
+                    _dist_to_tgt_pct(px, p.target_1),
+                    "open",
+                )
+            )
+        for p in decision.waits:
+            px = prices.get(p.ticker)
+            cur = f"{px:.2f}" if px is not None else "?"
+            zone = (
+                f"{p.zone_low:.2f}–{p.zone_high:.2f}"
+                if p.zone_low is not None and p.zone_high is not None
+                else "?"
+            )
+            rows.append(
+                (
+                    p.ticker,
+                    cur,
+                    zone,
+                    _price_vs_zone(px, p.zone_low, p.zone_high),
+                    _dist_to_zone_pct(px, p.zone_low, p.zone_high),
+                    _dist_to_tgt_pct(px, p.target_1),
+                    "wait",
+                )
+            )
+        for s in decision.skips:
+            px = prices.get(s.ticker)
+            cur = f"{px:.2f}" if px is not None else "?"
+            rows.append((s.ticker, cur, "—", "—", "—", "—", "skip"))
+
+        if rows:
+            lines.append("## Price check (live at process time)")
+            lines.append("")
+            lines.append(
+                "| Ticker | Current | Entry zone | vs zone | Δ zone | Δ T1 | Action |"
+            )
+            lines.append("| --- | ---: | --- | --- | ---: | ---: | --- |")
+            for ticker, cur, zone, vs, dz, dt, action in rows:
+                sym = ticker.replace(".NS", "")
+                lines.append(f"| {sym} | {cur} | {zone} | {vs} | {dz} | {dt} | {action} |")
+            lines.append("")
+
     if decision.closes:
         lines.append(f"**Closes** ({len(decision.closes)}): {', '.join(decision.closes)}")
         lines.append("")
@@ -128,11 +230,14 @@ def render_batch_decision(decision: TechDeskBatchDecision) -> str:
         lines.append(f"**Opens** ({len(decision.opens)}, best-first):")
         for p in decision.opens:
             zone = ""
-            if p.entry_type == EntryType.LIMIT_ZONE and p.zone_low is not None and p.zone_high is not None:
+            if p.entry_type in (EntryType.LIMIT_ZONE, EntryType.MARKET_NEAR_SUPPORT) and p.zone_low is not None and p.zone_high is not None:
                 zone = f" · zone {p.zone_low:.2f}–{p.zone_high:.2f}"
+            mode = p.entry_type.value
+            if p.entry_type == EntryType.MARKET_NEAR_SUPPORT:
+                mode = "market_near_support (proximity)"
             tgt2 = f" · T2 {p.target_2:.2f}" if p.target_2 is not None else ""
             lines.append(
-                f"- **{p.ticker}** · {p.entry_type.value}{zone} · "
+                f"- **{p.ticker}** · {mode}{zone} · "
                 f"stop {p.stop_loss:.2f} · T1 {p.target_1:.2f}{tgt2} · "
                 f"conf {p.confidence} · {p.bias.value}"
             )

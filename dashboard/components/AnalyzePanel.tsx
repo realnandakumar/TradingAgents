@@ -113,7 +113,17 @@ export function AnalyzePanel({ initialReports }: Props) {
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiWarning, setApiWarning] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetch("/api/env/status")
+      .then((r) => r.json())
+      .then((d: { apiKey?: { configured: boolean; message: string } }) => {
+        if (d.apiKey && !d.apiKey.configured) setApiWarning(d.apiKey.message);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/tickers")
@@ -228,6 +238,19 @@ export function AnalyzePanel({ initialReports }: Props) {
   };
 
   return (
+    <div className="space-y-4">
+      {apiWarning ? (
+        <div className="rounded-lg border border-bear/40 bg-bear/5 px-4 py-3 text-sm text-bear">
+          {apiWarning}
+        </div>
+      ) : null}
+      <p className="text-xs text-muted">
+        Full multi-agent research pipeline. For watchlist technical reports used by Tech Desk, see{" "}
+        <a href="/tech-desk" className="text-accent hover:underline">
+          Tech desk
+        </a>
+        .
+      </p>
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
       {/* Saved reports sidebar */}
       <aside className="card p-4 h-fit lg:sticky lg:top-20">
@@ -422,6 +445,7 @@ export function AnalyzePanel({ initialReports }: Props) {
           </section>
         ) : null}
       </div>
+    </div>
     </div>
   );
 }

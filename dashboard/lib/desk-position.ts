@@ -40,6 +40,51 @@ export function purchaseNotional(p: DeskPositionMeta): number {
   return Math.round(sh * ep * 100) / 100;
 }
 
+export function saleProceeds(p: DeskPositionMeta): number {
+  const shares = p.shares ?? 0;
+  const legs = partialLegs(p);
+  if (legs.length > 0 && shares > 0) {
+    const total = legs.reduce(
+      (sum, leg) =>
+        sum + shares * (leg.price ?? 0) * ((leg.pct ?? 0) / 100),
+      0,
+    );
+    return Math.round(total * 100) / 100;
+  }
+  const exitP = p.exit_price ?? 0;
+  if (shares > 0 && exitP > 0) return Math.round(shares * exitP * 100) / 100;
+  return 0;
+}
+
+export function averageExitPrice(p: DeskPositionMeta): number | null {
+  const shares = p.shares ?? 0;
+  const sale = saleProceeds(p);
+  if (shares <= 0 || sale <= 0) {
+    return p.exit_price ?? null;
+  }
+  return Math.round((sale / shares) * 100) / 100;
+}
+
+export function realizedRupeePnl(p: DeskPositionMeta): number | null {
+  const purchase = purchaseNotional(p);
+  if (purchase <= 0) return p.rupee_pnl ?? null;
+  const sale = saleProceeds(p);
+  if (sale <= 0) return p.rupee_pnl ?? null;
+  return Math.round((sale - purchase) * 100) / 100;
+}
+
+export function realizedReturnPct(p: DeskPositionMeta): number | null {
+  const purchase = purchaseNotional(p);
+  const pnl = realizedRupeePnl(p);
+  if (purchase <= 0 || pnl == null) return null;
+  return Math.round((100 * pnl) / purchase * 100) / 100;
+}
+
+export function legSaleProceeds(p: DeskPositionMeta, leg: PartialExitLeg): number {
+  const shares = p.shares ?? 0;
+  return Math.round(shares * (leg.price ?? 0) * ((leg.pct ?? 0) / 100) * 100) / 100;
+}
+
 export function slotBudget(p: DeskPositionMeta): number {
   return p.alloc ?? 0;
 }
@@ -81,7 +126,9 @@ export function daysInTrade(p: DeskPositionMeta, asOf?: string): number {
   const entry = entryDate(p);
   if (entry === "—") return 0;
   if (p.status === "closed") {
-    if (p.trading_days_held != null) return p.trading_days_held;
+    if (p.trading_days_held != null && (p.trading_days_held > 0 || !p.exit_date)) {
+      return p.trading_days_held;
+    }
     if (p.holding_days_actual != null) return p.holding_days_actual;
     if (p.exit_date) return tradingDaysBetweenCalendar(entry, p.exit_date);
     return 0;
@@ -91,4 +138,10 @@ export function daysInTrade(p: DeskPositionMeta, asOf?: string): number {
 
 export function partialLegs(p: DeskPositionMeta): PartialExitLeg[] {
   return Array.isArray(p.partial_exits) ? p.partial_exits : [];
+}
+
+/** Show leg sub-rows only when a trade had multiple exit legs (e.g. T2 partial + runner). */
+export function ledgerExitLegs(p: DeskPositionMeta): PartialExitLeg[] {
+  const legs = partialLegs(p);
+  return legs.length > 1 ? legs : [];
 }

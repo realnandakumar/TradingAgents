@@ -21,6 +21,7 @@ from tradingagents.paper.sizing import (
     skip_exit_for_entry_day,
     total_rupee_pnl_from_legs,
 )
+from tradingagents.screening.gap_fill_engine import gap_trade_side, pick_passes_long_entry
 from tradingagents.screening.swing_indicators import compute_trade_levels
 from tradingagents.swing.exits import ExitAction, ExitReason, trading_days_between
 
@@ -116,8 +117,17 @@ class GapFillPositionBook:
                 p["last_screen_date"] = screen_date
         self._save()
 
+    def reset_book(self) -> None:
+        """Clear all positions and start a fresh paper book."""
+        self._state = {"strategy": STRATEGY_NAME, "positions": []}
+        self._save()
+
     def open_position(self, pick: "GapFillPick", screen_date: str) -> Optional[dict]:
-        if pick.direction != "BUY":
+        ok, reason = pick_passes_long_entry(pick.signal, self.config)
+        if not ok:
+            logger.warning("Skip %s — %s", pick.symbol, reason)
+            return None
+        if gap_trade_side(pick.direction) != "BUY":
             return None
         if self.has_open_position(pick.symbol):
             return None
@@ -134,7 +144,10 @@ class GapFillPositionBook:
         screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
         saved: List[dict] = []
         for pick in picks:
-            if pick.direction != "BUY":
+            ok, _ = pick_passes_long_entry(pick.signal, self.config)
+            if not ok:
+                continue
+            if gap_trade_side(pick.direction) != "BUY":
                 continue
             if self.has_open_position(pick.symbol):
                 self.touch_screen_date(pick.symbol, screen_date)
@@ -195,7 +208,8 @@ class GapFillPositionBook:
             "fill_pct": sig.fill_pct,
             "rsi": sig.rsi,
             "remark": sig.remark,
-            "direction": sig.direction,
+            "direction": "BUY",
+            "gap_direction": sig.direction if sig.direction in ("UP", "DOWN") else None,
             "phase": "initial",
             "remaining_pct": 100.0,
             "t2_partial_done": False,
@@ -364,8 +378,8 @@ class GapFillPositionBook:
                     partial=False,
                 )
                 hist = self._history(
+                    p["ticker"],
                     p["screen_date"],
-                    exit_date,
                     (datetime.strptime(exit_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
                 )
                 self._apply_action(p, action, hist)

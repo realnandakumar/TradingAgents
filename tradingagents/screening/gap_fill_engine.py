@@ -156,6 +156,51 @@ def _direction_allowed(gap_dir: str, directions: str) -> bool:
     return "UP" in allowed or "SELL" in allowed
 
 
+def gap_trade_side(direction: str) -> Optional[str]:
+    """Map gap direction (DOWN/UP) to paper trade side (BUY/SELL)."""
+    d = (direction or "").upper()
+    if d in ("DOWN", "BUY"):
+        return "BUY"
+    if d in ("UP", "SELL"):
+        return "SELL"
+    return None
+
+
+def is_long_gap_candidate(direction: str) -> bool:
+    return gap_trade_side(direction) == "BUY"
+
+
+def pick_passes_long_entry(signal: GapFillSignal, config: Optional[dict] = None) -> tuple[bool, str]:
+    """Re-check screener entry rules before opening a long paper position."""
+    config = config or {}
+    if signal.rejected or signal.direction in ("NONE", ""):
+        return False, signal.reject_reason or "screener rejected"
+    if not is_long_gap_candidate(signal.direction):
+        return False, f"{signal.direction} is not a long (BUY) gap setup"
+    directions = str(config.get("gap_fill_directions", "UP,DOWN"))
+    if not _direction_allowed(signal.direction, directions):
+        return False, f"gap direction {signal.direction} disabled in config"
+    gap_min_pct = float(config.get("gap_fill_min_pct", 5.0))
+    max_age = int(config.get("gap_fill_max_age", 30))
+    min_progress = float(config.get("gap_fill_min_progress", 10))
+    max_progress = float(config.get("gap_fill_max_progress", 50))
+    if abs(signal.gap_pct) < gap_min_pct:
+        return False, f"gap {signal.gap_pct:+.2f}% below min {gap_min_pct}%"
+    if signal.gap_age < 0 or signal.gap_age > max_age:
+        return False, f"gap age {signal.gap_age} outside 0–{max_age} days"
+    if signal.fill_pct < min_progress:
+        return False, (
+            f"fill {signal.fill_pct:.0f}% below min {min_progress:.0f}% (too early)"
+        )
+    if signal.fill_pct > max_progress:
+        return False, (
+            f"fill {signal.fill_pct:.0f}% above max {max_progress:.0f}% (too late)"
+        )
+    if signal.direction == "DOWN" and signal.close >= signal.fill_target:
+        return False, "gap down already filled to prior close"
+    return True, ""
+
+
 def evaluate_gap_fill(
     df: pd.DataFrame,
     config: Optional[dict] = None,
@@ -209,6 +254,21 @@ def evaluate_gap_fill(
 
     if fill_pct is None:
         empty.reject_reason = "Invalid fill geometry"
+        empty.remark = f"REJECT - {empty.reject_reason}"
+        return empty
+
+    min_progress = float(config.get("gap_fill_min_progress", 10))
+    max_progress = float(config.get("gap_fill_max_progress", 50))
+    if fill_pct < min_progress:
+        empty.reject_reason = (
+            f"Gap only {fill_pct:.0f}% toward fill (min {min_progress:.0f}% for setup)"
+        )
+        empty.remark = f"REJECT - {empty.reject_reason}"
+        return empty
+    if fill_pct > max_progress:
+        empty.reject_reason = (
+            f"Gap already {fill_pct:.0f}% closed (max {max_progress:.0f}% — too late to enter)"
+        )
         empty.remark = f"REJECT - {empty.reject_reason}"
         return empty
 

@@ -9,7 +9,9 @@ from typing import Callable, Dict, List, Optional
 from tradingagents.analysis.watchlist import load_watchlist
 from tradingagents.llm_clients import create_llm_client
 from tradingagents.tech_desk.agents.portfolio_manager import run_tech_desk_batch_pm
+from tradingagents.tech_desk.entry_rules import promote_proximity_entries
 from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
+from tradingagents.tech_desk.pm_validation import enforce_entry_timing
 from tradingagents.tech_desk.report_loader import load_tech_reports
 from tradingagents.tech_desk.schemas import render_batch_decision
 
@@ -106,7 +108,11 @@ def run_tech_desk_process(
         slots_available,
         config,
         prices=prices,
+        as_of=process_date,
     )
+
+    decision = promote_proximity_entries(decision, prices, snapshots_by_ticker, config)
+    decision = enforce_entry_timing(decision, prices, snapshots_by_ticker)
 
     _log("Executing batch decision...")
     report = manager.process_batch(
@@ -121,7 +127,7 @@ def run_tech_desk_process(
     report["stale_tickers"] = stale_tickers
     report["slots_available"] = slots_available
     report["decision"] = decision.model_dump()
-    report["decision_markdown"] = render_batch_decision(decision)
+    report["decision_markdown"] = render_batch_decision(decision, prices=prices)
     if pm_error:
         report["pm_error"] = pm_error
     return report

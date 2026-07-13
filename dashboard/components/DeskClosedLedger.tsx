@@ -1,14 +1,17 @@
 "use client";
 
 import { Fragment } from "react";
-import { inr, pctFromFraction, shortSymbol } from "@/lib/format";
+import { inr, shortSymbol } from "@/lib/format";
 import {
+  averageExitPrice,
   daysInTrade,
   entryDate,
-  partialLegs,
+  ledgerExitLegs,
+  legSaleProceeds,
   purchaseNotional,
-  slotBudget,
-  withinBudget,
+  realizedReturnPct,
+  realizedRupeePnl,
+  saleProceeds,
   type DeskPositionMeta,
 } from "@/lib/desk-position";
 
@@ -33,76 +36,109 @@ export function DeskClosedLedger({
             <th className="text-right py-2 pr-2">Exit</th>
             <th className="text-right py-2 pr-2">Days</th>
             <th className="text-right py-2 pr-2">Qty</th>
+            <th className="text-right py-2 pr-2">@Buy</th>
             <th className="text-right py-2 pr-2">Purchase</th>
-            <th className="text-right py-2 pr-2">Budget</th>
-            <th className="text-center py-2 pr-2">OK</th>
-            <th className="text-right py-2 pr-2">Return</th>
+            <th className="text-right py-2 pr-2">@Sell</th>
+            <th className="text-right py-2 pr-2">Sale</th>
+            <th className="text-right py-2 pr-2">Gain</th>
+            <th className="text-right py-2 pr-2">Gain%</th>
             {showAlpha && <th className="text-right py-2 pr-2">Alpha</th>}
-            <th className="text-right py-2 pr-2">P&amp;L</th>
             <th className="text-left py-2">Reason</th>
           </tr>
         </thead>
         <tbody>
-          {positions.map((p, idx) => (
-            <Fragment key={`${p.ticker}-${p.exit_date ?? idx}`}>
-              <tr className="border-b border-border/40">
-                <td className="py-2 pr-2 font-medium">{shortSymbol(p.ticker)}</td>
-                <td className="py-2 pr-2 text-right tabular-nums text-muted">{entryDate(p)}</td>
-                <td className="py-2 pr-2 text-right tabular-nums text-muted">{p.exit_date ?? "—"}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{daysInTrade(p)}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{p.shares ?? "—"}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{inr(purchaseNotional(p))}</td>
-                <td className="py-2 pr-2 text-right tabular-nums text-muted">
-                  {slotBudget(p) ? inr(slotBudget(p)) : "—"}
-                </td>
-                <td
-                  className={`py-2 pr-2 text-center text-[10px] ${
-                    withinBudget(p) ? "text-bull" : "text-bear font-semibold"
-                  }`}
-                >
-                  {withinBudget(p) ? "OK" : "OVER"}
-                </td>
-                <td
-                  className={`py-2 pr-2 text-right tabular-nums ${
-                    (p.raw_return ?? 0) >= 0 ? "text-bull" : "text-bear"
-                  }`}
-                >
-                  {pctFromFraction(p.raw_return)}
-                </td>
-                {showAlpha && (
+          {positions.map((p, idx) => {
+            const purchase = purchaseNotional(p);
+            const sale = saleProceeds(p);
+            const gain = realizedRupeePnl(p);
+            const gainPct = realizedReturnPct(p);
+            const sellPx = averageExitPrice(p);
+
+            return (
+              <Fragment key={`${p.ticker}-${p.exit_date ?? idx}`}>
+                <tr className="border-b border-border/40">
+                  <td className="py-2 pr-2 font-medium">{shortSymbol(p.ticker)}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums text-muted">{entryDate(p)}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums text-muted">{p.exit_date ?? "—"}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{daysInTrade(p)}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{p.shares ?? "—"}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums text-muted">
+                    {p.entry_price != null ? inr(p.entry_price) : "—"}
+                  </td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{inr(purchase)}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums text-muted">
+                    {sellPx != null ? inr(sellPx) : "—"}
+                  </td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{sale > 0 ? inr(sale) : "—"}</td>
                   <td
-                    className={`py-2 pr-2 text-right tabular-nums ${
-                      (p.alpha_return ?? 0) >= 0 ? "text-bull" : "text-bear"
+                    className={`py-2 pr-2 text-right tabular-nums font-medium ${
+                      (gain ?? 0) >= 0 ? "text-bull" : "text-bear"
                     }`}
                   >
-                    {pctFromFraction(p.alpha_return)}
+                    {gain != null ? inr(gain) : "—"}
                   </td>
-                )}
-                <td className="py-2 pr-2 text-right tabular-nums">
-                  {p.rupee_pnl != null ? inr(p.rupee_pnl) : "—"}
-                </td>
-                <td className="py-2 text-muted">{p.exit_reason ?? "—"}</td>
-              </tr>
-              {partialLegs(p).map((leg, i) => (
-                <tr key={`${p.ticker}-leg-${i}`} className="border-b border-border/20 bg-surface-2/20">
-                  <td className="py-1 pr-2 pl-3 text-muted">
-                    {i === partialLegs(p).length - 1 ? "└" : "├"} {leg.reason ?? "partial"}
+                  <td
+                    className={`py-2 pr-2 text-right tabular-nums ${
+                      (gainPct ?? 0) >= 0 ? "text-bull" : "text-bear"
+                    }`}
+                  >
+                    {gainPct != null ? `${gainPct >= 0 ? "+" : ""}${gainPct.toFixed(2)}%` : "—"}
                   </td>
-                  <td className="py-1 pr-2" />
-                  <td className="py-1 pr-2 text-right tabular-nums text-muted">{leg.date ?? "—"}</td>
-                  <td className="py-1 pr-2" />
-                  <td className="py-1 pr-2 text-right tabular-nums">{leg.pct != null ? `${leg.pct}%` : "—"}</td>
-                  <td className="py-1 pr-2 text-right tabular-nums">{leg.price != null ? inr(leg.price) : "—"}</td>
-                  <td colSpan={showAlpha ? 4 : 3} className="py-1 pr-2 text-right tabular-nums text-muted">
-                    {leg.rupee_pnl != null ? inr(leg.rupee_pnl) : "—"}
-                  </td>
-                  <td className="py-1 text-muted text-[10px]">partial</td>
+                  {showAlpha && (
+                    <td
+                      className={`py-2 pr-2 text-right tabular-nums ${
+                        (p.alpha_return ?? 0) >= 0 ? "text-bull" : "text-bear"
+                      }`}
+                    >
+                      {p.alpha_return != null
+                        ? `${(p.alpha_return * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                  )}
+                  <td className="py-2 text-muted">{p.exit_reason ?? "—"}</td>
                 </tr>
-              ))}
-            </Fragment>
-          ))}
+                {ledgerExitLegs(p).map((leg, i) => {
+                  const legSale = legSaleProceeds(p, leg);
+                  return (
+                    <tr
+                      key={`${p.ticker}-leg-${i}`}
+                      className="border-b border-border/20 bg-surface-2/20"
+                    >
+                      <td className="py-1 pr-2 pl-3 text-muted">- {leg.reason ?? "leg"}</td>
+                      <td className="py-1 pr-2" colSpan={2} />
+                      <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                        {leg.date ?? "—"}
+                      </td>
+                      <td className="py-1 pr-2 text-right tabular-nums">
+                        {leg.pct != null ? `${leg.pct}%` : "—"}
+                      </td>
+                      <td className="py-1 pr-2" />
+                      <td className="py-1 pr-2" />
+                      <td className="py-1 pr-2 text-right tabular-nums text-muted">
+                        {leg.price != null ? inr(leg.price) : "—"}
+                      </td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{inr(legSale)}</td>
+                      <td
+                        className={`py-1 pr-2 text-right tabular-nums ${
+                          (leg.rupee_pnl ?? 0) >= 0 ? "text-bull" : "text-bear"
+                        }`}
+                      >
+                        {leg.rupee_pnl != null ? inr(leg.rupee_pnl) : "—"}
+                      </td>
+                      <td colSpan={showAlpha ? 2 : 1} />
+                      <td />
+                    </tr>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
+      <p className="text-[10px] text-muted mt-2 leading-relaxed">
+        Purchase = qty × entry price · Sale = qty × exit price (blended across partial legs) · Gain
+        = Sale − Purchase
+      </p>
     </div>
   );
 }

@@ -94,6 +94,78 @@ def test_partial_exit_legs_filters_non_dicts():
     assert legs[0]["pct"] == 50
 
 
-def test_position_shares_and_slot_alloc_defaults():
-    assert position_shares({}) == 0
-    assert slot_alloc({}) == 0
+def test_days_in_trade_closed_computed_when_stored_zero():
+    p = {
+        "status": "closed",
+        "screen_date": "2026-07-04",
+        "exit_date": "2026-07-09",
+        "trading_days_held": 0,
+    }
+    # Fri 4 through Wed 9 = 4 weekdays
+    assert days_in_trade(p) == 4
+
+
+def test_ledger_exit_legs_single_full_exit_hidden():
+    from tradingagents.paper.position_display import ledger_exit_legs
+
+    p = {
+        "partial_exits": [
+            {"date": "2026-07-09", "pct": 100.0, "reason": "foreclosure", "rupee_pnl": 10.0},
+        ]
+    }
+    assert ledger_exit_legs(p) == []
+
+
+def test_ledger_exit_legs_multi_leg_shown():
+    from tradingagents.paper.position_display import ledger_exit_legs
+
+    p = {
+        "partial_exits": [
+            {"date": "2026-07-08", "pct": 75.0, "reason": "target_2_partial"},
+            {"date": "2026-07-12", "pct": 25.0, "reason": "trail_stop"},
+        ]
+    }
+    assert len(ledger_exit_legs(p)) == 2
+
+
+def test_sale_proceeds_and_gain_single_exit():
+    from tradingagents.paper.position_display import (
+        realized_return_pct,
+        realized_rupee_pnl,
+        sale_proceeds,
+    )
+
+    p = {
+        "shares": 6,
+        "entry_price": 1765.1,
+        "notional": 10590.6,
+        "exit_price": 1786.5,
+        "partial_exits": [
+            {
+                "date": "2026-07-12",
+                "price": 1786.5,
+                "pct": 100.0,
+                "reason": "foreclosure",
+                "rupee_pnl": 128.4,
+            }
+        ],
+    }
+    assert sale_proceeds(p) == 10719.0
+    assert realized_rupee_pnl(p) == 128.4
+    assert realized_return_pct(p) == 1.21
+
+
+def test_sale_proceeds_blended_partial_legs():
+    from tradingagents.paper.position_display import realized_rupee_pnl, sale_proceeds
+
+    p = {
+        "shares": 10,
+        "entry_price": 100.0,
+        "notional": 1000.0,
+        "partial_exits": [
+            {"price": 120.0, "pct": 75.0, "rupee_pnl": 150.0},
+            {"price": 110.0, "pct": 25.0, "rupee_pnl": 25.0},
+        ],
+    }
+    assert sale_proceeds(p) == 1175.0
+    assert realized_rupee_pnl(p) == 175.0

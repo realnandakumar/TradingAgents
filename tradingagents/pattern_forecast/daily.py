@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
-from tradingagents.swing.exits import is_nse_trading_day
 from tradingagents.pattern_forecast.manager import PatternForecastPaperTradeManager, ReplacementProposal
 
 if TYPE_CHECKING:
@@ -23,9 +22,6 @@ def run_pattern_forecast_daily(
     def _log(msg: str):
         if progress:
             progress(msg)
-
-    if not force and not is_nse_trading_day():
-        return {"skipped": True, "reason": "not_a_trading_day"}
 
     _log("Running Pattern Forecast screener (2y analogue, 5d projection)...")
     cfg = config.copy()

@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from tradingagents.tech_desk.report_excerpt import extract_pm_summary
 
 _REPORT_NAMES = ("market.md", "complete_report.md")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -19,6 +21,7 @@ class TechReportSnapshot:
     report_dir: Path
     market_text: str
     source_file: str
+    pm_summary: Optional[Dict[str, Any]] = None
 
     @property
     def report_path(self) -> str:
@@ -108,12 +111,24 @@ def load_tech_reports(
                 continue
 
         content = report_path.read_text(encoding="utf-8")
+        pm_summary = extract_pm_summary(content)
+        summary_path = report_dir / "pm_summary.json"
+        if summary_path.exists():
+            try:
+                import json as _json
+
+                data = _json.loads(summary_path.read_text(encoding="utf-8"))
+                if isinstance(data.get("pm_summary"), dict):
+                    pm_summary = data["pm_summary"]
+            except Exception:
+                pass
         snap = TechReportSnapshot(
             ticker=ticker,
             report_date=report_date,
             report_dir=report_dir,
             market_text=content,
             source_file=report_path.name,
+            pm_summary=pm_summary,
         )
 
         existing = by_ticker.get(norm_ticker)

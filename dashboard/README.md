@@ -1,7 +1,9 @@
 # RS Screener Dashboard
 
 A Next.js dashboard for the TradingAgents India relative-strength screener and
-paper-trading reliability tracker. It reads results published to Supabase by
+This dashboard reads paper books, screens, and strategy desks from local JSON under
+`~/.tradingagents/` (no Supabase required for daily use). Run jobs from **Command center**
+or each desk's **Desk actions** panel.
 `tradingagents screen` and displays them — picks, AI decisions, paper P&L, and
 per-signal reliability.
 

@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
       actionId?: string;
       ticker?: string;
       force?: boolean;
+      proposalIds?: string[];
+      processDate?: string;
     };
 
     if (!body.deskId?.trim() || !body.actionId?.trim()) {
@@ -58,6 +60,8 @@ export async function POST(req: NextRequest) {
 
     const { jobId, job } = createJob(body.deskId, body.actionId, body.ticker, {
       force: body.force,
+      proposalIds: body.proposalIds,
+      processDate: body.processDate,
     });
     spawnDeskCliJob(jobId);
     return NextResponse.json({ jobId, command: job.command });

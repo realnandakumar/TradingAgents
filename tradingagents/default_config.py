@@ -143,6 +143,16 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "daily"),
     "tech_desk_process_log_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "process"),
     "tech_desk_max_report_age_days": 14,
+    "tech_desk_zone_proximity_pct": 1.5,
+    "tech_desk_min_reward_to_zone_ratio": 2.5,
+    "tech_desk_proximity_min_confidence": 65,
+    "tech_desk_proximity_stop_at_zone_low": True,
+    "tech_desk_pending_max_days": 10,
+    "tech_desk_target_path_skip_pct": 0.80,
+    "tech_desk_invalidate_on_stop_break": True,
+    "tech_desk_pending_dismissed_path": os.path.join(
+        _TRADINGAGENTS_HOME, "tech_desk", "pending_dismissed.json"
+    ),
     # Per-run directory for full tool response logs (StockTwits, Reddit,
     # yfinance news, technical indicators). None disables this logging; the
     # CLI sets it per run to a tool_responses/ subdir under results_dir.
@@ -434,7 +444,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "gap_fill_min_open_pct": 10.0,
     "gap_fill_max_extension_pct": 25.0,
     "gap_fill_min_progress": 10,
-    "gap_fill_max_progress": 85,
+    "gap_fill_max_progress": 50,
     "gap_fill_top_n": 50,
     "gap_fill_directions": "UP,DOWN",
     "gap_fill_max_positions": 10,

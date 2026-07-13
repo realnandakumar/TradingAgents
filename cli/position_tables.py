@@ -10,13 +10,19 @@ from rich.table import Table
 from rich import box
 
 from tradingagents.paper.position_display import (
+    average_exit_price,
     budget_ok_label,
     days_in_trade,
     entry_date_from_position,
     fmt_inr,
+    leg_sale_proceeds,
+    ledger_exit_legs,
     partial_exit_legs,
     position_shares,
     purchase_notional,
+    realized_return_pct,
+    realized_rupee_pnl,
+    sale_proceeds,
     slot_alloc,
     within_budget,
 )
@@ -61,59 +67,65 @@ def print_closed_positions_ledger(
     t.add_column("Exit", justify="right")
     t.add_column("Days", justify="right")
     t.add_column("Qty", justify="right")
+    t.add_column("@Buy", justify="right")
     t.add_column("Purchase", justify="right")
-    t.add_column("Budget", justify="right")
-    t.add_column("OK", justify="center")
-    t.add_column("Return", justify="right")
+    t.add_column("@Sell", justify="right")
+    t.add_column("Sale", justify="right")
+    t.add_column("Gain", justify="right")
+    t.add_column("Gain%", justify="right")
     if show_alpha:
         t.add_column("Alpha", justify="right")
-    t.add_column("P&L", justify="right")
     t.add_column("Reason")
 
     for p in closed[-limit:]:
-        ret = p.get("raw_return")
+        purchase = purchase_notional(p)
+        sale = sale_proceeds(p)
+        gain = realized_rupee_pnl(p)
+        gain_pct = realized_return_pct(p)
+        sell_px = average_exit_price(p)
         alpha = p.get("alpha_return")
-        rc = "green" if (ret or 0) > 0 else "red"
         ac = "green" if (alpha or 0) > 0 else "red"
-        pnl = p.get("rupee_pnl")
-        ok = budget_ok_label(p)
+        entry_px = float(p.get("entry_price") or 0)
         row = [
             p["ticker"].replace(".NS", ""),
             entry_date_from_position(p),
             p.get("exit_date", ""),
             str(days_in_trade(p)),
             str(int(position_shares(p))) if position_shares(p) else "—",
-            fmt_inr(purchase_notional(p)),
-            fmt_inr(slot_alloc(p)) if slot_alloc(p) else "—",
-            f"[red]{ok}[/red]" if ok != "OK" else ok,
-            f"[{rc}]{(ret or 0) * 100:+.1f}%[/{rc}]" if ret is not None else "—",
+            f"{entry_px:,.2f}" if entry_px else "—",
+            fmt_inr(purchase),
+            f"{sell_px:,.2f}" if sell_px is not None else "—",
+            fmt_inr(sale) if sale > 0 else "—",
+            fmt_inr(float(gain)) if gain is not None else "—",
+            f"{gain_pct:+.2f}%" if gain_pct is not None else "—",
         ]
         if show_alpha:
             row.append(
                 f"[{ac}]{(alpha or 0) * 100:+.1f}%[/{ac}]" if alpha is not None else "n/a"
             )
-        row.append(fmt_inr(float(pnl)) if pnl is not None else "—")
         row.append(str(p.get("exit_reason") or ""))
         t.add_row(*row)
 
-        for i, leg in enumerate(partial_exit_legs(p)):
+        legs = ledger_exit_legs(p)
+        for leg in legs:
+            leg_sale = leg_sale_proceeds(p, leg)
             leg_pnl = leg.get("rupee_pnl")
-            prefix = "  └" if i == len(partial_exit_legs(p)) - 1 else "  ├"
             leg_row = [
-                f"[dim]{prefix} {leg.get('reason', 'leg')}[/dim]",
+                f"[dim]  - {leg.get('reason', 'leg')}[/dim]",
                 "",
                 str(leg.get("date", "")),
                 "",
                 f"{leg.get('pct', 0):.0f}%",
-                fmt_inr(float(leg.get("price") or 0)),
                 "",
                 "",
-                f"{(leg.get('return') or 0) * 100:+.1f}%" if leg.get("return") is not None else "—",
+                f"{float(leg.get('price') or 0):,.2f}",
+                fmt_inr(leg_sale),
+                fmt_inr(float(leg_pnl)) if leg_pnl is not None else "—",
+                "",
             ]
             if show_alpha:
                 leg_row.append("")
-            leg_row.append(fmt_inr(float(leg_pnl)) if leg_pnl is not None else "—")
-            leg_row.append("[dim]partial[/dim]")
+            leg_row.append("")
             t.add_row(*leg_row)
 
     console.print(t)

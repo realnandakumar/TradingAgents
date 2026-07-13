@@ -17,6 +17,7 @@ import {
 } from "lightweight-charts";
 
 import type { ChartPayload, ChartPatternHighlight, ChartTime, ChartZone } from "@/lib/chart-types";
+import { chartTimeLocaleOptions } from "@/lib/chart-locale";
 
 const THEME = {
   background: "#14161d",
@@ -25,10 +26,10 @@ const THEME = {
   border: "#262a36",
   up: "#2ecc71",
   down: "#ff5470",
-  dimUp: "rgba(46,204,113,0.22)",
-  dimDown: "rgba(255,84,112,0.22)",
-  dimVolUp: "rgba(46,204,113,0.12)",
-  dimVolDown: "rgba(255,84,112,0.12)",
+  dimUp: "rgba(46,204,113,0.38)",
+  dimDown: "rgba(255,84,112,0.38)",
+  dimVolUp: "rgba(46,204,113,0.2)",
+  dimVolDown: "rgba(255,84,112,0.2)",
 };
 
 interface TradingChartProps {
@@ -56,12 +57,11 @@ function barTimeKey(time: ChartTime): string {
   return String(time).slice(0, 10);
 }
 
-function isInPatternWindow(
-  time: ChartTime,
-  highlight: ChartPatternHighlight,
-): boolean {
+/** Bright = full color. Only pre-pattern history is dimmed; follow-through stays vivid. */
+function isBrightBar(time: ChartTime, highlight: ChartPatternHighlight | null): boolean {
+  if (!highlight) return true;
   const key = barTimeKey(time);
-  return key >= highlight.windowStart && key <= highlight.windowEnd;
+  return key >= highlight.windowStart;
 }
 
 function candleColors(
@@ -123,6 +123,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
 
     const intraday = isIntradayPayload(data);
     const highlight = data.patternHighlight ?? null;
+    const localeOpts = chartTimeLocaleOptions(intraday);
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -137,10 +138,12 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
         horzLines: { color: THEME.grid },
       },
       rightPriceScale: { borderColor: THEME.border },
+      localization: localeOpts.localization,
       timeScale: {
         borderColor: THEME.border,
         timeVisible: true,
         secondsVisible: intraday,
+        tickMarkFormatter: localeOpts.timeScale.tickMarkFormatter,
       },
       crosshair: { mode: 1 },
     });
@@ -165,7 +168,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
     candles.setData(
       data.bars.map((b) => {
         const bullish = b.close >= b.open;
-        const inWindow = !highlight || isInPatternWindow(b.time, highlight);
+        const inWindow = isBrightBar(b.time, highlight);
         const colors = candleColors(bullish, inWindow);
         return {
           time: b.time as Time,
@@ -239,7 +242,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
     volume.setData(
       data.bars.map((b) => {
         const bullish = b.close >= b.open;
-        const inWindow = !highlight || isInPatternWindow(b.time, highlight);
+        const inWindow = isBrightBar(b.time, highlight);
         const color = inWindow
           ? bullish
             ? "rgba(46,204,113,0.35)"
@@ -256,6 +259,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
     );
 
     chart.timeScale().fitContent();
+    chart.timeScale().applyOptions({ rightOffset: 8 });
 
     const ro = new ResizeObserver(() => {
       if (!containerRef.current) return;

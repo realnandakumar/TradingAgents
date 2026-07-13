@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import pandas as pd
 
@@ -28,6 +28,8 @@ class ChartPatternAuditTrade:
     target_2: float
     risk_reward: float
     close: float
+    entry_fill: float
+    fill_mode: str
     outcome: str
     return_pct: float
 
@@ -43,6 +45,7 @@ class ChartPatternAuditSummary:
     avg_return_pct: float = 0.0
     by_pattern: Dict[str, dict] = field(default_factory=dict)
     by_confidence_bucket: Dict[str, dict] = field(default_factory=dict)
+    fill_mode: str = "close"
     version: str = "1.0"
     trades: List[ChartPatternAuditTrade] = field(default_factory=list)
 
@@ -51,6 +54,7 @@ class ChartPatternAuditSummary:
             "version": self.version,
             "symbols_tested": self.symbols_tested,
             "signals": self.signals,
+            "fill_mode": getattr(self, "fill_mode", "close"),
             "t1_hit_rate_pct": round(self.t1_hit_rate * 100, 1),
             "t2_hit_rate_pct": round(self.t2_hit_rate * 100, 1),
             "stop_hit_rate_pct": round(self.stop_hit_rate * 100, 1),
@@ -75,13 +79,15 @@ def audit_symbol(
     symbol: str = "",
     step: int = 5,
     horizon: int = 20,
+    fill_mode: Literal["close", "next_open"] = "close",
 ) -> List[ChartPatternAuditTrade]:
     min_bars = int(config.get("chart_pattern_min_bars", 60))
     trades: List[ChartPatternAuditTrade] = []
     if df is None or len(df) < min_bars + horizon + 10:
         return trades
 
-    end = len(df) - horizon
+    extra = 1 if fill_mode == "next_open" else 0
+    end = len(df) - horizon - extra
     for t in range(min_bars, end, step):
         hist = df.iloc[: t + 1]
         as_of_ts = hist.index[-1]
@@ -133,9 +139,12 @@ def audit_symbol(
                 fwd["Low"].tolist(),
                 fwd["Close"].tolist(),
             )
-            entry_px = hit.close
+            if fill_mode == "next_open":
+                entry_fill = float(fwd["Open"].iloc[0])
+            else:
+                entry_fill = hit.close
             exit_px = float(fwd["Close"].iloc[-1])
-            ret = (exit_px - entry_px) / entry_px * 100.0
+            ret = (exit_px - entry_fill) / entry_fill * 100.0
             if hit.bias == "BEARISH":
                 ret = -ret
 
@@ -153,6 +162,8 @@ def audit_symbol(
                     target_2=t2,
                     risk_reward=rr,
                     close=hit.close,
+                    entry_fill=entry_fill,
+                    fill_mode=fill_mode,
                     outcome=outcome,
                     return_pct=ret,
                 )
@@ -165,17 +176,28 @@ def audit_universe(
     price_data: Dict[str, pd.DataFrame],
     step: int = 5,
     horizon: int = 20,
+    fill_mode: Literal["close", "next_open"] = "close",
 ) -> ChartPatternAuditSummary:
     all_trades: List[ChartPatternAuditTrade] = []
     for symbol, df in price_data.items():
         if df is None or df.empty:
             continue
-        all_trades.extend(audit_symbol(df, config, symbol=symbol, step=step, horizon=horizon))
+        all_trades.extend(
+            audit_symbol(
+                df,
+                config,
+                symbol=symbol,
+                step=step,
+                horizon=horizon,
+                fill_mode=fill_mode,
+            )
+        )
 
     summary = ChartPatternAuditSummary(
         symbols_tested=len(price_data),
         signals=len(all_trades),
         trades=all_trades,
+        fill_mode=fill_mode,
     )
     if not all_trades:
         return summary

@@ -85,7 +85,7 @@ export function ChartWorkspace() {
         range: rng,
       });
       if (patternId) params.set("pattern_id", patternId);
-      const res = await fetch(`/api/chart?${params.toString()}`);
+      const res = await fetch(`/api/chart?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load chart");
       const payload = json as ChartPayload;

@@ -53,6 +53,7 @@ def test_symbol_cache_filename_ampersand():
 
     assert symbol_cache_filename("M&M.NS") == "M_M.NS"
     assert symbol_cache_filename("J&KBANK.NS") == "J_KBANK.NS"
+    assert symbol_cache_filename("^NSEI") == "_NSEI"
     path = canonical_csv_path("M&M.NS", cache_dir="/tmp/cache")
     assert path.name == "M_M.NS.csv"
 
@@ -120,8 +121,14 @@ def test_sync_updates_manifest(monkeypatch, tmp_path):
     assert report.failed == 0
 
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["symbols"]["SYNC.NS"]["first_bar"] == "2024-01-01"
     assert manifest["symbols"]["SYNC.NS"]["last_bar"] == "2024-01-02"
     assert manifest["symbols"]["SYNC.NS"]["rows"] == 2
+
+    from tradingagents.dataflows.ohlcv_db import read_bars_db
+
+    db_rows = read_bars_db("SYNC.NS", db_path=str(tmp_path / "prices.db"))
+    assert len(db_rows) == 2
 
 
 def test_migrate_legacy_cache(tmp_path):

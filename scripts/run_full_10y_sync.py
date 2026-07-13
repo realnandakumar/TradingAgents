@@ -1,7 +1,7 @@
-"""CLI to sync the canonical daily OHLCV price cache from Yahoo Finance."""
+"""One-time full 10-year OHLCV sync for the trading universe into prices.db + CSV."""
+
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -13,22 +13,20 @@ from tradingagents.dataflows.sync_symbols import collect_sync_symbols
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sync canonical OHLCV price cache")
-    parser.add_argument(
-        "--mode",
-        choices=["incremental", "full"],
-        default="incremental",
-        help="incremental: fetch tail when stale; full: re-download period",
-    )
-    parser.add_argument(
-        "--period",
-        default="5y",
-        help="History window for full sync or cold-start incremental (default: 5y; use 10y for one-time backfill)",
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Full 10y price sync (SQLite prices.db + per-symbol CSV)"
     )
     parser.add_argument(
         "--migrate-legacy",
         action="store_true",
         help="Merge legacy *-YFin-data-*.csv files into canonical store first",
+    )
+    parser.add_argument(
+        "--period",
+        default="10y",
+        help="Yahoo history window (default: 10y)",
     )
     args = parser.parse_args()
 
@@ -40,10 +38,10 @@ def main() -> None:
         print(f"Migrated {n} legacy cache file(s)")
 
     symbols = collect_sync_symbols(config)
-    print(f"Syncing {len(symbols)} tickers ({args.mode}, period={args.period})...")
+    print(f"Full sync: {len(symbols)} tickers, period={args.period} -> prices.db + CSV...")
     report = sync_price_cache(
         symbols,
-        mode=args.mode,
+        mode="full",
         period=args.period,
         cache_dir=cache_dir,
     )
@@ -52,7 +50,7 @@ def main() -> None:
         f"failed={report.failed} total={report.symbols_total}"
     )
     if report.errors:
-        print("Errors:")
+        print("Errors (first 20):")
         for err in report.errors[:20]:
             print(f"  {err}")
         if len(report.errors) > 20:

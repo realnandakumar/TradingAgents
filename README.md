@@ -28,8 +28,11 @@
 # TradingAgents: Multi-Agents LLM Financial Trading Framework
 
 ## News
+- [2026-07] **Unified EOD price sync** — Local SQLite + CSV OHLCV store for the Nifty-500 universe (plus watchlist, custom tickers, and open positions). Scheduled pipeline syncs prices, runs all desk screeners and dailies; Command Center **Sync now** for manual catch-up.
+- [2026-07] **Daily charts** — `/charts` with desk overlays (stops, targets, pattern geometry), 5m/15m intraday panel, and local-first cache (no Yahoo call per page load).
+- [2026-07] **Chart Patterns screener** — Classic pattern detection (double bottom, triangles, flags, etc.) with pattern-specific trade levels, geometry on charts, and optional historical T1 audit.
 - [2026-07] **Tech Desk** — LLM watchlist pipeline (`tech-analyze` → PM batch process → daily rules), dashboard at `/tech-desk`, pullback zone entries, and explicit approval for portfolio replacements.
-- [2026-07] **India multi-strategy screeners** — Swing, Momentum, NSS, and SuperTrend+RSI desks with per-strategy paper trading, shared Yahoo download runners, and a fully offline local dashboard (no Supabase required).
+- [2026-07] **India multi-strategy screeners** — Swing, Momentum, NSS, SuperTrend+RSI, TRAMA, NW Envelope, Pattern Forecast, Gap Fill, and Chart Patterns desks with per-strategy paper trading, shared price store, and a fully offline local dashboard (no Supabase required).
 - [2026-05] **TradingAgents v0.2.5** released with the grounded Sentiment Analyst, GPT-5.5 etc. model coverage, Qwen/GLM/MiniMax dual-region support, `TRADINGAGENTS_*` env-var configurability with API-key auto-detection, remote Ollama support, non-US alpha benchmarks, and ticker path-traversal hardening. See [CHANGELOG.md](CHANGELOG.md) for the full list.
 - [2026-04] **TradingAgents v0.2.4** released with structured-output agents (Research Manager, Trader, Portfolio Manager), LangGraph checkpoint resume, persistent decision log, DeepSeek/Qwen/GLM/Azure provider support, Docker, and a Windows UTF-8 encoding fix.
 - [2026-03] **TradingAgents v0.2.3** released with multi-language support, GPT-5.4 family models, unified model catalog, backtesting date fidelity, and proxy support.
@@ -194,8 +197,7 @@ multiple strategies, **paper-trade** the picks (no real money), and track P&L,
 win rate, and per-signal reliability on a **local dashboard** — fully offline,
 no Supabase required.
 
-All screeners share the same Nifty-500 universe. Data is downloaded from Yahoo
-Finance once per run (or once across all screeners via the combined runners below).
+All screeners share the same Nifty-500 universe. **Daily OHLCV** is synced once into a local store (`~/.tradingagents/prices.db` + per-symbol CSV under `cache/`) via the **EOD pipeline** — screeners and charts read from disk instead of hitting Yahoo on every run.
 
 > **New to the CLI?** See **[docs/USER_CLI_GUIDE.md](docs/USER_CLI_GUIDE.md)** — a
 > beginner-friendly walkthrough for every screener, paper desk, dashboard page, and
@@ -206,17 +208,54 @@ Finance once per run (or once across all screeners via the combined runners belo
 ```bash
 pip install .
 
-# Screen all four technical strategies (one Yahoo download):
-python scripts/run_all_screeners_now.py
+# Full EOD: sync prices → all screeners → all dailies (recommended after market close):
+python scripts/run_eod_pipeline.py
 
-# Run daily paper-trade jobs for all four desks:
+# Or screen / daily only (skips price re-sync if EOD already ran today):
+python scripts/run_all_screeners_now.py
 python scripts/run_all_daily_now.py
+
+# Incremental price sync only:
+python scripts/sync_price_cache.py
+
+# One-time full 10y history pull (SQLite prices.db + CSV):
+python scripts/run_full_10y_sync.py
+# equivalent: python scripts/sync_price_cache.py --mode full --period 10y
+
+# Chart pattern walk-forward backtest (next-day open fill; reads prices.db first):
+python scripts/run_chart_pattern_backtest.py --period 10y --sample 80
 
 # Launch the local dashboard (reads ~/.tradingagents/ JSON — no Supabase):
 cd dashboard && npm install && npm run dev   # http://localhost:3000
 
 # RS screener with AI analysis (needs OPENAI_API_KEY):
 tradingagents screen --top 10
+```
+
+### EOD price sync (scheduled + manual)
+
+After the NSE close, one pipeline refreshes prices through the last trading day, then runs every desk screener and daily job:
+
+```bash
+python scripts/run_eod_pipeline.py              # full pipeline
+python scripts/run_eod_pipeline.py --force      # re-sync even if already ran today
+python scripts/run_eod_if_missed.py             # catch-up at logon if PC was off at 4:10 PM
+```
+
+**Windows scheduler** (IST timezone):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/schedule_eod_pipeline.ps1
+```
+
+Registers **4:10 PM** weekday EOD plus **logon catch-up**. Dashboard **Command Center** (`/command-center`) has a **Sync now** button for the same flow.
+
+**Sync symbol set:** Nifty 500 ∪ watchlist ∪ custom tickers ∪ open desk positions.
+
+```bash
+tradingagents custom-ticker add WIPRO    # add symbol outside universe (synced on EOD)
+tradingagents custom-ticker list
+python scripts/ensure_symbol_cached.py RELIANCE.NS   # warm cache for one ticker
 ```
 
 ### Legacy RS screener (AI-assisted)
@@ -245,8 +284,8 @@ their holding period, scoring return and alpha vs Nifty.
 
 ### Technical screeners (no AI calls)
 
-Seven rule-based screeners rank setups from the same universe. Each has its own
-paper book, daily job, and dashboard desk.
+Nine rule-based screeners rank setups from the same universe. Each has its own
+paper book (where applicable), daily job, and dashboard desk. **Screeners run via the EOD pipeline** — individual per-desk screener buttons were removed from the dashboard; use Command Center **Sync now** instead.
 
 | Strategy | CLI | Hold style | What it looks for |
 |----------|-----|------------|-------------------|
@@ -257,8 +296,10 @@ paper book, daily job, and dashboard desk.
 | **TRAMA** | `tradingagents trama` | ~20 days | LuxAlgo TRAMA close crossover within last 3 days |
 | **NW Envelope** | `tradingagents nw-envelope` | ~20 days | LuxAlgo Nadaraya-Watson envelope band crosses (contrarian) |
 | **Pattern Forecast** | `tradingagents pattern-forecast` | 5 days | 2y analogue Pearson projection + mandatory stop |
+| **Gap Fill** | `tradingagents gap-fill` | configurable | Active true gaps on completed sessions |
+| **Chart Patterns** | `tradingagents chart-patterns` | screener only | Double bottom/top, triangles, flags, H&S, etc. (max age 6d) |
 
-Per-strategy commands (same pattern for all seven):
+Per-strategy commands (same pattern for paper-trading desks):
 
 ```bash
 tradingagents swing                    # screen + save picks
@@ -267,9 +308,13 @@ tradingagents swing-daily              # daily job: exits, opens, replacements
 tradingagents swing-report             # closed-trade summary
 ```
 
-Replace `swing` with `momentum`, `nss`, `supertrend-rsi`, `trama`, `nw-envelope`, or
-`pattern-forecast` as needed. Use `*-explain TICKER` on NSS, SuperTrend+RSI, TRAMA,
-NW Envelope, and Pattern Forecast to debug why a name passed or failed.
+Replace `swing` with `momentum`, `nss`, `supertrend-rsi`, `trama`, `nw-envelope`,
+`pattern-forecast`, or `gap-fill` as needed. **Chart Patterns** is screener-only (no paper book).
+Use `*-explain TICKER` on NSS, SuperTrend+RSI, TRAMA, NW Envelope, Gap Fill, and Pattern Forecast to debug why a name passed or failed.
+
+```bash
+python scripts/run_chart_pattern_audit.py    # historical T1 hit rates → chart_patterns/audit.json
+```
 
 ### Tech Desk (LLM watchlist paper trading)
 
@@ -310,13 +355,25 @@ python scripts/reset_paper_capital.py           # clear closed P&L, resize open 
 
 ### Run all screeners at once
 
-Because every strategy uses the same universe, you can download Yahoo data once
-and fan it out to all seven technical screeners (or all seven daily paper jobs):
+The **EOD pipeline** is the preferred entry point (price sync + all screeners + all dailies).
+These scripts still work standalone and skip price re-sync if EOD already completed today:
 
 ```bash
+python scripts/run_eod_pipeline.py        # recommended: sync + screen + daily
 python scripts/run_all_screeners_now.py   # screen all strategies
 python scripts/run_all_daily_now.py       # run all daily paper-trade jobs
 ```
+
+### Daily charts
+
+Interactive daily candles with desk overlays (stop, trigger, T1, T2), pattern geometry,
+SMA 50/200, and an optional 5m/15m intraday panel. Open from any desk blotter or directly:
+
+```
+/charts?ticker=RELIANCE&desk=chart-patterns&pattern_id=double_bottom
+```
+
+Data is read from the local price store; missing symbols are synced on demand.
 
 ### Local dashboard
 
@@ -332,6 +389,8 @@ npm run dev          # http://localhost:3000
 | Page | What it shows |
 |------|---------------|
 | `/` | RS screener overview — win rate, alpha, reliability chart |
+| `/command-center` | **Sync now** (EOD pipeline), custom tickers, bulk desk actions, job monitor |
+| `/charts` | Daily chart + desk overlays + intraday panel |
 | `/screens` | History of RS screen runs and ranked candidates |
 | `/positions` | RS paper book — open/closed trades |
 | `/swing` | Swing desk blotter |
@@ -341,17 +400,24 @@ npm run dev          # http://localhost:3000
 | `/trama` | TRAMA crossover desk blotter |
 | `/nw-envelope` | Nadaraya-Watson Envelope desk blotter |
 | `/pattern-forecast` | Pattern Forecast desk blotter |
+| `/gap-fill` | Gap Fill desk blotter + gap screener snapshot |
+| `/chart-patterns` | Chart Patterns screener blotter (links to `/charts` with pattern overlay) |
 | `/tech-desk` | Tech Desk — watchlist, LLM analyze/process pipeline, paper blotter |
+| `/data-health` | Local file freshness (price DB, EOD manifest, desk snapshots) |
 
-Run `tradingagents screen` (RS), any strategy's daily job, or Tech Desk **Process** / **Daily**
-to refresh the data, then reload the dashboard.
+Run **Sync now** on Command Center, `python scripts/run_eod_pipeline.py`, or any strategy's daily job to refresh data, then reload the dashboard.
 
-Most desk pages include a **Run** panel that mirrors the CLI via background jobs (`/api/desk-cli`).
+Desk pages expose **Daily**, **Approve**, and **Explain** actions where applicable. Per-desk **Run screener** buttons were removed — screeners run as part of EOD.
 
 Local data lives under `~/.tradingagents/`:
 
 | Path | Contents |
 |------|----------|
+| `cache/` | Per-symbol daily OHLCV CSV (`RELIANCE.NS.csv`) + `manifest.json` (last EOD run, per-symbol `last_bar`) |
+| `prices.db` | SQLite canonical OHLCV store (source for screeners; CSV exported for charts) |
+| `custom_tickers.txt` | Extra symbols synced on EOD (outside Nifty 500) |
+| `chart_patterns/screener.json` | Chart Patterns screener snapshot |
+| `chart_patterns/audit.json` | Optional historical T1 hit-rate audit |
 | `paper/paper_snapshot.json` | RS paper book snapshot for `/` and `/positions` |
 | `paper/screens.json` | RS screen history for `/screens` |
 | `swing/positions.json` | Swing desk |
@@ -361,12 +427,14 @@ Local data lives under `~/.tradingagents/`:
 | `trama/positions.json` | TRAMA desk |
 | `nw_envelope/positions.json` | NW Envelope desk |
 | `pattern_forecast/positions.json` | Pattern Forecast desk |
+| `gap_fill/positions.json` | Gap Fill desk |
 | `watchlist.txt` | Tech Desk watchlist (one ticker per line) |
 | `tech_reports/TICKER/DATE/market.md` | Saved `tech-analyze` reports |
 | `tech_desk/positions.json` | Tech Desk open book |
 | `tech_desk/pending_entries.json` | Pullback limit zones waiting for fill |
 | `tech_desk/process/` | Process logs (opens, waits, replacements) |
 | `tech_desk/daily/` | Daily exit / zone-fill logs |
+| `logs/eod_YYYYMMDD.json` | EOD pipeline run report |
 
 ### Configuration
 
@@ -376,8 +444,9 @@ See `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars. Key knobs:
 - **RS screener:** `screen_benchmark`, `screen_top_n`, `screen_rs_min_percentile`
 - **Paper (RS):** `paper_capital`, `paper_max_positions`, `paper_holding_days`
 - **Per-strategy:** `swing_*`, `momentum_*`, `nss_*`, `strsi_*`, `trama_*`, `nwe_*`,
-  `pattern_forecast_*` keys for hold windows, position limits, stop/target R-multiples,
-  and book paths
+  `pattern_forecast_*`, `gap_fill_*`, `chart_pattern_*` keys for hold windows, position limits,
+  stop/target R-multiples, pattern max age (`chart_pattern_max_age_days`, default 6), and book paths
+- **Price store:** `data_cache_dir`, `prices_db_path`, `custom_tickers_path`; env `TRADINGAGENTS_CACHE_DIR`, `TRADINGAGENTS_PRICES_DB_PATH`
 - **Tech Desk:** `tech_desk_max_positions`, `tech_desk_min_confidence`,
   `tech_desk_holding_days`, `tech_desk_max_report_age_days`, `tech_analyze_reports_dir`
 - **Desk capital:** `desk_capital` (₹1L per strategy desk, equal-weight slots)

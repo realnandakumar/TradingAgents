@@ -69,9 +69,10 @@ def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
 def symbol_cache_filename(symbol: str, *, max_len: int = 32) -> str:
     """Return a filesystem-safe cache basename for a yfinance ticker.
 
-    NSE symbols like ``M&M.NS`` contain ``&``, which is invalid in Windows
-    paths. We map ``&`` → ``_`` for the on-disk filename while keeping the
-    original symbol for Yahoo API calls and manifest keys.
+    NSE symbols like ``M&M.NS`` contain ``&``, and index tickers like ``^NSEI``
+    contain ``^`` — both are invalid in Windows cache filenames. We map those
+    to ``_`` for the on-disk filename while keeping the original symbol for
+    Yahoo API calls and manifest keys.
     """
     if not isinstance(symbol, str) or not symbol:
         raise ValueError(f"ticker must be a non-empty string, got {symbol!r}")
@@ -80,7 +81,7 @@ def symbol_cache_filename(symbol: str, *, max_len: int = 32) -> str:
         raise ValueError(f"ticker exceeds {max_len} chars: {symbol!r}")
     if "/" in sym or "\\" in sym or ".." in sym:
         raise ValueError(f"ticker contains path traversal: {symbol!r}")
-    safe = sym.replace("&", "_")
+    safe = sym.replace("&", "_").replace("^", "_")
     if not _CACHE_FILENAME_RE.fullmatch(safe):
         raise ValueError(
             f"ticker contains characters not allowed in a cache filename: {symbol!r}"

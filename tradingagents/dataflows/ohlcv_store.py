@@ -237,23 +237,62 @@ def _merge_bars(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
     return combined.sort_values("Date").reset_index(drop=True)
 
 
+def _first_bar_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if df is None or df.empty or "Date" not in df.columns:
+        return None
+    return pd.to_datetime(df["Date"].iloc[0]).normalize()
+
+
 def _update_manifest_symbol(
     manifest: dict,
     symbol: str,
     df: pd.DataFrame,
 ) -> None:
     last = _last_bar_date(df)
+    first = _first_bar_date(df)
     manifest.setdefault("symbols", {})[symbol] = {
+        "first_bar": first.strftime("%Y-%m-%d") if first is not None else None,
         "last_bar": last.strftime("%Y-%m-%d") if last is not None else None,
         "rows": len(df),
         "synced_at": _utc_now_iso(),
     }
 
 
+def read_bars_as_of(
+    symbol: str,
+    as_of_date: str,
+    *,
+    start_date: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+) -> pd.DataFrame:
+    """Point-in-time OHLCV for *symbol* (SQLite first, CSV fallback)."""
+    try:
+        from tradingagents.dataflows.ohlcv_db import read_bars_as_of as read_bars_as_of_db
+
+        db_bars = read_bars_as_of_db(
+            symbol,
+            as_of_date,
+            start_date=start_date,
+        )
+        if db_bars is not None and not db_bars.empty:
+            return db_bars
+    except Exception as e:  # noqa: BLE001
+        logger.debug("SQLite as-of read failed for %s (%s); falling back to CSV", symbol, e)
+
+    bars = read_bars(symbol, cache_dir=cache_dir)
+    if bars.empty:
+        return bars
+    as_of = pd.Timestamp(as_of_date).normalize()
+    if start_date:
+        start = pd.Timestamp(start_date).normalize()
+        bars = bars[bars["Date"] >= start]
+    return bars[bars["Date"] <= as_of].reset_index(drop=True)
+
+
 def read_bars(symbol: str, cache_dir: Optional[str] = None) -> pd.DataFrame:
     """Read OHLCV for *symbol* (SQLite first, then canonical CSV)."""
     try:
-        from tradingagents.dataflows.ohlcv_db import read_bars_db
+        from tradingagents.dataflows.ohlcv_db import read_bars as read_bars_db
 
         db_bars = read_bars_db(symbol)
         if db_bars is not None and not db_bars.empty:
@@ -483,6 +522,9 @@ def sync_price_cache(
                 else:
                     existing = read_bars(sym, cache_dir=cache_dir)
                     merged = _merge_bars(existing, new_bars)
+                from tradingagents.dataflows.ohlcv_db import upsert_bars
+
+                upsert_bars(sym, merged)
                 write_bars(sym, merged, cache_dir=cache_dir)
                 _update_manifest_symbol(manifest, sym, merged)
                 report.synced += 1

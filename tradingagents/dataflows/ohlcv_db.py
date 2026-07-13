@@ -123,6 +123,39 @@ def upsert_bars(
         conn.commit()
 
 
+def read_bars(
+    symbol: str,
+    *,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """Read OHLCV bars for *symbol* from SQLite (empty frame if missing)."""
+    return read_bars_db(
+        symbol,
+        start=start_date,
+        end=end_date,
+        db_path=db_path,
+    )
+
+
+def read_bars_as_of(
+    symbol: str,
+    as_of_date: str,
+    *,
+    start_date: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """Point-in-time bars: ``date <= as_of_date`` (no look-ahead)."""
+    as_of = pd.Timestamp(as_of_date).strftime("%Y-%m-%d")
+    return read_bars_db(
+        symbol,
+        start=start_date,
+        end=as_of,
+        db_path=db_path,
+    )
+
+
 def read_bars_db(
     symbol: str,
     *,

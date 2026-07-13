@@ -58,7 +58,7 @@ export interface ChartPayload {
   ticker: string;
   timeframe: ChartTimeframe;
   range: ChartRange | IntradayRange;
-  source: "cache" | "yahoo" | "cache+yahoo";
+  source: "cache" | "prices.db" | "yahoo" | "cache+yahoo";
   cacheFile?: string | null;
   bars: ChartBar[];
   lines: ChartLineSeries[];

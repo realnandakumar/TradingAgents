@@ -257,7 +257,7 @@ def _assess_setup(
     bias: str,
     config: dict,
 ) -> SetupAssessment:
-    max_age = int(config.get("chart_pattern_max_age_days", 10))
+    max_age = int(config.get("chart_pattern_max_age_days", 6))
     max_breakout = float(config.get("chart_pattern_max_breakout_pct", 3.0)) / 100.0
     max_inval = float(config.get("chart_pattern_max_invalidation_pct", 5.0)) / 100.0
     max_dist = float(config.get("chart_pattern_max_distance_to_trigger_pct", 5.0))
@@ -405,7 +405,7 @@ def _hit(
         f"Setup: {assessment.status} · actionability {assessment.score:.0f}/100",
         f"Distance to trigger: {assessment.distance_pct:.1f}%",
         f"Position in pattern: {assessment.position_pct:.0f}% (support to resistance)",
-        f"Pattern age: {age} trading days (must be <{config.get('chart_pattern_max_age_days', 10)})",
+        f"Pattern age: {age} trading days (must be <{config.get('chart_pattern_max_age_days', 6)})",
         f"Trigger: {trigger:.2f}" if trigger else "Trigger: n/a",
     ]
     if bool(config.get("chart_pattern_exclude_today", True)):

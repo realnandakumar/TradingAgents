@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { TradingChart } from "@/components/charts/TradingChart";
+import { formatChartCrosshairTime } from "@/lib/chart-locale";
 import type { ChartPayload, ChartTimeframe, IntradayRange } from "@/lib/chart-types";
 
 const INTERVALS: { id: ChartTimeframe; label: string }[] = [
@@ -116,7 +117,13 @@ export function IntradayChartPanel({
             <>
               <TradingChart data={data} height={360} />
               <div className="text-[10px] text-muted font-mono">
-                {data.meta.barCount} bars · last {data.meta.last ?? "—"}
+                {data.meta.barCount} bars · last{" "}
+                {data.meta.last
+                  ? typeof data.bars[data.bars.length - 1]?.time === "number"
+                    ? formatChartCrosshairTime(data.bars[data.bars.length - 1].time, true)
+                    : data.meta.last.slice(0, 10)
+                  : "—"}{" "}
+                IST
               </div>
             </>
           ) : (

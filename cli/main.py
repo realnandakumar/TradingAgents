@@ -4321,7 +4321,7 @@ def chart_patterns(
     ),
     bullish_only: bool = typer.Option(False, "--bullish-only", help="Show bullish patterns only."),
     bearish_only: bool = typer.Option(False, "--bearish-only", help="Show bearish patterns only."),
-    max_age: Optional[int] = typer.Option(None, "--max-age", help="Max pattern age in trading days, exclusive (default 14)."),
+    max_age: Optional[int] = typer.Option(None, "--max-age", help="Max pattern age in trading days, exclusive (default 6)."),
     max_dist: Optional[float] = typer.Option(
         None, "--max-dist", help="Max %% distance to trigger for actionable setup (default 5).",
     ),

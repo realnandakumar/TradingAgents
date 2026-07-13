@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 
 import type {
   ChartBar,
@@ -147,6 +147,32 @@ function resolveCacheFile(ticker: string): string | null {
     if (!best || mtime > best.mtime) best = { path: full, mtime };
   }
   return best?.path ?? null;
+}
+
+/** SQLite-first read via Python (same path as screeners / backtests). */
+function readBarsFromStore(ticker: string): ChartBar[] | null {
+  const cwd = repoRootFromDashboard();
+  const script = path.join(cwd, "scripts", "chart_bars_json.py");
+  if (!fs.existsSync(script)) return null;
+
+  const result = spawnSync(pythonExecutable(), [script, ticker], {
+    cwd,
+    encoding: "utf-8",
+    timeout: 60_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0 || !result.stdout?.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as ChartBar[];
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter((b) => b?.time && Number.isFinite(b.close))
+      .sort((a, b) => barDateKey(a.time).localeCompare(barDateKey(b.time)));
+  } catch {
+    return null;
+  }
 }
 
 function parseCsvBars(filePath: string): ChartBar[] {
@@ -343,7 +369,7 @@ function formatMetaTime(time: ChartBar["time"] | undefined): string | null {
   return time;
 }
 
-/** Daily candles only — cache CSV or Yahoo 1d fallback. */
+/** Daily candles — prices.db (SQLite-first) with CSV / Yahoo fallback. */
 export async function loadChartPayload(
   rawTicker: string,
   range: ChartRange = "1y",
@@ -368,8 +394,9 @@ export async function loadChartPayload(
   if (!ticker) return empty;
 
   const cacheFile = resolveCacheFile(ticker);
-  let bars = cacheFile ? parseCsvBars(cacheFile) : [];
-  let source: ChartPayload["source"] = "cache";
+  const storeBars = readBarsFromStore(ticker);
+  let bars = storeBars ?? (cacheFile ? parseCsvBars(cacheFile) : []);
+  let source: ChartPayload["source"] = storeBars ? "prices.db" : "cache";
 
   if (bars.length === 0) {
     ensureSymbolCached(ticker);

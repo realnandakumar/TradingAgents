@@ -473,7 +473,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "chart_pattern_top_n": 25,
     "chart_pattern_enabled": "all",
     "chart_pattern_min_confidence": 55,
-    "chart_pattern_max_age_days": 10,
+    "chart_pattern_max_age_days": 6,
     "chart_pattern_max_breakout_pct": 3.0,
     "chart_pattern_max_invalidation_pct": 5.0,
     "chart_pattern_require_actionable": True,
@@ -486,6 +486,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     ),
     "chart_pattern_audit_path": os.path.join(
         _TRADINGAGENTS_HOME, "chart_patterns", "audit.json"
+    ),
+    "chart_pattern_backtest_path": os.path.join(
+        _TRADINGAGENTS_HOME, "backtests", "chart_pattern_backtest_latest.json"
     ),
     # Nadaraya-Watson Envelope [LuxAlgo] — contrarian band crosses
     "nwe_history_period": "2y",

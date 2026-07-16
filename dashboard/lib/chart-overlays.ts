@@ -93,11 +93,9 @@ function swingPositionOverlay(
   const out = emptyOverlay(deskId);
   const stop = num(p.trailing_stop) ?? num(p.stop_loss);
   const t1 = num(p.target_1) ?? num(p.target_max) ?? num(p.fill_target);
-  const t2 = num(p.target_2);
 
   pushHline(out, "stop", stop, "stop");
   pushHline(out, "t1", t1, "T1");
-  pushHline(out, "t2", t2, "T2");
 
   const entry = num(p.entry_price);
   const screenDate = typeof p.screen_date === "string" ? p.screen_date : null;

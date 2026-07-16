@@ -43,7 +43,7 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
 
   const avgRisk =
     open.reduce((s, p) => s + Math.abs(p.stop_loss_pct), 0) / (open.length || 1);
-  const avgT2 = open.reduce((s, p) => s + p.target_2_pct, 0) / (open.length || 1);
+  const avgT1 = open.reduce((s, p) => s + p.target_1_pct, 0) / (open.length || 1);
 
   const sectors: Record<string, number> = {};
   for (const p of open) sectors[p.sector] = (sectors[p.sector] ?? 0) + 1;
@@ -62,7 +62,7 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
           },
           { label: "Slots free", value: String(MAX_POSITIONS - open.length), sub: "capacity" },
           { label: "Avg risk", value: pct(-avgRisk), sub: "to stop", tone: "text-bear" },
-          { label: "Avg T2", value: pct(avgT2, 2), sub: "upside", tone: "text-bull" },
+          { label: "Avg T1", value: pct(avgT1, 2), sub: "upside", tone: "text-bull" },
           { label: "Closed", value: String(positions.filter((p) => p.status === "closed").length), sub: "lifetime" },
         ].map((k) => (
           <div key={k.label} className="px-4 py-3 border-r border-border/60 last:border-r-0">
@@ -79,18 +79,18 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
           <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2 text-xs">
             <span className="font-medium uppercase tracking-wide">Position blotter</span>
             <span className="text-muted">{open.length} lines</span>
-            <span className="ml-auto text-muted">1D · 20-day hold</span>
+            <span className="ml-auto text-muted">1D · T1 full exit · 20d</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="text-muted uppercase tracking-wide border-b border-border bg-surface/40">
-                  {["SYM", "NAME", "SECT", ...deskOpenMetaHeaders(), "ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "ST", "SIZE", "RSI", "ADX"].map(
+                  {["SYM", "NAME", "SECT", ...deskOpenMetaHeaders(), "LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "ST", "SIZE", "RSI", "ADX"].map(
                     (h) => (
                       <th
                         key={h}
                         className={`font-medium py-2 px-2 whitespace-nowrap ${
-                          ["ENTRY", "LAST", "MTM%", "STOP", "RISK%", "T2", "UPSIDE", "CUSH%", "SIZE", "RSI", "ADX", ...deskOpenMetaHeaders()].includes(h)
+                          ["LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "SIZE", "RSI", "ADX", ...deskOpenMetaHeaders()].includes(h)
                             ? "text-right"
                             : "text-left"
                         }`}
@@ -113,15 +113,14 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
                     <td className="py-2 px-2 text-muted max-w-[140px] truncate">{p.stock_name.replace(" Ltd.", "")}</td>
                     <td className="py-2 px-2 text-muted">{shortSector(p.sector)}</td>
                     <DeskOpenMetaCells p={p} />
-                    <td className="py-2 px-2 text-right tabular-nums">{inr(p.entry_price)}</td>
                     <td className="py-2 px-2 text-right tabular-nums">{inr(live)}</td>
                     <td className={`py-2 px-2 text-right tabular-nums ${mtmPct >= 0 ? "text-bull" : "text-bear"}`}>
                       {pct(mtmPct, 2)}
                     </td>
                     <td className="py-2 px-2 text-right tabular-nums text-bear">{inr(stop)}</td>
                     <td className="py-2 px-2 text-right tabular-nums text-bear">{pct(p.stop_loss_pct, 2)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-bull">{inr(p.target_2)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-bull">{pct(p.target_2_pct, 2)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-bull">{inr(p.target_1)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-bull">{pct(p.target_1_pct, 2)}</td>
                     <td className={`py-2 px-2 text-right tabular-nums ${tight ? "text-bear font-semibold" : ""}`}>
                       {cushion == null ? "—" : pct(cushion, 2)}
                     </td>

@@ -1,6 +1,8 @@
 import fs from "fs";
 import { NextResponse } from "next/server";
 
+import { listRecentJobsForDesk } from "@/lib/desk-cli-server";
+import { readCustomTickers } from "@/lib/custom-tickers-server";
 import {
   countStaleSymbols,
   describeSyncGap,
@@ -14,7 +16,27 @@ import {
 
 export const dynamic = "force-dynamic";
 
-import { readCustomTickers } from "@/lib/custom-tickers-server";
+function latestSyncJobFailure(): {
+  job_id: string;
+  error: string;
+  completed_at: string | null;
+} | null {
+  const jobs = listRecentJobsForDesk("control-center", 20);
+  for (const job of jobs) {
+    if (job.action_id !== "eod-sync-now" && job.action_id !== "eod-pipeline") {
+      continue;
+    }
+    if (job.status !== "failed") continue;
+    const err = job.error?.trim();
+    if (!err) continue;
+    return {
+      job_id: job.job_id,
+      error: err,
+      completed_at: job.completed_at ?? null,
+    };
+  }
+  return null;
+}
 
 export async function GET() {
   try {
@@ -28,6 +50,7 @@ export async function GET() {
     const latestEod = readLatestEodReport();
     const behind = maxLastBar !== null && maxLastBar < expectedSession;
     const syncWarning = describeSyncGap(maxLastBar, expectedSession, latestEod?.sync);
+    const lastFailedSync = latestSyncJobFailure();
 
     return NextResponse.json({
       last_eod_run: lastEod,
@@ -38,6 +61,7 @@ export async function GET() {
       sync_warning: syncWarning,
       last_eod_sync: latestEod?.sync ?? null,
       last_eod_completed_at: latestEod?.completed_at ?? null,
+      last_failed_sync: lastFailedSync,
       needs_sync:
         behind ||
         !lastEod ||

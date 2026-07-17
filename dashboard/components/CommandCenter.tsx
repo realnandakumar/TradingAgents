@@ -30,9 +30,15 @@ const BULK_ACTIONS = [
 interface EodStatus {
   last_eod_run: string | null;
   today_ist: string;
+  expected_session?: string;
   max_last_bar?: string | null;
   prices_behind_today?: boolean;
   sync_warning?: string | null;
+  last_failed_sync?: {
+    job_id: string;
+    error: string;
+    completed_at: string | null;
+  } | null;
   needs_sync: boolean;
   symbol_count: number;
   stale_symbol_count: number;
@@ -118,9 +124,11 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
           ) {
             stopPolling();
             setRunning(false);
+            void refreshEodAndCustom();
             if (data.progress.status === "completed") {
               router.refresh();
-              void refreshEodAndCustom();
+            } else if (data.progress.error) {
+              setError(data.progress.error);
             }
           }
         } catch {
@@ -244,36 +252,60 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
           <div>
             <h2 className="text-sm font-medium">Price &amp; screener sync</h2>
             <p className="text-xs text-muted mt-1 max-w-xl">
-              Manual sync: refreshes all prices through the last trading day, then runs every
-              desk screener and daily job. Use <span className="font-medium">Sync now</span> after
-              the NSE close — EOD is not scheduled automatically.
+              Manual sync: refreshes all prices through the last completed NSE session, then
+              runs every desk screener and daily job. Use{" "}
+              <span className="font-medium">Sync now</span> after the NSE close — EOD is not
+              scheduled automatically. A full sync can take 10–30+ minutes; keep this page open
+              or watch the status bar.
             </p>
             {eodStatus ? (
-              <p className="text-xs mt-2">
-                <span className="text-muted">Last sync:</span>{" "}
-                <span className="font-mono">{eodStatus.last_eod_run ?? "never"}</span>
-                {eodStatus.max_last_bar ? (
-                  <>
-                    <span className="text-muted mx-2">·</span>
-                    <span className="text-muted">latest bar</span>{" "}
-                    <span className="font-mono">{eodStatus.max_last_bar}</span>
-                  </>
+              <div className="text-xs mt-2 space-y-1">
+                <p>
+                  <span className="text-muted">Last sync stamp:</span>{" "}
+                  <span className="font-mono">{eodStatus.last_eod_run ?? "never"}</span>
+                  {eodStatus.expected_session ? (
+                    <>
+                      <span className="text-muted mx-2">·</span>
+                      <span className="text-muted">need bars through</span>{" "}
+                      <span className="font-mono">{eodStatus.expected_session}</span>
+                    </>
+                  ) : null}
+                  {eodStatus.max_last_bar ? (
+                    <>
+                      <span className="text-muted mx-2">·</span>
+                      <span className="text-muted">latest bar</span>{" "}
+                      <span
+                        className={`font-mono ${
+                          eodStatus.prices_behind_today ? "text-bear" : ""
+                        }`}
+                      >
+                        {eodStatus.max_last_bar}
+                      </span>
+                    </>
+                  ) : null}
+                  <span className="text-muted mx-2">·</span>
+                  <span className="text-muted">{eodStatus.symbol_count} symbols</span>
+                  {eodStatus.stale_symbol_count > 0 ? (
+                    <span className="text-bear ml-2">
+                      {eodStatus.stale_symbol_count} stale
+                    </span>
+                  ) : null}
+                  {eodStatus.sync_warning ? (
+                    <span className="block text-bear mt-1 font-medium">
+                      {eodStatus.sync_warning}
+                    </span>
+                  ) : eodStatus.needs_sync ? (
+                    <span className="text-bear ml-2 font-medium">— sync recommended</span>
+                  ) : (
+                    <span className="text-bull ml-2">— up to date through last session</span>
+                  )}
+                </p>
+                {eodStatus.last_failed_sync && eodStatus.needs_sync ? (
+                  <p className="text-bear">
+                    Last Sync now failed: {eodStatus.last_failed_sync.error}
+                  </p>
                 ) : null}
-                <span className="text-muted mx-2">·</span>
-                <span className="text-muted">{eodStatus.symbol_count} symbols</span>
-                {eodStatus.stale_symbol_count > 0 ? (
-                  <span className="text-bear ml-2">
-                    {eodStatus.stale_symbol_count} stale
-                  </span>
-                ) : null}
-                {eodStatus.sync_warning ? (
-                  <span className="block text-bear mt-1 font-medium">{eodStatus.sync_warning}</span>
-                ) : eodStatus.needs_sync ? (
-                  <span className="text-bear ml-2 font-medium">— sync recommended</span>
-                ) : (
-                  <span className="text-bull ml-2">— up to date through last session</span>
-                )}
-              </p>
+              </div>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">

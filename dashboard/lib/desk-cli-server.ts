@@ -279,9 +279,25 @@ function sortByStartedDesc(rows: JobWithProgress[]): JobWithProgress[] {
 }
 
 /** No heartbeat for this long ⇒ treat as abandoned (crashed tab, killed process). */
-const STALE_RUNNING_MS = 30 * 60 * 1000;
-/** Running but no new output for this long ⇒ likely hung subprocess. */
-const STALE_SILENT_MS = 5 * 60 * 1000;
+const STALE_RUNNING_MS = 90 * 60 * 1000;
+/**
+ * Running but no progress touch for this long ⇒ likely hung.
+ * Keep this above the runner heartbeat interval (30s) with headroom for EOD sync,
+ * which can be quiet for minutes while Yahoo downloads are in flight.
+ */
+const STALE_SILENT_MS = 15 * 60 * 1000;
+/** Longer silence allowance for bulk price/screener pipelines. */
+const STALE_SILENT_LONG_MS = 45 * 60 * 1000;
+
+const LONG_RUNNING_ACTIONS = new Set([
+  "eod-sync-now",
+  "eod-pipeline",
+  "all-dailies",
+  "all-screeners",
+  "analyze-stale",
+  "screen",
+  "rs-screen",
+]);
 
 function jobLastTouchMs(progress: DeskCliJobProgress, job: DeskCliJob): number {
   const ts =
@@ -290,6 +306,10 @@ function jobLastTouchMs(progress: DeskCliJobProgress, job: DeskCliJob): number {
     job.started_at ??
     job.created_at;
   return ts ? new Date(ts).getTime() : 0;
+}
+
+function silentTimeoutMs(actionId: string): number {
+  return LONG_RUNNING_ACTIONS.has(actionId) ? STALE_SILENT_LONG_MS : STALE_SILENT_MS;
 }
 
 export function isStaleActiveJob(row: JobWithProgress): boolean {
@@ -301,11 +321,15 @@ export function isStaleActiveJob(row: JobWithProgress): boolean {
     return true;
   }
   const lastTouch = jobLastTouchMs(progress, job);
-  if (!lastTouch) return false;
+  if (!lastTouch || Number.isNaN(lastTouch)) return false;
 
   const silentFor = Date.now() - lastTouch;
+  // Clock skew / naive timestamps can make silentFor negative — never stale then.
+  if (silentFor < 0) return false;
   if (silentFor > STALE_RUNNING_MS) return true;
-  if (silentFor > STALE_SILENT_MS && progress.percent < 95) return true;
+  if (silentFor > silentTimeoutMs(job.action_id) && progress.percent < 95) {
+    return true;
+  }
   return false;
 }
 

@@ -37,6 +37,9 @@ export interface ChartZone {
   high: number;
   label: string;
   color?: string;
+  /** Optional active window; omitted zones intentionally span the loaded range. */
+  startTime?: ChartTime;
+  endTime?: ChartTime;
 }
 
 export interface ChartMarker {

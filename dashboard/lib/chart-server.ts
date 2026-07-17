@@ -5,21 +5,16 @@ import { spawn, spawnSync } from "child_process";
 
 import type {
   ChartBar,
-  ChartHLine,
   ChartLineSeries,
-  ChartMarker,
   ChartPayload,
   ChartRange,
   ChartTimeframe,
-  ChartZone,
   IntradayRange,
 } from "./chart-types";
 import {
   collectDeskOverlays,
   mergeDeskOverlays,
   normalizeChartTicker,
-  parseDeskFilter,
-  type DeskChartOverlay,
 } from "./chart-overlays";
 import { readWatchlist } from "@/lib/watchlist-server";
 
@@ -28,6 +23,10 @@ const TRADINGAGENTS_HOME =
 
 const CHART_ALLOW_YAHOO_FALLBACK =
   (process.env.CHART_ALLOW_YAHOO_FALLBACK ?? "false").toLowerCase() === "true";
+
+const STORE_BAR_CACHE_TTL_MS = 60_000;
+const storeBarCache = new Map<string, { expiresAt: number; bars: ChartBar[] }>();
+const warmingSymbols = new Map<string, number>();
 
 function repoRootFromDashboard(): string {
   return path.resolve(process.cwd(), "..");
@@ -47,6 +46,10 @@ function pythonExecutable(): string {
 
 /** Spawn background sync when cache is missing or stale. */
 export function ensureSymbolCached(ticker: string): void {
+  const now = Date.now();
+  const warmingUntil = warmingSymbols.get(ticker) ?? 0;
+  if (warmingUntil > now) return;
+  warmingSymbols.set(ticker, now + STORE_BAR_CACHE_TTL_MS);
   const cwd = repoRootFromDashboard();
   const pythonCmd = pythonExecutable();
   const child = spawn(pythonCmd, ["scripts/ensure_symbol_cached.py", ticker], {
@@ -151,6 +154,9 @@ function resolveCacheFile(ticker: string): string | null {
 
 /** SQLite-first read via Python (same path as screeners / backtests). */
 function readBarsFromStore(ticker: string): ChartBar[] | null {
+  const cached = storeBarCache.get(ticker);
+  if (cached && cached.expiresAt > Date.now()) return cached.bars;
+
   const cwd = repoRootFromDashboard();
   const script = path.join(cwd, "scripts", "chart_bars_json.py");
   if (!fs.existsSync(script)) return null;
@@ -167,9 +173,14 @@ function readBarsFromStore(ticker: string): ChartBar[] | null {
   try {
     const parsed = JSON.parse(result.stdout) as ChartBar[];
     if (!Array.isArray(parsed)) return null;
-    return parsed
+    const bars = parsed
       .filter((b) => b?.time && Number.isFinite(b.close))
       .sort((a, b) => barDateKey(a.time).localeCompare(barDateKey(b.time)));
+    storeBarCache.set(ticker, {
+      expiresAt: Date.now() + STORE_BAR_CACHE_TTL_MS,
+      bars,
+    });
+    return bars;
   } catch {
     return null;
   }

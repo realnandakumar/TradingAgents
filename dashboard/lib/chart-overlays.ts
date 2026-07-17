@@ -121,6 +121,7 @@ function swingPositionOverlay(
         high: gapHigh,
         label: `${out.deskLabel} gap`,
         color: out.color,
+        startTime: screenDate ?? undefined,
       });
     } else if (gapLow != null) {
       pushHline(out, "gap_low", gapLow, "gap low");
@@ -175,6 +176,7 @@ function managedDeskOverlay(
         high: zh,
         label: `${out.deskLabel} buy zone`,
         color: out.color,
+        startTime: pe.report_date ?? undefined,
       });
       pushHline(out, "zone_low", zl, "zone low");
       pushHline(out, "zone_high", zh, "zone high");
@@ -240,6 +242,8 @@ function chartPatternOverlay(norm: string, patternId?: string | null): DeskChart
       high: resistance,
       label: `${out.deskLabel} ${pick.pattern_name}`,
       color: out.color,
+      startTime: pick.pattern_window_start,
+      endTime: pick.pattern_window_end,
     });
   }
 

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BaselineSeries,
   CandlestickSeries,
   ColorType,
   LineStyle,
+  PriceScaleMode,
   createChart,
   createSeriesMarkers,
   HistogramSeries,
@@ -35,6 +36,17 @@ const THEME = {
 interface TradingChartProps {
   data: ChartPayload;
   height?: number;
+  logScale?: boolean;
+}
+
+interface InspectorValue {
+  time: ChartTime;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  changePct: number | null;
 }
 
 function isIntradayPayload(data: ChartPayload): boolean {
@@ -57,11 +69,11 @@ function barTimeKey(time: ChartTime): string {
   return String(time).slice(0, 10);
 }
 
-/** Bright = full color. Only pre-pattern history is dimmed; follow-through stays vivid. */
+/** Bright = full color only inside the selected pattern window. */
 function isBrightBar(time: ChartTime, highlight: ChartPatternHighlight | null): boolean {
   if (!highlight) return true;
   const key = barTimeKey(time);
-  return key >= highlight.windowStart;
+  return key >= highlight.windowStart && key <= highlight.windowEnd;
 }
 
 function candleColors(
@@ -83,11 +95,18 @@ function addZoneBands(
 ): ISeriesApi<"Baseline">[] {
   if (zones.length === 0 || bars.length === 0) return [];
 
-  const zoneData = bars.map((b) => ({ time: b.time as Time }));
   const series: ISeriesApi<"Baseline">[] = [];
 
   for (const zone of zones) {
     if (zone.high <= zone.low) continue;
+    const zoneData = bars
+      .filter((b) => {
+        const key = barTimeKey(b.time);
+        return (!zone.startTime || key >= barTimeKey(zone.startTime)) &&
+          (!zone.endTime || key <= barTimeKey(zone.endTime));
+      })
+      .map((b) => ({ time: b.time as Time }));
+    if (zoneData.length === 0) continue;
     const color = zone.color ?? "#5b8cff";
     const band = chart.addSeries(
       BaselineSeries,
@@ -113,9 +132,50 @@ function addZoneBands(
   return series;
 }
 
-export function TradingChart({ data, height = 520 }: TradingChartProps) {
+function lineSemantics(label: string): {
+  color?: string;
+  style: LineStyle;
+  width: 1 | 2;
+} {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("stop") || normalized.includes("invalid")) {
+    return { color: "#ff5470", style: LineStyle.Dashed, width: 2 };
+  }
+  if (
+    normalized.includes("target") ||
+    normalized.includes("t1") ||
+    normalized.includes("t2")
+  ) {
+    return { color: "#2ecc71", style: LineStyle.Dashed, width: 2 };
+  }
+  if (
+    normalized.includes("entry") ||
+    normalized.includes("trigger") ||
+    normalized.includes("fill")
+  ) {
+    return { color: "#5b8cff", style: LineStyle.Solid, width: 2 };
+  }
+  return { style: LineStyle.Dotted, width: 1 };
+}
+
+export function TradingChart({ data, height = 520, logScale = false }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const visibleRangeRef = useRef<ReturnType<IChartApi["timeScale"]> extends infer T
+    ? T extends { getVisibleLogicalRange(): infer R }
+      ? R
+      : never
+    : never>(null);
+  const [inspector, setInspector] = useState<InspectorValue | null>(null);
+
+  const downloadPng = () => {
+    const canvas = chartRef.current?.takeScreenshot();
+    if (!canvas) return;
+    const anchor = document.createElement("a");
+    anchor.href = canvas.toDataURL("image/png");
+    anchor.download = `${data.ticker.replace(/\.NS$/i, "")}-${data.timeframe}.png`;
+    anchor.click();
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -137,7 +197,10 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
         vertLines: { color: THEME.grid },
         horzLines: { color: THEME.grid },
       },
-      rightPriceScale: { borderColor: THEME.border },
+      rightPriceScale: {
+        borderColor: THEME.border,
+        mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+      },
       localization: localeOpts.localization,
       timeScale: {
         borderColor: THEME.border,
@@ -185,12 +248,18 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
 
     const priceLines: ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[] = [];
     for (const h of data.hlines) {
+      const semantics = lineSemantics(h.label);
       priceLines.push(
         candles.createPriceLine({
           price: h.price,
-          color: h.color,
-          lineWidth: 1,
-          lineStyle: h.style === "dashed" ? LineStyle.Dashed : LineStyle.Solid,
+          color: semantics.color ?? h.color,
+          lineWidth: semantics.width,
+          lineStyle:
+            h.style === "solid"
+              ? LineStyle.Solid
+              : h.style === "dashed"
+                ? LineStyle.Dashed
+                : semantics.style,
           axisLabelVisible: true,
           title: h.label,
         }),
@@ -258,7 +327,32 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
       }),
     );
 
-    chart.timeScale().fitContent();
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time) {
+        setInspector(null);
+        return;
+      }
+      const bar = data.bars.find((candidate) => String(candidate.time) === String(param.time));
+      if (!bar) {
+        setInspector(null);
+        return;
+      }
+      const previousIndex = data.bars.indexOf(bar) - 1;
+      const previousClose = previousIndex >= 0 ? data.bars[previousIndex]?.close : null;
+      setInspector({
+        ...bar,
+        changePct:
+          previousClose && previousClose !== 0
+            ? ((bar.close - previousClose) / previousClose) * 100
+            : null,
+      });
+    });
+
+    if (visibleRangeRef.current) {
+      chart.timeScale().setVisibleLogicalRange(visibleRangeRef.current);
+    } else {
+      chart.timeScale().fitContent();
+    }
     chart.timeScale().applyOptions({ rightOffset: 8 });
 
     const ro = new ResizeObserver(() => {
@@ -268,6 +362,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
     ro.observe(el);
 
     return () => {
+      visibleRangeRef.current = chart.timeScale().getVisibleLogicalRange();
       ro.disconnect();
       for (const pl of priceLines) candles.removePriceLine(pl);
       for (const zs of zoneSeries) chart.removeSeries(zs);
@@ -276,9 +371,15 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, height]);
+  }, [data, height, logScale]);
 
   const highlight = data.patternHighlight;
+  const nearbyLevels = inspector
+    ? data.hlines
+        .map((line) => ({ ...line, distance: Math.abs(line.price - inspector.close) }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 3)
+    : [];
 
   return (
     <div className="relative w-full rounded-xl border border-border overflow-hidden bg-surface">
@@ -300,7 +401,7 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
         </div>
       ) : null}
       {highlight ? (
-        <div className="absolute top-2 right-2 z-10 pointer-events-none">
+        <div className="absolute top-10 right-2 z-10 pointer-events-none">
           <span
             className="px-2.5 py-1 rounded border text-[10px] font-medium tracking-wide"
             style={{
@@ -311,6 +412,34 @@ export function TradingChart({ data, height = 520 }: TradingChartProps) {
           >
             {highlight.label}
           </span>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        onClick={downloadPng}
+        className="absolute right-2 top-2 z-20 rounded border border-border/80 bg-surface/85 px-2 py-1 text-[10px] text-muted shadow backdrop-blur hover:text-foreground"
+        title="Download chart as PNG"
+      >
+        PNG
+      </button>
+      {inspector ? (
+        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
+          <div className="inline-flex max-w-full flex-wrap gap-x-3 gap-y-0.5 rounded border border-border/80 bg-surface/90 px-2 py-1 text-[10px] font-mono shadow-lg backdrop-blur">
+            <span className="text-muted">{barTimeKey(inspector.time)}</span>
+            <span>O {inspector.open.toFixed(2)}</span>
+            <span>H {inspector.high.toFixed(2)}</span>
+            <span>L {inspector.low.toFixed(2)}</span>
+            <span>C {inspector.close.toFixed(2)}</span>
+            <span className={inspector.changePct != null && inspector.changePct >= 0 ? "text-bull" : "text-bear"}>
+              {inspector.changePct == null ? "—" : `${inspector.changePct >= 0 ? "+" : ""}${inspector.changePct.toFixed(2)}%`}
+            </span>
+            <span className="text-muted">V {inspector.volume.toLocaleString("en-IN")}</span>
+            {nearbyLevels.map((level) => (
+              <span key={level.id} style={{ color: lineSemantics(level.label).color ?? level.color }}>
+                {level.label} {level.price.toFixed(2)}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
       <div ref={containerRef} className="w-full" style={{ height }} />

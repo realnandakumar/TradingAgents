@@ -28,10 +28,21 @@ def job_path_for_id(job_id: str) -> Path:
     return jobs_dir() / f"{job_id}.json"
 
 
+def _utc_now_iso() -> str:
+    """UTC timestamp with Z suffix so dashboard Date parsing stays consistent."""
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 class DeskCliProgressWriter:
     """Write CLI stdout/stderr tail to a JSON file for dashboard polling."""
 
     MAX_LINES = 200
+    HEARTBEAT_SECONDS = 30
 
     def __init__(self, path: Path, job: dict):
         self.path = path
@@ -44,35 +55,65 @@ class DeskCliProgressWriter:
         self.lines: List[str] = []
         self.error: Optional[str] = None
         self.exit_code: Optional[int] = None
-        self.started_at = datetime.datetime.now().isoformat()
+        self.started_at = _utc_now_iso()
         self.updated_at = self.started_at
         self.completed_at: Optional[str] = None
         self._line_count = 0
+        self._lock = threading.Lock()
+        self._stop_heartbeat = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+
+    def start_heartbeat(self) -> None:
+        if self._heartbeat_thread is not None:
+            return
+
+        def _beat() -> None:
+            while not self._stop_heartbeat.wait(self.HEARTBEAT_SECONDS):
+                with self._lock:
+                    if self.status != "running":
+                        return
+                    self._flush_unlocked()
+
+        self._heartbeat_thread = threading.Thread(target=_beat, daemon=True)
+        self._heartbeat_thread.start()
+
+    def stop_heartbeat(self) -> None:
+        self._stop_heartbeat.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2)
+            self._heartbeat_thread = None
 
     def append_line(self, line: str, stream: str = "out") -> None:
         prefix = "[err] " if stream == "err" else ""
-        self.lines.append(f"{prefix}{line.rstrip()}")
-        if len(self.lines) > self.MAX_LINES:
-            self.lines = self.lines[-self.MAX_LINES :]
-        self._line_count += 1
-        # Indeterminate progress while running
-        self.percent = min(90, 5 + self._line_count // 2)
-        self._flush()
+        with self._lock:
+            self.lines.append(f"{prefix}{line.rstrip()}")
+            if len(self.lines) > self.MAX_LINES:
+                self.lines = self.lines[-self.MAX_LINES :]
+            self._line_count += 1
+            # Indeterminate progress while running
+            self.percent = min(90, 5 + self._line_count // 2)
+            self._flush_unlocked()
 
     def finish(self, exit_code: int, error: Optional[str] = None) -> None:
-        self.exit_code = exit_code
-        self.completed_at = datetime.datetime.now().isoformat()
-        if exit_code == 0:
-            self.status = "completed"
-            self.percent = 100
-        else:
-            self.status = "failed"
-            self.percent = 100
-            self.error = error or f"Command exited with code {exit_code}"
-        self._flush()
+        self.stop_heartbeat()
+        with self._lock:
+            self.exit_code = exit_code
+            self.completed_at = _utc_now_iso()
+            if exit_code == 0:
+                self.status = "completed"
+                self.percent = 100
+            else:
+                self.status = "failed"
+                self.percent = 100
+                self.error = error or f"Command exited with code {exit_code}"
+            self._flush_unlocked()
 
     def _flush(self) -> None:
-        self.updated_at = datetime.datetime.now().isoformat()
+        with self._lock:
+            self._flush_unlocked()
+
+    def _flush_unlocked(self) -> None:
+        self.updated_at = _utc_now_iso()
         payload: Dict[str, Any] = {
             "jobId": self.job_id,
             "deskId": self.desk_id,
@@ -121,17 +162,20 @@ def run_desk_cli_job(job: dict, progress_path: Path, repo_root: Optional[Path] =
 
     writer = DeskCliProgressWriter(progress_path, job)
     writer._flush()
+    writer.start_heartbeat()
 
     _update_job_file(job_path, status="running", started_at=writer.started_at)
 
     if script_rel:
         script_path = root / script_rel
-        cmd = [sys.executable, str(script_path), *cli_args]
+        # -u: unbuffered child stdout so long downloads still stream to progress
+        cmd = [sys.executable, "-u", str(script_path), *cli_args]
     else:
-        cmd = [sys.executable, "-m", "cli.main", *cli_args]
+        cmd = [sys.executable, "-u", "-m", "cli.main", *cli_args]
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
+    env["PYTHONUNBUFFERED"] = "1"
 
     try:
         proc = subprocess.Popen(
@@ -143,6 +187,7 @@ def run_desk_cli_job(job: dict, progress_path: Path, repo_root: Optional[Path] =
             text=True,
             encoding="utf-8",
             errors="replace",
+            bufsize=1,
         )
     except Exception as exc:  # noqa: BLE001
         writer.finish(1, str(exc))

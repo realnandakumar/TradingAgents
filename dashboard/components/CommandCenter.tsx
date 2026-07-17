@@ -9,11 +9,6 @@ import { notifyDeskJobStarted } from "@/lib/desk-cli-events";
 import { useDeskJob } from "@/lib/desk-job-context";
 import type { DeskCliJob, DeskCliJobProgress } from "@/lib/desk-cli-server";
 import type { PortfolioDeskSummary } from "@/lib/command-center-server";
-import {
-  type ReplacementApprovalRequest,
-  useReplacementApproval,
-} from "@/lib/useReplacementApproval";
-import { ReplacementApprovalModal } from "@/components/ReplacementApprovalModal";
 
 interface Props {
   portfolioDesks: PortfolioDeskSummary[];
@@ -28,13 +23,16 @@ interface ActiveJob {
 
 const BULK_ACTIONS = [
   { actionId: "all-dailies", label: "Run all dailies", primary: false },
-  { actionId: "rs-screen", label: "RS screen", primary: true },
-  { actionId: "rs-paper", label: "RS paper refresh", primary: false },
+  { actionId: "rs-screen", label: "RS screen + MA + PM", primary: true },
+  { actionId: "rs-desk-daily", label: "RS Desk daily", primary: false },
 ] as const;
 
 interface EodStatus {
   last_eod_run: string | null;
   today_ist: string;
+  max_last_bar?: string | null;
+  prices_behind_today?: boolean;
+  sync_warning?: string | null;
   needs_sync: boolean;
   symbol_count: number;
   stale_symbol_count: number;
@@ -44,7 +42,6 @@ interface EodStatus {
 const TECH_ACTIONS: { actionId: string; label: string; primary?: boolean }[] = [
   { actionId: "analyze-stale", label: "Analyze stale" },
   { actionId: "process", label: "Process zones" },
-  { actionId: "process-apply", label: "Apply replacements" },
   { actionId: "daily", label: "Daily run", primary: true },
   { actionId: "report", label: "Report" },
 ];
@@ -190,12 +187,7 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
     }
   }, [progress?.lines]);
 
-  const startDeskJob = async (
-    deskId: string,
-    actionId: string,
-    label: string,
-    extra?: { proposalIds?: string[]; processDate?: string },
-  ) => {
+  const startDeskJob = async (deskId: string, actionId: string, label: string) => {
     setError(null);
     setRunning(true);
     setActiveJob({ deskId, actionId, label });
@@ -210,8 +202,6 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
         body: JSON.stringify({
           deskId,
           actionId,
-          proposalIds: extra?.proposalIds,
-          processDate: extra?.processDate,
         }),
       });
       const data = await res.json();
@@ -230,40 +220,8 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
     }
   };
 
-  const replacement = useReplacementApproval({
-    onApprove: async (request: ReplacementApprovalRequest) => {
-      const label = getDeskActionLabel(request.deskId, request.actionId);
-      await startDeskJob(request.deskId, request.actionId, label, {
-        proposalIds: request.proposalIds,
-        processDate: request.processDate,
-      });
-    },
-    onEmpty: (_deskId, actionId) => {
-      setError(
-        actionId === "process-apply"
-          ? "No queued portfolio replacements from the latest Tech Desk process run."
-          : "No pending portfolio replacements.",
-      );
-    },
-    onError: (message) => setError(message),
-  });
-
   const runAction = async (deskId: string, actionId: string, label: string) => {
-    if (running || isJobRunning || replacement.loading) return;
-
-    if (replacement.isReplacementAction(actionId)) {
-      const action = getDeskConfig(deskId)?.actions.find((a) => a.id === actionId);
-      const handled = await replacement.openReplacementModal({
-        deskId,
-        actionId,
-        title: action?.label ?? label,
-        description:
-          action?.description ??
-          "Select replacements to approve. This may foreclose open positions.",
-      });
-      if (handled) return;
-    }
-
+    if (running || isJobRunning) return;
     await startDeskJob(deskId, actionId, label);
   };
 
@@ -286,13 +244,21 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
           <div>
             <h2 className="text-sm font-medium">Price &amp; screener sync</h2>
             <p className="text-xs text-muted mt-1 max-w-xl">
-              Refreshes all prices through the last trading day, then runs every desk screener
-              and daily job. Scheduled at 4:10 PM IST; catch-up runs at logon if the PC was off.
+              Manual sync: refreshes all prices through the last trading day, then runs every
+              desk screener and daily job. Use <span className="font-medium">Sync now</span> after
+              the NSE close — EOD is not scheduled automatically.
             </p>
             {eodStatus ? (
               <p className="text-xs mt-2">
                 <span className="text-muted">Last sync:</span>{" "}
                 <span className="font-mono">{eodStatus.last_eod_run ?? "never"}</span>
+                {eodStatus.max_last_bar ? (
+                  <>
+                    <span className="text-muted mx-2">·</span>
+                    <span className="text-muted">latest bar</span>{" "}
+                    <span className="font-mono">{eodStatus.max_last_bar}</span>
+                  </>
+                ) : null}
                 <span className="text-muted mx-2">·</span>
                 <span className="text-muted">{eodStatus.symbol_count} symbols</span>
                 {eodStatus.stale_symbol_count > 0 ? (
@@ -300,10 +266,12 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
                     {eodStatus.stale_symbol_count} stale
                   </span>
                 ) : null}
-                {eodStatus.needs_sync ? (
+                {eodStatus.sync_warning ? (
+                  <span className="block text-bear mt-1 font-medium">{eodStatus.sync_warning}</span>
+                ) : eodStatus.needs_sync ? (
                   <span className="text-bear ml-2 font-medium">— sync recommended</span>
                 ) : (
-                  <span className="text-bull ml-2">— up to date today</span>
+                  <span className="text-bull ml-2">— up to date through last session</span>
                 )}
               </p>
             ) : null}
@@ -472,18 +440,6 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
                         Daily
                       </button>
                     ) : null}
-                    {getDeskConfig(desk.id)?.actions.some((a) => a.id === "approve") ? (
-                      <button
-                        type="button"
-                        disabled={running || isJobRunning || replacement.loading}
-                        onClick={() =>
-                          runAction(desk.id, "approve", `${desk.label} approve`)
-                        }
-                        className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-xs font-medium disabled:opacity-50 hover:bg-surface-2/80 transition-colors"
-                      >
-                        Approve
-                      </button>
-                    ) : null}
                   </div>
                 </div>
               ))}
@@ -511,7 +467,7 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
                 <button
                   key={item.actionId}
                   type="button"
-                  disabled={running || isJobRunning || replacement.loading}
+                  disabled={running || isJobRunning}
                   onClick={() =>
                     runAction("tech-desk", item.actionId, item.label)
                   }
@@ -645,20 +601,6 @@ export function CommandCenter({ portfolioDesks, recentJobs }: Props) {
           )}
         </aside>
       </div>
-
-      <ReplacementApprovalModal
-        open={replacement.open}
-        title={replacement.modalTitle}
-        description={replacement.modalDescription}
-        items={replacement.items}
-        loading={replacement.loading}
-        submitting={replacement.submitting}
-        selectedIds={replacement.selectedIds}
-        onToggle={replacement.toggleId}
-        onToggleAll={replacement.toggleAll}
-        onApprove={replacement.approveSelected}
-        onCancel={replacement.closeModal}
-      />
     </div>
   );
 }

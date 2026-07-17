@@ -11,15 +11,20 @@ def compute_position_size(
     max_positions: int,
     entry_price: float,
 ) -> dict:
-    """Equal-weight slot sizing with whole-share rounding.
+    """Equal-weight slot sizing with whole shares that never exceed the slot.
 
-    ``alloc_per_slot = desk_capital / max_positions``
-    ``shares = max(1, round_half_up(alloc_per_slot / entry_price))``
+    ``alloc_per_slot = desk_capital / max_positions`` (₹10k when 2L / 20)
+    ``shares = floor(alloc / entry_price)`` — strict: notional ≤ alloc.
+    Returns ``shares=0`` when the stock cannot fit in one slot (price > alloc).
     """
     if entry_price <= 0:
         return {"shares": 0, "alloc": 0.0, "notional": 0.0}
     alloc = desk_capital / max(max_positions, 1)
-    shares = max(1, math.floor(alloc / entry_price + 0.5))
+    if entry_price > alloc:
+        return {"shares": 0, "alloc": round(alloc, 2), "notional": 0.0}
+    shares = int(math.floor(alloc / entry_price))
+    if shares < 1:
+        return {"shares": 0, "alloc": round(alloc, 2), "notional": 0.0}
     notional = round(shares * entry_price, 2)
     return {"shares": shares, "alloc": round(alloc, 2), "notional": notional}
 

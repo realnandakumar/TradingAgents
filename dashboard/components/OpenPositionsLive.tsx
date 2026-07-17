@@ -48,7 +48,6 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
               {deskOpenMetaHeaders().map((h) => (
                 <th key={h} className="text-right font-medium py-2 pr-3">{h}</th>
               ))}
-              <th className="text-right font-medium py-2 pr-3">Entry ₹</th>
               <th className="text-right font-medium py-2 pr-3">Stop / Target</th>
               <th className="text-left font-medium py-2 pr-3">Ordered</th>
               <th className="text-left font-medium py-2 pr-3">Executes</th>
@@ -65,7 +64,6 @@ export function OpenPositionsLive({ positions }: { positions: Position[] }) {
                 <td className="py-2 pr-3 font-medium">{shortSymbol(p.ticker)}</td>
                 <td className="py-2 pr-3"><RatingBadge rating={p.rating} /></td>
                 <DeskOpenMetaCells p={{ ...p, screen_date: p.entry_date }} />
-                <td className="py-2 pr-3 text-right tabular-nums text-muted whitespace-nowrap">{inr(p.entry_price)}</td>
                 <td className="py-2 pr-3 text-right text-xs whitespace-nowrap">
                   {p.stoploss != null ? (
                     <>

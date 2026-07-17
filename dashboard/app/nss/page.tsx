@@ -20,6 +20,14 @@ export default function NssDeskPage() {
       positions={book?.positions ?? []}
       hasBook={Boolean(book)}
       blotter={<NssBlotter positions={book?.positions ?? []} />}
+      extraBadges={["T1 Full Exit", "Max 4 / Sector"]}
+      headerExtra={
+        <div>
+          NSS exits 100% at Target 1. New entries capped at 4 open names per sector (40-day max, SuperTrend stop).
+          BO/VOL ✓ = breakout and volume reference met (informational, not required for entry).
+        </div>
+      }
+      emptyHint="Use Daily run in Desk actions above, or run all dailies from Command center."
     />
   );
 }

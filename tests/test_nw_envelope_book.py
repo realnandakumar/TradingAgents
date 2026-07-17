@@ -114,3 +114,77 @@ def test_save_picks_only_buy(tmp_path):
     ])
     assert len(saved) == 2
     assert book.open_count() == 2
+    assert len(book.sell_signals) == 1
+    assert book.sell_signals[0]["ticker"] == "BBB.NS"
+
+
+def test_sector_cap_blocks_fifth(tmp_path):
+    cfg = {
+        "nwe_book_path": str(tmp_path / "positions.json"),
+        "nwe_max_positions": 20,
+        "nwe_max_per_sector": 4,
+        "desk_capital": 100_000.0,
+    }
+    book = NwEnvelopePositionBook(cfg)
+    for i in range(4):
+        pick = _make_pick(f"T{i}.NS", "BUY")
+        pick.sector = "IT"
+        pick.signal.sector = "IT"
+        assert book.open_position(pick, "2026-07-08") is not None
+    fifth = _make_pick("T4.NS", "BUY")
+    fifth.sector = "IT"
+    fifth.signal.sector = "IT"
+    assert book.open_position(fifth, "2026-07-08") is None
+    assert book.open_count() == 4
+
+
+def test_close_on_sell_signal(tmp_path):
+    cfg = {
+        "nwe_book_path": str(tmp_path / "positions.json"),
+        "nwe_max_positions": 10,
+        "desk_capital": 100_000.0,
+    }
+    book = NwEnvelopePositionBook(cfg)
+    assert book.open_position(_make_pick("TEST.NS", "BUY"), "2026-07-01") is not None
+    sell = _make_pick("TEST.NS", "SELL")
+    sell.signal.close = 110.0
+    events = book.close_on_sell_signals([sell], as_of="2026-07-08")
+    assert len(events) == 1
+    assert events[0]["reason"] == "signal_sell"
+    assert book.open_count() == 0
+
+
+def test_close_legacy_runners(tmp_path, monkeypatch):
+    cfg = {
+        "nwe_book_path": str(tmp_path / "positions.json"),
+        "nwe_max_positions": 10,
+        "desk_capital": 100_000.0,
+    }
+    book = NwEnvelopePositionBook(cfg)
+    pos = book.open_position(_make_pick("RUN.NS", "BUY"), "2026-07-01")
+    assert pos is not None
+    pos["remaining_pct"] = 25.0
+    pos["t2_partial_done"] = True
+    pos["phase"] = "runner"
+    book._save()
+    monkeypatch.setattr(book, "latest_price", lambda t: 105.0)
+    events = book.close_legacy_runners(as_of="2026-07-08")
+    assert len(events) == 1
+    assert events[0]["reason"] == "legacy_runner_close"
+    assert book.open_count() == 0
+
+
+def test_reset_portfolio_via_manager(tmp_path):
+    from tradingagents.nw_envelope.manager import NwEnvelopePaperTradeManager
+
+    cfg = {
+        "nwe_book_path": str(tmp_path / "positions.json"),
+        "nwe_pending_path": str(tmp_path / "pending.json"),
+        "nwe_daily_dir": str(tmp_path / "daily"),
+        "nwe_max_positions": 10,
+    }
+    mgr = NwEnvelopePaperTradeManager(cfg)
+    mgr.book.open_position(_make_pick(), "2026-07-08")
+    assert mgr.book.open_count() == 1
+    mgr.reset_portfolio()
+    assert mgr.book.open_count() == 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -106,9 +107,33 @@ def screen_supertrend_rsi(
 
     picks.sort(key=lambda p: p.score, reverse=True)
     top_n = int(config.get("strsi_top_n", 20))
+    max_per_sector = int(config.get("strsi_max_per_sector", 4))
     total = len(picks)
-    picks = picks[:top_n]
-    _log(f"{total} signal(s) after filters; showing top {len(picks)}")
+
+    # Keep all SELL signals (used to close open longs); sector-cap BUY shortlist.
+    sells = [p for p in picks if p.direction == "SELL"]
+    buys = [p for p in picks if p.direction == "BUY"]
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped_buys: List[SuperTrendRSIPick] = []
+        for pick in buys:
+            sector = (pick.signal.sector if pick.signal else None) or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped_buys.append(pick)
+            sector_counts[sector] += 1
+            if len(capped_buys) >= top_n:
+                break
+        buys = capped_buys
+    else:
+        buys = buys[:top_n]
+
+    picks = buys + sells
+    picks.sort(key=lambda p: p.score, reverse=True)
+    _log(
+        f"{total} signal(s) after filters; "
+        f"{len(buys)} BUY (max {max_per_sector}/sector) + {len(sells)} SELL"
+    )
     return picks
 
 

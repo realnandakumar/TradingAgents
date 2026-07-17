@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
@@ -68,7 +69,7 @@ def screen_pattern_forecast(
     metadata = load_universe_metadata(
         csv_path=config.get("screen_universe_csv"),
         cache_dir=config.get("data_cache_dir"),
-        allow_download=False,
+        allow_download=True,
     )
 
     period = config.get("pattern_forecast_history_period", "2y")
@@ -93,6 +94,7 @@ def screen_pattern_forecast(
             return []
 
     top_n = int(config.get("pattern_forecast_top_n", 10))
+    max_per_sector = int(config.get("pattern_forecast_max_per_sector", 4))
     directions = str(config.get("pattern_forecast_directions", "UP")).upper()
     allow_up = "UP" in directions
     allow_down = "DOWN" in directions
@@ -130,11 +132,31 @@ def screen_pattern_forecast(
         picks.sort(key=lambda p: p.composite_score, reverse=True)
     else:
         picks.sort(key=lambda p: p.signal.correlation, reverse=True)
+
+    ups = [p for p in picks if p.direction == "UP"]
+    downs = [p for p in picks if p.direction == "DOWN"]
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped_ups: List[PatternForecastPick] = []
+        for pick in ups:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped_ups.append(pick)
+            sector_counts[sector] += 1
+            if len(capped_ups) >= top_n:
+                break
+        ups = capped_ups
+    else:
+        ups = ups[:top_n]
+
+    result = ups + downs[:top_n]
     _log(
-        f"{STRATEGY_NAME} v1.1: {len(picks)} candidate(s) "
+        f"{STRATEGY_NAME} v1.1: {len(ups)} UP (max {max_per_sector}/sector) "
+        f"+ {len([p for p in result if p.direction == 'DOWN'])} DOWN "
         f"(checked {n_checked}, rejected {n_reject})"
     )
-    return picks[:top_n]
+    return result
 
 
 __all__ = ["PatternForecastPick", "screen_pattern_forecast", "STRATEGY_ID", "STRATEGY_NAME"]

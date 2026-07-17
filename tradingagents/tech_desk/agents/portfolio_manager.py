@@ -121,7 +121,7 @@ def run_tech_desk_batch_pm(
     """Pick best setups from a batch of saved tech-analyze reports."""
     prices = prices or {}
     min_conf = int(config.get("tech_desk_min_confidence", 60))
-    max_pos = int(config.get("tech_desk_max_positions", 10))
+    max_pos = int(config.get("tech_desk_max_positions", 20))
     default_hold = int(config.get("tech_desk_holding_days", 20))
 
     structured_llm = bind_structured(llm, TechDeskBatchDecision, "Tech Desk PM")

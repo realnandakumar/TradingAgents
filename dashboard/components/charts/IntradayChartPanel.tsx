@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { Time } from "lightweight-charts";
 
 import { TradingChart } from "@/components/charts/TradingChart";
 import { formatChartCrosshairTime } from "@/lib/chart-locale";
@@ -120,7 +121,7 @@ export function IntradayChartPanel({
                 {data.meta.barCount} bars · last{" "}
                 {data.meta.last
                   ? typeof data.bars[data.bars.length - 1]?.time === "number"
-                    ? formatChartCrosshairTime(data.bars[data.bars.length - 1].time, true)
+                    ? formatChartCrosshairTime(data.bars[data.bars.length - 1].time as Time, true)
                     : data.meta.last.slice(0, 10)
                   : "—"}{" "}
                 IST

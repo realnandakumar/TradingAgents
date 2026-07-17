@@ -14,7 +14,13 @@ export default async function ScreensPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Screen history</h1>
         <p className="text-muted text-sm">
-          Each run: high-RS NSE stocks ranked by technical signals, then deep-analyzed by the AI.
+          RS + pattern shortlist → Market Analyst on top 10 (shared{" "}
+          <code className="text-[11px]">tech_reports/</code>) → RS Desk PM into a separate book.
+          See positions on{" "}
+          <a href="/positions" className="text-accent hover:underline">
+            RS Desk
+          </a>
+          . Tech Desk keeps its own watchlist book.
         </p>
       </div>
 
@@ -28,6 +34,7 @@ export default async function ScreensPage() {
       ) : (
         screens.map((s) => {
           const opened = s.data.opened?.length ?? 0;
+          const waits = s.data.waits?.length ?? 0;
           return (
             <section key={s.id} className="card p-5">
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -35,7 +42,7 @@ export default async function ScreensPage() {
                   {s.data.trade_date}
                   <span className="text-muted font-normal text-sm">
                     {" "}
-                    · {s.data.candidates.length} picks · {opened} paper-traded
+                    · {s.data.candidates.length} picks · {opened} opened · {waits} waits
                   </span>
                 </h2>
                 <span className="text-muted text-xs">{timeAgo(s.created_at)}</span>

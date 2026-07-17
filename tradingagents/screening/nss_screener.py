@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -10,7 +11,6 @@ from tradingagents.screening.nss_pipeline import NSSSnapshot, StageResult, evalu
 from tradingagents.screening.prices import download_history
 from tradingagents.screening.swing_screener import (
     _CRORE,
-    _avg_daily_traded_value_inr,
     _fetch_market_caps,
 )
 from tradingagents.screening.universe import load_universe, load_universe_metadata
@@ -43,6 +43,8 @@ class NSSPick:
     risk_pct: float = 0.0
     market_cap_cr: Optional[float] = None
     avg_traded_value_cr: Optional[float] = None
+    breakout_ok: bool = False
+    volume_ok: bool = False
     stages: Dict[str, StageResult] = field(default_factory=dict)
 
     def stage_summary(self) -> str:
@@ -78,7 +80,6 @@ def screen_nss(
 
     min_cap_inr = float(config.get("nss_min_market_cap_cr", 5000.0)) * _CRORE
     min_traded_inr = float(config.get("nss_min_avg_traded_value_cr", 10.0)) * _CRORE
-    vol_long = int(config.get("nss_volume_lookback", 20))
 
     technical_hits: List[tuple[str, NSSSnapshot]] = []
     for sym in universe:
@@ -131,6 +132,8 @@ def screen_nss(
                 risk_pct=snap.risk_pct,
                 market_cap_cr=round(cap / _CRORE, 1),
                 avg_traded_value_cr=round(snap.avg_traded_value_inr / _CRORE, 2),
+                breakout_ok=snap.breakout_ok,
+                volume_ok=snap.volume_ok,
                 stages=snap.stages,
             )
         )
@@ -138,6 +141,23 @@ def screen_nss(
     picks.sort(key=lambda p: p.composite_score, reverse=True)
     top_n = int(config.get("nss_top_n", 20))
     total = len(picks)
-    picks = picks[:top_n]
-    _log(f"{total} NSS candidate(s) after market-cap filter; showing top {len(picks)}")
+    max_per_sector = int(config.get("nss_max_per_sector", 4))
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped: List[NSSPick] = []
+        for pick in picks:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped.append(pick)
+            sector_counts[sector] += 1
+            if len(capped) >= top_n:
+                break
+        picks = capped
+    else:
+        picks = picks[:top_n]
+    _log(
+        f"{total} NSS candidate(s) after market-cap filter; "
+        f"showing top {len(picks)} with max {max_per_sector} per sector"
+    )
     return picks

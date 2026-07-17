@@ -14,6 +14,7 @@ from tradingagents.gap_fill import run_gap_fill_daily
 from tradingagents.momentum import run_momentum_daily
 from tradingagents.nss import run_nss_daily
 from tradingagents.dataflows.ohlcv_store import (
+    expected_completed_session,
     get_manifest_eod_status,
     manifest_eod_ran_today,
     set_manifest_eod_run,
@@ -36,6 +37,7 @@ from tradingagents.screening.universe import load_universe
 from tradingagents.supertrend_rsi import run_supertrend_rsi_daily
 from tradingagents.swing import run_swing_daily
 from tradingagents.tech_desk import run_tech_desk_daily
+from tradingagents.rs_desk import run_rs_desk_daily
 from tradingagents.trama import run_trama_daily
 
 SHARED_PERIOD = "2y"
@@ -154,6 +156,7 @@ def main() -> None:
             symbols,
             mode="incremental",
             cache_dir=cache_dir,
+            require_through=expected_completed_session(),
         )
         print(
             f"  synced={sync_report.synced} skipped={sync_report.skipped} "
@@ -204,6 +207,7 @@ def main() -> None:
             "nw_envelope": run_nw_envelope_daily(config, price_data=price_data),
             "pattern_forecast": run_pattern_forecast_daily(config, price_data=price_data),
             "gap_fill": run_gap_fill_daily(config, price_data=price_data),
+            "rs_desk": run_rs_desk_daily(config),
             "tech_desk": run_tech_desk_daily(config),
         }
         for name, rep in daily_reports.items():

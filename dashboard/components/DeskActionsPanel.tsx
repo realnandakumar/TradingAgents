@@ -3,15 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { ReplacementApprovalModal } from "@/components/ReplacementApprovalModal";
 import { getDeskConfig, type DeskAction } from "@/lib/desk-cli-config";
 import { notifyDeskJobStarted } from "@/lib/desk-cli-events";
 import { useDeskJob } from "@/lib/desk-job-context";
 import type { DeskCliJobProgress } from "@/lib/desk-cli-server";
-import {
-  type ReplacementApprovalRequest,
-  useReplacementApproval,
-} from "@/lib/useReplacementApproval";
 
 interface Props {
   deskId: string;
@@ -68,10 +63,7 @@ export function DeskActionsPanel({ deskId }: Props) {
   );
 
   const startDeskJob = useCallback(
-    async (
-      action: DeskAction,
-      extra?: { proposalIds?: string[]; processDate?: string },
-    ) => {
+    async (action: DeskAction) => {
       setError(null);
       setRunning(true);
       setActiveAction(action);
@@ -87,8 +79,6 @@ export function DeskActionsPanel({ deskId }: Props) {
             deskId,
             actionId: action.id,
             ticker: action.needsTicker ? ticker.trim() : undefined,
-            proposalIds: extra?.proposalIds,
-            processDate: extra?.processDate,
           }),
         });
         const data = await res.json();
@@ -109,21 +99,6 @@ export function DeskActionsPanel({ deskId }: Props) {
     [deskId, pollJob, ticker],
   );
 
-  const replacement = useReplacementApproval({
-    onApprove: async (request: ReplacementApprovalRequest) => {
-      const action = config?.actions.find((a) => a.id === request.actionId);
-      if (!action) throw new Error("Unknown replacement action");
-      await startDeskJob(action, {
-        proposalIds: request.proposalIds,
-        processDate: request.processDate,
-      });
-    },
-    onEmpty: () => {
-      setError("No pending portfolio replacements.");
-    },
-    onError: (message) => setError(message),
-  });
-
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   useEffect(() => {
@@ -137,21 +112,9 @@ export function DeskActionsPanel({ deskId }: Props) {
       setError("Enter a ticker for this action");
       return;
     }
-    if (isJobRunning || running || replacement.loading) {
+    if (isJobRunning || running) {
       setError("Another job is already running — check the status bar.");
       return;
-    }
-
-    if (replacement.isReplacementAction(action.id)) {
-      const handled = await replacement.openReplacementModal({
-        deskId,
-        actionId: action.id,
-        title: action.label,
-        description:
-          action.description ??
-          "Select replacements to approve. This may foreclose open positions.",
-      });
-      if (handled) return;
     }
 
     await startDeskJob(action);
@@ -200,7 +163,7 @@ export function DeskActionsPanel({ deskId }: Props) {
                 key={action.id}
                 type="button"
                 onClick={() => runAction(action)}
-                disabled={running || isJobRunning || replacement.loading}
+                disabled={running || isJobRunning}
                 title={action.description}
                 className={
                   isPrimary
@@ -277,20 +240,6 @@ export function DeskActionsPanel({ deskId }: Props) {
           </div>
         )}
       </section>
-
-      <ReplacementApprovalModal
-        open={replacement.open}
-        title={replacement.modalTitle}
-        description={replacement.modalDescription}
-        items={replacement.items}
-        loading={replacement.loading}
-        submitting={replacement.submitting}
-        selectedIds={replacement.selectedIds}
-        onToggle={replacement.toggleId}
-        onToggleAll={replacement.toggleAll}
-        onApprove={replacement.approveSelected}
-        onCancel={replacement.closeModal}
-      />
     </>
   );
 }

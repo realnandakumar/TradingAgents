@@ -52,10 +52,11 @@ class TechDeskPositionBook:
         self.dismissed_path = Path(dismissed).expanduser()
         self.dismissed_path.parent.mkdir(parents=True, exist_ok=True)
         self.holding_days = int(cfg.get("tech_desk_holding_days", 20))
-        self.max_positions = int(cfg.get("tech_desk_max_positions", 10))
+        self.max_positions = int(cfg.get("tech_desk_max_positions", 20))
         self.min_confidence = int(cfg.get("tech_desk_min_confidence", 60))
-        self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
+        self.desk_capital = float(cfg.get("desk_capital", 200_000.0))
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
+        self.strategy_name = str(cfg.get("tech_desk_strategy_name") or STRATEGY_NAME)
         self._state = self._load()
         self._migrate_positions()
 
@@ -89,10 +90,10 @@ class TechDeskPositionBook:
                 return json.loads(self.path.read_text(encoding="utf-8"))
             except Exception as e:  # noqa: BLE001
                 logger.warning("Could not read Tech Desk book (%s); starting fresh", e)
-        return {"strategy": STRATEGY_NAME, "positions": []}
+        return {"strategy": self.strategy_name, "positions": []}
 
     def _save(self) -> None:
-        self._state["strategy"] = STRATEGY_NAME
+        self._state["strategy"] = self.strategy_name
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
@@ -289,12 +290,15 @@ class TechDeskPositionBook:
             return None
 
         sizing = compute_position_size(self.desk_capital, self.max_positions, entry_price)
+        if int(sizing["shares"] or 0) < 1:
+            logger.warning("Skip %s — cannot fit in INR %.0f slot at entry %.2f", plan.ticker, sizing["alloc"], entry_price)
+            return None
         stop_pct = round(-100.0 * (entry_price - plan.stop_loss) / entry_price, 2)
         target_1_pct = round(100.0 * (plan.target_1 - entry_price) / entry_price, 2)
         holding = plan.holding_days if plan.holding_days is not None else self.holding_days
 
         row = {
-            "strategy": STRATEGY_NAME,
+            "strategy": self.strategy_name,
             "ticker": plan.ticker,
             "screen_date": screen_date,
             "last_screen_date": screen_date,
@@ -370,13 +374,20 @@ class TechDeskPositionBook:
             if hist is None or hist.empty:
                 continue
 
-            last = hist.iloc[-1]
-            bar_date = hist.index[-1].strftime("%Y-%m-%d")
             holding = int(p.get("holding_days") or self.holding_days)
-
-            actions = evaluate_bar_exits(p, last, bar_date, holding, hist)
-            for action in actions:
-                events.append(self._apply_action(p, action, hist))
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                if bar_date <= p["screen_date"]:
+                    continue
+                if bar_date > as_of:
+                    break
+                history_to_bar = hist.iloc[: i + 1]
+                actions = evaluate_bar_exits(
+                    p, hist.iloc[i], bar_date, holding, history_to_bar
+                )
+                if actions:
+                    events.append(self._apply_action(p, actions[0], history_to_bar))
+                    break
 
         self._save()
         return {"closed": events, "open_positions": self.open_count()}
@@ -455,13 +466,17 @@ class TechDeskPositionBook:
 
     def evaluate_pending_fills(self, as_of: Optional[str] = None) -> List[dict]:
         as_of = as_of or datetime.now().strftime("%Y-%m-%d")
-        self.evaluate_pending_lifecycle(as_of=as_of)
         filled: List[dict] = []
         pending = self._load_pending()
         if not pending:
             return filled
 
-        from .pending_lifecycle import history_from_plan_date, is_setup_exhausted
+        from .pending_lifecycle import (
+            history_from_plan_date,
+            is_pending_expired,
+            is_pending_invalidated,
+            is_setup_exhausted,
+        )
 
         remaining_pending: List[dict] = []
         for entry in pending:
@@ -485,20 +500,43 @@ class TechDeskPositionBook:
                 remaining_pending.append(entry)
                 continue
 
-            hist_slice = history_from_plan_date(hist, plan_date, as_of)
-            hist_for_rules = hist_slice if hist_slice is not None else hist
-            exhausted, ex_reason = is_setup_exhausted(entry, hist_for_rules, self.config)
-            if exhausted:
+            fill = None
+            fill_date = as_of
+            dismissed_reason = ""
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                if bar_date < plan_date:
+                    continue
+                if bar_date > as_of:
+                    break
+                history_to_bar = history_from_plan_date(hist.iloc[: i + 1], plan_date, bar_date)
+                if is_pending_expired(entry, bar_date, self.config):
+                    dismissed_reason = "expired"
+                    break
+                invalid, invalid_reason = is_pending_invalidated(
+                    entry, history_to_bar, self.config
+                )
+                if invalid:
+                    dismissed_reason = invalid_reason
+                    break
+                exhausted, exhausted_reason = is_setup_exhausted(
+                    entry, history_to_bar, self.config
+                )
+                if exhausted:
+                    dismissed_reason = exhausted_reason
+                    break
+                fill = zone_fill_price(hist.iloc[i], zone_low, zone_high)
+                if fill is not None:
+                    fill_date = bar_date
+                    break
+            if dismissed_reason:
                 self.dismiss_pending(
                     ticker,
-                    ex_reason,
+                    dismissed_reason,
                     report_date=entry.get("report_date"),
                     plan_date=plan_date,
                 )
                 continue
-
-            last = hist.iloc[-1]
-            fill = zone_fill_price(last, zone_low, zone_high)
             if fill is None:
                 remaining_pending.append(entry)
                 continue
@@ -523,7 +561,7 @@ class TechDeskPositionBook:
             pos = self.open_from_plan(
                 plan,
                 fill,
-                as_of,
+                fill_date,
                 report_path=entry.get("report_path"),
                 report_date=entry.get("report_date"),
             )
@@ -626,7 +664,7 @@ class TechDeskPositionBook:
                     ticker=ticker,
                     reason=ExitReason(reason)
                     if reason in {e.value for e in ExitReason}
-                    else ExitReason.FORECLOSURE,
+                    else ExitReason.REVIEW_CLOSE,
                     exit_price=exit_price,
                     exit_date=exit_date,
                     exit_pct=float(p.get("remaining_pct", 100.0)),

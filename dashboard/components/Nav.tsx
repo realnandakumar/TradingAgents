@@ -10,8 +10,9 @@ const NAV_GROUPS = [
     links: [
       { href: "/", label: "Overview" },
       { href: "/command-center", label: "Command center" },
+      { href: "/overlaps", label: "Overlaps" },
       { href: "/data-health", label: "Data health" },
-      { href: "/positions", label: "Positions" },
+      { href: "/positions", label: "RS desk" },
       { href: "/screens", label: "Screens" },
     ],
   },

@@ -53,8 +53,10 @@ export const SIGNAL_ABBREV: Record<string, string> = {
 };
 
 export function ratingTone(rating: string | null): "bull" | "bear" | "neutral" {
-  if (rating === "Buy" || rating === "Overweight") return "bull";
-  if (rating === "Sell" || rating === "Underweight") return "bear";
+  if (!rating) return "neutral";
+  const r = rating.toUpperCase();
+  if (r === "BUY" || r === "OVERWEIGHT") return "bull";
+  if (r === "SELL" || r === "UNDERWEIGHT" || r === "WAIT") return "bear";
   return "neutral";
 }
 

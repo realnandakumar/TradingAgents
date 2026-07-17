@@ -60,3 +60,16 @@ def test_save_picks_keeps_first_entry_date(tmp_path):
     assert len(book.positions) == 1
     assert book.positions[0]["screen_date"] == "2026-07-01"
     assert book.positions[0]["last_screen_date"] == "2026-07-04"
+
+
+def test_open_position_respects_sector_cap(tmp_path):
+    path = tmp_path / "positions.json"
+    book = MomentumPositionBook({
+        "momentum_book_path": str(path),
+        "momentum_max_per_sector": 2,
+        "momentum_max_positions": 10,
+    })
+    for i in range(2):
+        assert book.open_position(_pick(f"IT{i}.NS"), "2026-07-01") is not None
+    assert book.open_position(_pick("IT2.NS"), "2026-07-01") is None
+    assert book.open_count() == 2

@@ -44,16 +44,17 @@ class GapFillPositionBook:
         )
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.holding_days = int(cfg.get("gap_fill_holding_days", 15))
-        self.max_positions = int(cfg.get("gap_fill_max_positions", 10))
+        self.holding_days = int(cfg.get("gap_fill_holding_days", 20))
+        self.max_positions = int(cfg.get("gap_fill_max_positions", 20))
+        self.max_per_sector = int(cfg.get("gap_fill_max_per_sector", 4))
         self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
-        self.t2_exit_pct = float(cfg.get("gap_fill_t2_exit_pct", 75.0))
         self.target_1_rr = float(cfg.get("gap_fill_target_1_rr", 1.5))
         self.target_2_rr = float(cfg.get("gap_fill_target_2_rr", 2.5))
         self.stop_buffer_pct = float(cfg.get("gap_fill_stop_buffer_pct", 0.5))
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
         self._state = self._load()
         self._migrate_positions()
+        self._backfill_sectors()
 
     def _migrate_positions(self) -> None:
         changed = False
@@ -86,16 +87,47 @@ class GapFillPositionBook:
             changed = True
         return changed
 
+    def _backfill_sectors(self) -> None:
+        need = [
+            p for p in self.positions
+            if p.get("status") == "open" and (not p.get("sector") or p.get("sector") == "—")
+        ]
+        if not need:
+            return
+        try:
+            from tradingagents.screening.universe import load_universe_metadata
+
+            metadata = load_universe_metadata(
+                csv_path=self.config.get("screen_universe_csv"),
+                cache_dir=self.config.get("data_cache_dir"),
+                allow_download=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not backfill Gap Fill sectors (%s)", e)
+            return
+        changed = False
+        for p in need:
+            meta = metadata.get(p["ticker"], {})
+            sector = meta.get("sector")
+            if sector and sector != "—":
+                p["sector"] = sector
+                if meta.get("name"):
+                    p["stock_name"] = meta["name"]
+                changed = True
+        if changed:
+            self._save()
+
     def _load(self) -> dict:
         if self.path.exists():
             try:
                 return json.loads(self.path.read_text(encoding="utf-8"))
             except Exception as e:  # noqa: BLE001
                 logger.warning("Could not read Gap Fill book (%s); starting fresh", e)
-        return {"strategy": STRATEGY_NAME, "positions": []}
+        return {"strategy": STRATEGY_NAME, "positions": [], "sell_signals": []}
 
     def _save(self) -> None:
         self._state["strategy"] = STRATEGY_NAME
+        self._state.setdefault("sell_signals", [])
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
@@ -104,6 +136,10 @@ class GapFillPositionBook:
     @property
     def positions(self) -> List[dict]:
         return self._state["positions"]
+
+    @property
+    def sell_signals(self) -> List[dict]:
+        return self._state.setdefault("sell_signals", [])
 
     def open_count(self) -> int:
         return sum(1 for p in self.positions if p.get("status") == "open")
@@ -119,8 +155,16 @@ class GapFillPositionBook:
 
     def reset_book(self) -> None:
         """Clear all positions and start a fresh paper book."""
-        self._state = {"strategy": STRATEGY_NAME, "positions": []}
+        self._state = {"strategy": STRATEGY_NAME, "positions": [], "sell_signals": []}
         self._save()
+
+    def sector_open_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for p in self.positions:
+            if p.get("status") == "open":
+                sector = p.get("sector") or ""
+                counts[sector] = counts.get(sector, 0) + 1
+        return counts
 
     def open_position(self, pick: "GapFillPick", screen_date: str) -> Optional[dict]:
         ok, reason = pick_passes_long_entry(pick.signal, self.config)
@@ -133,6 +177,9 @@ class GapFillPositionBook:
             return None
         if self.open_count() >= self.max_positions:
             return None
+        sector = pick.sector or (pick.signal.sector if pick.signal else None) or ""
+        if self.sector_open_counts().get(sector, 0) >= self.max_per_sector:
+            return None
         row = self._pick_to_position(pick, screen_date)
         if row is None:
             return None
@@ -140,8 +187,86 @@ class GapFillPositionBook:
         self._save()
         return row
 
+    def store_sell_signals(
+        self,
+        picks: List["GapFillPick"],
+        screen_date: Optional[str] = None,
+    ) -> List[dict]:
+        """Persist UP-gap (SELL) signals for audit + closing open longs."""
+        screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
+        rows: List[dict] = []
+        for pick in picks:
+            if gap_trade_side(pick.direction) != "SELL":
+                continue
+            sig = pick.signal
+            rows.append({
+                "ticker": pick.symbol,
+                "stock_name": pick.stock_name or sig.stock_name or pick.symbol.replace(".NS", ""),
+                "sector": pick.sector or sig.sector or "—",
+                "screen_date": screen_date,
+                "direction": "SELL",
+                "gap_direction": sig.direction,
+                "close": float(sig.close),
+                "gap_pct": float(sig.gap_pct),
+                "fill_pct": float(sig.fill_pct),
+                "gap_age": int(sig.gap_age),
+                "remark": sig.remark,
+            })
+        kept = [s for s in self.sell_signals if s.get("screen_date") != screen_date]
+        kept.extend(rows)
+        if len(kept) > 500:
+            kept = kept[-500:]
+        self._state["sell_signals"] = kept
+        self._save()
+        return rows
+
+    def close_on_sell_signals(
+        self,
+        picks: List["GapFillPick"],
+        as_of: Optional[str] = None,
+    ) -> List[dict]:
+        """Close open longs when a matching UP-gap (SELL) signal appears."""
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        events: List[dict] = []
+        for pick in picks:
+            if gap_trade_side(pick.direction) != "SELL":
+                continue
+            if not self.has_open_position(pick.symbol):
+                continue
+            pos = next(
+                p for p in self.positions
+                if p["ticker"] == pick.symbol and p.get("status") == "open"
+            )
+            if skip_exit_for_entry_day(pos["screen_date"], as_of):
+                continue
+            self._ensure_position_fields(pos)
+            remaining = float(pos.get("remaining_pct", 100.0))
+            if remaining <= 0:
+                continue
+            exit_price = float(pick.signal.close)
+            hist = self._history(
+                pos["ticker"],
+                pos["screen_date"],
+                (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+            if hist is None:
+                hist = pd.DataFrame({"Close": [exit_price]}, index=pd.to_datetime([as_of]))
+            action = ExitAction(
+                ticker=pos["ticker"],
+                reason=ExitReason.SIGNAL_SELL,
+                exit_price=round(exit_price, 2),
+                exit_date=as_of,
+                exit_pct=remaining,
+                partial=False,
+            )
+            events.append(self._apply_action(pos, action, hist))
+        if events:
+            self._save()
+        return events
+
     def save_picks(self, picks: List["GapFillPick"], screen_date: Optional[str] = None) -> List[dict]:
         screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
+        self.store_sell_signals(picks, screen_date=screen_date)
         saved: List[dict] = []
         for pick in picks:
             ok, _ = pick_passes_long_entry(pick.signal, self.config)
@@ -178,6 +303,9 @@ class GapFillPositionBook:
         levels["target_1_pct"] = round(100.0 * (target_1 - entry) / entry, 2)
 
         sizing = compute_position_size(self.desk_capital, self.max_positions, levels["entry"])
+        if int(sizing["shares"] or 0) < 1:
+            logger.warning("Skip %s — cannot fit in INR %.0f slot at entry %.2f", pick.symbol, sizing["alloc"], levels["entry"])
+            return None
         return {
             "strategy": STRATEGY_NAME,
             "ticker": pick.symbol,
@@ -277,15 +405,31 @@ class GapFillPositionBook:
             if hist is None or hist.empty:
                 continue
 
-            self._update_trailing_stop(p, hist)
-            last = hist.iloc[-1]
-            bar_date = hist.index[-1].strftime("%Y-%m-%d")
-
-            actions = evaluate_bar_exits(
-                p, last, bar_date, self.holding_days, hist, t2_exit_pct=self.t2_exit_pct
-            )
-            for action in actions:
-                events.append(self._apply_action(p, action, hist))
+            replay = dict(p)
+            initial_stop = float(p.get("initial_stop_loss") or p.get("stop_loss") or 0)
+            replay["stop_loss"] = initial_stop
+            replay["trailing_stop"] = initial_stop
+            closed = False
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                history_to_bar = hist.iloc[: i + 1]
+                if bar_date <= p["screen_date"]:
+                    self._update_trailing_stop(replay, history_to_bar)
+                    continue
+                if bar_date > as_of:
+                    break
+                actions = evaluate_bar_exits(
+                    replay, hist.iloc[i], bar_date, self.holding_days, history_to_bar
+                )
+                if actions:
+                    events.append(self._apply_action(p, actions[0], history_to_bar))
+                    closed = True
+                    break
+                self._update_trailing_stop(replay, history_to_bar)
+            if not closed:
+                p["trailing_stop"] = replay.get("trailing_stop", p.get("trailing_stop"))
+                p["stop_loss"] = replay.get("stop_loss", p.get("stop_loss"))
+                p["stop_loss_pct"] = replay.get("stop_loss_pct", p.get("stop_loss_pct"))
 
         self._save()
         return {"closed": events, "open_positions": self.open_count()}
@@ -355,7 +499,13 @@ class GapFillPositionBook:
     def _outcome_for_reason(self, reason: ExitReason, blended: float) -> str:
         if reason == ExitReason.STOP:
             return "loss"
-        if reason in (ExitReason.TARGET_2_PARTIAL, ExitReason.TRAIL_STOP, ExitReason.TIME):
+        if reason in (
+            ExitReason.TARGET_1,
+            ExitReason.TARGET_2_PARTIAL,
+            ExitReason.TRAIL_STOP,
+            ExitReason.TIME,
+            ExitReason.SIGNAL_SELL,
+        ):
             return "success" if blended > 0 else "loss"
         return "success" if blended > 0 else "loss"
 
@@ -440,9 +590,11 @@ class GapFillPositionBook:
         by_reason: Dict[str, dict] = {}
         for reason in (
             ExitReason.STOP.value,
+            ExitReason.TARGET_1.value,
             ExitReason.TARGET_2_PARTIAL.value,
             ExitReason.TRAIL_STOP.value,
             ExitReason.TIME.value,
+            ExitReason.SIGNAL_SELL.value,
             ExitReason.FORECLOSURE.value,
         ):
             subset = [p for p in closed if p.get("exit_reason") == reason]

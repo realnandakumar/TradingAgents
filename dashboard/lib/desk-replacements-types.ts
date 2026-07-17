@@ -12,17 +12,8 @@ export interface ReplacementCandidate {
 }
 
 export function isReplacementApprovalAction(actionId: string): boolean {
-  return actionId === "approve" || actionId === "process-apply";
+  return false;
 }
 
-export const REPLACEMENT_DESK_IDS = [
-  "swing",
-  "momentum",
-  "nss",
-  "supertrend-rsi",
-  "trama",
-  "gap-fill",
-  "nw-envelope",
-  "pattern-forecast",
-  "tech-desk",
-] as const;
+/** Empty — foreclosure/replacements disabled on all paper desks. */
+export const REPLACEMENT_DESK_IDS = [] as const;

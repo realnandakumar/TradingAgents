@@ -46,37 +46,14 @@ def _portfolio_approve(
     yes: bool = False,
     ids: Optional[str] = None,
 ) -> None:
-    from tradingagents.replacements.approve import approve_portfolio_replacements, parse_ids_option
+    """Deprecated no-op — foreclosure disabled on all paper desks."""
+    from tradingagents.replacements.approve import approve_portfolio_replacements
 
-    selected = parse_ids_option(ids)
-    auto = yes or selected is not None
-
-    def confirm(prop) -> bool:
-        return (
-            questionary.confirm(
-                f"Replace {prop.close_stock_name} with {prop.new_stock_name}?",
-                default=False,
-            ).ask()
-            or False
-        )
-
-    result = approve_portfolio_replacements(
-        desk_id,
-        yes=auto,
-        ids=selected,
-        confirm=None if auto else confirm,
-    )
-    if result["approved"] == 0 and result["messages"]:
-        first = result["messages"][0]
-        if first.startswith("No pending"):
-            console.print(f"[green]{first}[/green]")
-            raise typer.Exit()
-    for msg in result["messages"]:
-        if msg.startswith("Approved:"):
-            console.print(f"[green]{msg}[/green]")
-        elif msg.startswith("Skip"):
-            console.print(f"[yellow]{msg}[/yellow]")
-    console.print(f"\n[dim]{result['approved']} replacement(s) executed.[/dim]")
+    _ = (yes, ids)
+    result = approve_portfolio_replacements(desk_id)
+    for msg in result.get("messages") or []:
+        console.print(f"[yellow]{msg}[/yellow]")
+    raise typer.Exit(0)
 
 app = typer.Typer(
     name="TradingAgents",
@@ -1459,20 +1436,12 @@ def tech_desk_process(
         f"opened: {summary.get('opened', len(report.get('opened', [])))} · "
         f"waits: {summary.get('waits', len(report.get('waits', [])))} · "
         f"closes: {summary.get('closes', len(report.get('closes', [])))} · "
-        f"replacements queued: {summary.get('pending_replacements', len(report.get('pending_replacements', [])))} · "
         f"open: {report.get('open_positions')}"
     )
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
     if report.get("waits"):
         console.print(f"  [cyan]pending zones:[/cyan] {', '.join(report['waits'])}")
-    pending_rep = report.get("pending_replacements") or []
-    if pending_rep:
-        for item in pending_rep:
-            console.print(
-                f"  [yellow]replacement queued:[/yellow] foreclose {item.get('foreclose')} → open {item.get('open')} "
-                f"(run [bold]tech-desk-apply-process[/bold] to approve)"
-            )
     stale = report.get("stale_tickers") or []
     if stale:
         console.print(
@@ -1487,18 +1456,159 @@ def tech_desk_process(
         if len(skipped) > 8:
             console.print(f"  [dim]… and {len(skipped) - 8} more skips[/dim]")
 
-    if apply_replacements and pending_rep:
-        manager = TechDeskPaperTradeManager(config)
-        proc_date = report.get("date") or date
-        with console.status("[bold green]Applying replacements...", spinner="dots"):
-            applied_report = manager.apply_pending_replacements(process_date=proc_date)
-        applied = applied_report.get("applied") or []
-        if applied:
-            console.print(f"[green]Applied {len(applied)} replacement(s).[/green]")
-        else:
-            console.print("[yellow]No replacements applied.[/yellow]")
+    if apply_replacements:
+        console.print(
+            "[dim]Foreclosure/replacements disabled — Tech Desk exits via stop/target only.[/dim]"
+        )
 
     console.print("[dim]Full log:[/dim] [bold]tradingagents tech-desk-report[/bold]")
+
+
+@app.command("rs-desk-process")
+def rs_desk_process(
+    reports_dir: Optional[str] = typer.Option(
+        None, "--reports-dir", help="Shared tech reports folder (default: tech_analyze_reports_dir)."
+    ),
+    date: Optional[str] = typer.Option(
+        None, "--date", help="Process as-of date (YYYY-MM-DD). Default: today."
+    ),
+):
+    """RS Desk PM over latest shared reports (last screen + open/pending). Separate book."""
+    from tradingagents.rs_desk import run_rs_desk_process
+
+    config = DEFAULT_CONFIG.copy()
+    ensure_api_key(config.get("llm_provider", "openai"))
+
+    console.print(Panel.fit(
+        f"[bold]RS Desk batch process[/bold]\n"
+        f"Shared reports: {reports_dir or config['tech_analyze_reports_dir']}\n"
+        f"Book: {config.get('rs_desk_book_path')}\n"
+        f"Max slots: {config.get('rs_desk_max_positions', 20)} · "
+        f"Min confidence: {config.get('rs_desk_min_confidence', 60)} · "
+        f"Max report age: {config.get('rs_desk_max_report_age_days', 14)}d\n"
+        "[dim]Candidates: last screen shortlist ∪ RS open/pending "
+        "(latest report on disk wins — same folder as Tech Desk)[/dim]",
+        title="rs-desk-process",
+    ))
+
+    with console.status("[bold green]RS Desk processing...", spinner="dots") as status:
+        report = run_rs_desk_process(
+            config,
+            reports_dir=reports_dir,
+            process_date=date,
+            progress=lambda m: status.update(f"[bold green]{m}"),
+        )
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    decision_md = report.get("decision_markdown")
+    if decision_md:
+        console.print(Panel(decision_md, title="RS Desk PM decision", border_style="cyan"))
+
+    if report.get("pm_error"):
+        console.print(f"[red]PM error:[/red] {report['pm_error']}")
+
+    summary = report.get("summary") or {}
+    console.print(
+        f"Candidates: {report.get('candidates')} · "
+        f"opened: {summary.get('opened', len(report.get('opened', [])))} · "
+        f"waits: {summary.get('waits', len(report.get('waits', [])))} · "
+        f"open: {report.get('open_positions')}"
+    )
+    if report.get("opened"):
+        console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
+    if report.get("waits"):
+        console.print(f"  [cyan]pending zones:[/cyan] {', '.join(report['waits'])}")
+    skip_entries = report.get("skip_entries") or []
+    if skip_entries:
+        for s in skip_entries[:8]:
+            if isinstance(s, dict):
+                console.print(f"  [dim]skip {s.get('ticker')}:[/dim] {s.get('reason')}")
+
+
+@app.command("rs-desk-daily")
+def rs_desk_daily(
+    force: bool = typer.Option(False, "--force", help="Deprecated no-op."),
+):
+    """Rules-only RS Desk daily: stop/target/time exits + pending zone fills."""
+    from tradingagents.rs_desk import run_rs_desk_daily
+
+    config = DEFAULT_CONFIG.copy()
+    with console.status("[bold green]RS Desk daily...", spinner="dots"):
+        report = run_rs_desk_daily(config, force=force)
+
+    if report.get("skipped"):
+        console.print(f"[yellow]Skipped:[/yellow] {report.get('reason')}")
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]rs-desk daily[/bold]\n"
+        f"Exits: {len(report.get('exits', []))} · zone fills: {len(report.get('zone_fills', []))} · "
+        f"open: {report.get('open_positions')} · pending: {report.get('pending_entries')}",
+        title="RS Desk daily",
+    ))
+
+
+@app.command("rs-desk-positions")
+def rs_desk_positions():
+    """Show RS Desk paper positions, pending zones, and stats."""
+    from tradingagents.rs_desk import as_tech_desk_config
+    from tradingagents.tech_desk.book import TechDeskPositionBook
+
+    book = TechDeskPositionBook(as_tech_desk_config(DEFAULT_CONFIG.copy()))
+    stats = book.stats()
+    open_positions = [p for p in book.positions if p.get("status") == "open"]
+    pending = book.pending_entries()
+
+    if not book.positions and not pending:
+        console.print(Panel.fit(
+            "No RS Desk positions yet. Run [bold]tradingagents screen[/bold] "
+            "(MA -> RS Desk PM) or [bold]rs-desk-process[/bold].",
+            title="RS Desk",
+        ))
+        raise typer.Exit()
+
+    console.print(Panel.fit(
+        f"[bold]RS Desk[/bold] · strategy={book.strategy_name}\n"
+        f"Open: {len(open_positions)} / {book.max_positions} · pending: {len(pending)}\n"
+        f"Book: {book.path}",
+        title="rs-desk-positions",
+    ))
+    if open_positions:
+        from rich.table import Table
+        from rich import box
+
+        t = Table(box=box.SIMPLE_HEAD, title="Open")
+        t.add_column("Ticker", style="bold")
+        t.add_column("Entry", justify="right")
+        t.add_column("Stop", justify="right")
+        t.add_column("T1", justify="right")
+        t.add_column("Conf", justify="right")
+        for p in open_positions:
+            t.add_row(
+                p.get("ticker", ""),
+                f"{float(p.get('entry_price') or 0):.2f}",
+                f"{float(p.get('stop_loss') or 0):.2f}",
+                f"{float(p.get('target_1') or 0):.2f}",
+                str(p.get("confidence") or "—"),
+            )
+        console.print(t)
+    if pending:
+        console.print("\n[cyan]Pending zones:[/cyan]")
+        for row in pending:
+            console.print(
+                f"  {row.get('ticker')} zone "
+                f"{row.get('zone_low')}-{row.get('zone_high')} "
+                f"SL {row.get('stop_loss')} T1 {row.get('target_1')}"
+            )
+    o = stats.get("overall") or {}
+    if o.get("trades"):
+        console.print(
+            f"\n[dim]Closed {o['trades']} · win {o.get('win_rate')}% · "
+            f"P&L Rs {o.get('total_pnl', 0):,.0f}[/dim]"
+        )
 
 
 @app.command("tech-desk-apply-process")
@@ -1511,47 +1621,18 @@ def tech_desk_apply_process(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply all pending replacements."),
 ):
-    """Apply queued portfolio replacements from a prior tech-desk-process run."""
+    """Deprecated no-op: Tech Desk foreclosure is disabled (exits via stop/target only)."""
     from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
 
     config = DEFAULT_CONFIG.copy()
     manager = TechDeskPaperTradeManager(config)
     proc_date = date or datetime.datetime.now().strftime("%Y-%m-%d")
-    selected = None
-    if ids:
-        selected = [part.strip() for part in ids.split(",") if part.strip()]
-
-    with console.status("[bold green]Applying replacements...", spinner="dots"):
-        result = manager.apply_pending_replacements(
-            process_date=proc_date,
-            selected_ids=None if yes and not selected else selected,
-        )
-
-    if result.get("error"):
-        console.print(f"[red]{result['error']}[/red]")
-        raise typer.Exit(1)
-    if result.get("message"):
-        console.print(f"[yellow]{result['message']}[/yellow]")
-        raise typer.Exit()
-
-    applied = result.get("applied") or []
-    skipped = result.get("skipped") or []
-    console.print(Panel.fit(
-        f"[bold]Applied {len(applied)} · skipped {len(skipped)}[/bold]",
-        title=f"tech-desk-apply-process ({proc_date})",
-    ))
-    for item in applied:
-        if item.get("opened"):
-            console.print(
-                f"  [green]foreclosed {item['foreclosed']} → opened {item['opened']} "
-                f"@ {item.get('entry_price')}[/green]"
-            )
-        elif item.get("queued"):
-            console.print(
-                f"  [cyan]foreclosed {item['foreclosed']} → queued zone {item['queued']}[/cyan]"
-            )
-    for item in skipped:
-        console.print(f"  [dim]skip:[/dim] {item}")
+    _ = (ids, yes)  # kept for CLI compatibility
+    result = manager.apply_pending_replacements(process_date=proc_date)
+    console.print(
+        f"[yellow]{result.get('message') or 'Tech Desk foreclosure is disabled.'}[/yellow]"
+    )
+    raise typer.Exit(0)
 
 
 @app.command("tech-desk-daily")
@@ -1925,8 +2006,9 @@ def _render_candidates(candidates, analyzed: bool):
         ]
         if analyzed:
             rating = c.decision_rating or "-"
-            colour = "green" if rating in ("Buy", "Overweight") else (
-                "red" if rating in ("Sell", "Underweight") else "yellow")
+            colour = "green" if str(rating).upper() == "BUY" else (
+                "red" if str(rating).upper() in ("SELL", "WAIT") else "yellow"
+            )
             row.append(f"[{colour}]{rating}[/{colour}]")
         row.append(c.pattern.summary())
         table.add_row(*row)
@@ -1935,31 +2017,35 @@ def _render_candidates(candidates, analyzed: bool):
 
 @app.command()
 def screen(
-    top: Optional[int] = typer.Option(None, "--top", help="How many top-ranked stocks to deep-analyze with the AI."),
+    top: Optional[int] = typer.Option(None, "--top", help="How many top-ranked stocks get Market Analyst (tech-desk style)."),
     universe: Optional[str] = typer.Option(None, "--universe", help="Path to a CSV of NSE tickers to screen (overrides the live/fallback list)."),
     min_pct: Optional[float] = typer.Option(None, "--min-rs", help="Keep only stocks at/above this relative-strength percentile (0-100)."),
-    preview: bool = typer.Option(False, "--preview", help="Only screen and show the ranked picks — no AI analysis, no token cost."),
+    preview: bool = typer.Option(False, "--preview", help="Only screen and show the ranked picks — no Market Analyst, no token cost."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the cost-confirmation prompt (for non-interactive / automated runs)."),
 ):
-    """Screen Indian (NSE) stocks by relative strength + chart patterns, then
-    deep-analyze the top names and paper-trade the bullish calls."""
+    """Screen NSE stocks by RS + patterns, then Market Analyst on top-N.
+
+    Saves MA reports to the shared tech_reports folder, then runs the RS Desk PM
+    (same agent/rules as Tech Desk) into a separate rs_desk book.
+    """
     from tradingagents.screening.batch_runner import run_screen
 
     config = _screen_config(top, universe, min_pct)
     n = config["screen_top_n"]
 
     console.print(Panel.fit(
-        "[bold]India RS + pattern screen[/bold]\n"
+        "[bold]India RS + pattern screen -> RS Desk[/bold]\n"
         f"Universe: {'custom CSV' if config.get('screen_universe_csv') else 'NSE Nifty 500 (live/fallback)'}\n"
         f"RS gate: top {100 - config['screen_rs_min_percentile']:.0f}% by strength\n"
-        f"Deep-analyze: top {n}"
-        + ("" if preview else f"\nEstimated: ~{n * 12} LLM calls, real token cost"),
+        f"Market Analyst: top {n} -> shared tech_reports/\n"
+        f"Then: RS Desk PM -> {config.get('rs_desk_book_path', '~/.tradingagents/rs_desk/')}"
+        + ("" if preview else f"\nEstimated: ~{n} MA calls + 1 PM batch"),
         title="Screen",
     ))
 
     if not preview and not yes:
         if not questionary.confirm(
-            f"This will run the full AI pipeline on {n} stocks (real OpenAI cost). Continue?",
+            f"Run Market Analyst on {n} stocks + RS Desk PM (real LLM cost)? Continue?",
             default=False,
         ).ask():
             console.print("[yellow]Aborted. Use --preview to see picks for free.[/yellow]")
@@ -1976,17 +2062,24 @@ def screen(
     _render_candidates(run.candidates, analyzed=not preview)
 
     if preview:
-        console.print("\n[dim]Preview only — no positions opened. Drop --preview to analyze + paper-trade.[/dim]")
+        console.print("\n[dim]Preview only — no MA / RS Desk. Drop --preview to analyze.[/dim]")
     else:
         if run.opened:
-            console.print(f"\n[green]Opened {len(run.opened)} paper position(s):[/green] {', '.join(run.opened)}")
-        else:
-            console.print("\n[yellow]No bullish calls — no paper positions opened.[/yellow]")
+            console.print(f"\n[green]RS Desk opened {len(run.opened)}:[/green] {', '.join(run.opened)}")
+        if run.waits:
+            console.print(f"[cyan]RS Desk waits {len(run.waits)}:[/cyan] {', '.join(run.waits)}")
+        if not run.opened and not run.waits:
+            console.print("\n[yellow]No open/wait plans from RS Desk PM.[/yellow]")
+        if run.skipped:
+            reasons = ", ".join(
+                f"{s.get('ticker', '?')} ({s.get('reason', '')})" for s in run.skipped[:8]
+            )
+            more = f" …+{len(run.skipped) - 8}" if len(run.skipped) > 8 else ""
+            console.print(f"[dim]Skipped:[/dim] {reasons}{more}")
         ps = run.paper_summary
         console.print(
-            f"[dim]Paper book: {ps.get('open_positions', 0)} open, "
-            f"{ps.get('closed_now', 0)} closed this run. "
-            f"Run [bold]tradingagents paper[/bold] for full P&L.[/dim]"
+            f"[dim]RS Desk book: {ps.get('open_positions', 0)} open. "
+            f"Run [bold]tradingagents rs-desk-positions[/bold] or dashboard /positions.[/dim]"
         )
 
 
@@ -2001,7 +2094,13 @@ def paper():
     summary = book.mark_to_market()  # value + close matured positions first
     stats = book.stats()
 
-    # Keep the dashboard's paper snapshot fresh (best-effort, no-op without creds).
+    # Keep the dashboard paper snapshot fresh (local + optional Supabase).
+    try:
+        from tradingagents.paper.snapshots import save_paper_snapshot
+
+        save_paper_snapshot(DEFAULT_CONFIG.copy(), book)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from tradingagents.sync import SupabaseSync, paper_snapshot
         client = SupabaseSync()
@@ -2299,7 +2398,6 @@ def swing_positions():
         t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
         t.add_column("T1%", justify="right")
-        t.add_column("T2%", justify="right")
         t.add_column("R:R", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
@@ -2312,7 +2410,6 @@ def swing_positions():
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
                 f"+{p.get('target_1_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
                 f"{p.get('risk_reward_ratio', 0):.1f}:{p.get('risk_reward_ratio_2', 0):.1f}",
                 p.get("phase", "initial"),
                 f"{p.get('remaining_pct', 100):.0f}",
@@ -2351,32 +2448,22 @@ def swing_daily(
     ),
     yes: bool = typer.Option(
         False, "--yes", "-y",
-        help="Auto-approve replacement proposals (foreclosure). Default: ask permission.",
+        help="Deprecated no-op (foreclosure disabled).",
     ),
 ):
     """Daily swing portfolio job (9:30 / 11:45 / 14:30 IST every day).
 
-    Screens on daily (1D) charts, processes stop/T2 partial/trail/time exits,
-    opens new picks (max 20), and queues replacement proposals when full."""
-    from tradingagents.swing import PortfolioPaperTradeManager, ReplacementProposal, run_swing_daily
+    Screens on daily (1D) charts, processes stop/T1/time exits,
+    opens new picks when slots are free (exits via stop/target only — no foreclosure)."""
+    from tradingagents.swing import PortfolioPaperTradeManager, run_swing_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]Swing daily run...", spinner="dots") as status:
         report = run_swing_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -2397,9 +2484,6 @@ def swing_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents swing-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents swing-report[/bold]")
 
@@ -2411,7 +2495,7 @@ def swing_approve(
         None, "--ids", help="Comma-separated proposal ids to approve."
     ),
 ):
-    """Approve pending portfolio replacement proposals (foreclosure)."""
+    """Deprecated: foreclosure disabled — exits via stop/target only."""
     _portfolio_approve("swing", yes=yes, ids=ids)
 
 
@@ -2441,13 +2525,14 @@ def _render_momentum_picks(picks):
     table.add_column("Stock")
     table.add_column("Entry ₹", justify="right")
     table.add_column("Stop%", justify="right")
-    table.add_column("T2%", justify="right")
+    table.add_column("T1%", justify="right")
     table.add_column("RSI", justify="right")
     table.add_column("ADX", justify="right")
     table.add_column("MACD", justify="right")
     table.add_column("Vol5/20", justify="right")
     table.add_column("Ext%", justify="right")
     table.add_column("ADX↑", justify="right")
+    table.add_column("PB", justify="center")
     for i, p in enumerate(picks, 1):
         table.add_row(
             str(i),
@@ -2455,13 +2540,14 @@ def _render_momentum_picks(picks):
             p.stock_name[:22],
             f"{p.entry_price:.2f}",
             f"{p.stop_loss_pct:.1f}%",
-            f"+{p.target_2_pct:.1f}%",
+            f"+{p.target_1_pct:.1f}%",
             f"{p.rsi:.1f}",
             f"{p.adx:.1f}",
             f"{p.macd:.2f}",
             f"{p.volume_ratio_5_20:.2f}x",
             f"{p.extension_pct:.1f}%",
             "Y" if p.adx_rising else "—",
+            "✓" if getattr(p, "hh_pullback", False) else "—",
         )
     console.print(table)
 
@@ -2474,7 +2560,7 @@ def _export_momentum_csv(path: str, picks) -> None:
         "stop_loss_pct", "target_1", "target_1_pct", "target_2", "target_2_pct",
         "risk_reward_ratio", "risk_reward_ratio_2", "supertrend_status",
         "rsi", "adx", "macd", "macd_signal", "volume_ratio_5_20",
-        "extension_pct", "adx_rising", "market_cap_cr", "avg_traded_value_cr",
+        "extension_pct", "adx_rising", "hh_pullback", "market_cap_cr", "avg_traded_value_cr",
     ]
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -2501,6 +2587,7 @@ def _export_momentum_csv(path: str, picks) -> None:
                 "volume_ratio_5_20": p.volume_ratio_5_20,
                 "extension_pct": p.extension_pct,
                 "adx_rising": p.adx_rising,
+                "hh_pullback": getattr(p, "hh_pullback", False),
                 "market_cap_cr": p.market_cap_cr,
                 "avg_traded_value_cr": p.avg_traded_value_cr,
             })
@@ -2513,10 +2600,10 @@ def momentum(
     save: bool = typer.Option(True, "--save/--no-save", help="Save picks to momentum book."),
     export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
 ):
-    """Screen NSE stocks for momentum continuation setups (30–90 day hold).
+    """Screen NSE stocks for momentum continuation setups (20-day max hold).
 
-    EMA50>EMA200, ST Buy, ADX>25, RSI 55–65, MACD bullish, vol 5d>20d,
-    HH after EMA pullback. Ranked shortlist — run analyze on your picks."""
+    EMA50>EMA200, ST Buy, ADX>20, RSI 50–65, MACD bullish, vol 5d>20d.
+    Ranked shortlist — run analyze on your picks."""
     from tradingagents.screening.momentum_screener import screen_momentum
     from tradingagents.momentum import MomentumPositionBook
 
@@ -2527,12 +2614,12 @@ def momentum(
         config["momentum_top_n"] = top
 
     console.print(Panel.fit(
-        "[bold]India momentum screener[/bold] (continuation · 30–90 day hold)\n"
+        "[bold]India momentum screener[/bold] (continuation · 20-day max hold)\n"
         "Close > EMA50 > EMA200 · ST Buy ≥4 sessions (no recent flip)\n"
         "ADX>20 · RSI 50–65 · MACD > signal · Vol 5d ≥ 20d\n"
-        "10d HH after EMA pullback · ext <15% · excludes swing early-entry zone\n"
+        "PB = HH after EMA pullback (shown, not required) · ext <15% · excludes swing early-entry zone\n"
         "MCap>₹5,000 Cr · Traded value>₹10 Cr · No 52-week lows\n"
-        f"Top [bold]{config['momentum_top_n']}[/bold] by ADX rising → ADX → vol → RSI\n"
+        f"Top [bold]{config['momentum_top_n']}[/bold] by ADX rising → ADX → vol → RSI · max 4/sector\n"
         "[dim]No AI calls — review list, then run analyze on your picks.[/dim]",
         title="Momentum",
     ))
@@ -2546,7 +2633,7 @@ def momentum(
         raise typer.Exit()
 
     _render_momentum_picks(picks)
-    console.print(f"\n[dim]{len(picks)} pick(s). Hold window 30–90 trading days.[/dim]")
+    console.print(f"\n[dim]{len(picks)} pick(s). T1 full exit · 20 trading-day max hold.[/dim]")
 
     if save:
         book = MomentumPositionBook(config)
@@ -2590,7 +2677,7 @@ def momentum_positions():
         add_open_meta_columns(t)
         t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
         t.add_column("Trail Rs", justify="right")
@@ -2603,7 +2690,7 @@ def momentum_positions():
                 *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('remaining_pct', 100):.0f}",
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
@@ -2643,25 +2730,15 @@ def momentum_daily(
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Daily momentum portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
-    from tradingagents.momentum import MomentumPaperTradeManager, ReplacementProposal, run_momentum_daily
+    from tradingagents.momentum import MomentumPaperTradeManager, run_momentum_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]Momentum daily run...", spinner="dots") as status:
         report = run_momentum_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -2682,9 +2759,6 @@ def momentum_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents momentum-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents momentum-report[/bold]")
 
@@ -2728,10 +2802,12 @@ def _render_nss_picks(picks):
     table.add_column("Conf")
     table.add_column("Entry ₹", justify="right")
     table.add_column("Stop%", justify="right")
-    table.add_column("T2%", justify="right")
+    table.add_column("T1%", justify="right")
     table.add_column("RSI", justify="right")
     table.add_column("ADX", justify="right")
     table.add_column("Vol", justify="right")
+    table.add_column("BO", justify="center")
+    table.add_column("VOL✓", justify="center")
     table.add_column("Range%", justify="right")
     table.add_column("Reason")
     for i, p in enumerate(picks, 1):
@@ -2743,10 +2819,12 @@ def _render_nss_picks(picks):
             p.confidence[:4] if p.confidence else "—",
             f"{p.entry_price:.2f}",
             f"{p.stop_loss_pct:.1f}%",
-            f"+{p.target_2_pct:.1f}%",
+            f"+{p.target_1_pct:.1f}%",
             f"{p.rsi:.1f}",
             f"{p.adx:.1f}",
             f"{p.relative_volume:.2f}x",
+            "✓" if getattr(p, "breakout_ok", False) else "—",
+            "✓" if getattr(p, "volume_ok", False) else "—",
             f"{p.range_pct:.1f}%",
             (p.primary_reason or "")[:28],
         )
@@ -2760,8 +2838,8 @@ def _export_nss_csv(path: str, picks) -> None:
         "symbol", "stock_name", "sector", "composite_score", "confidence", "primary_reason",
         "entry_price", "stop_loss", "stop_loss_pct", "target_1", "target_1_pct", "target_2",
         "target_2_pct", "risk_reward_ratio", "risk_reward_ratio_2", "rsi", "adx",
-        "relative_volume", "range_pct", "atr_ratio", "risk_pct", "market_cap_cr",
-        "avg_traded_value_cr",
+        "relative_volume", "range_pct", "atr_ratio", "risk_pct", "breakout_ok", "volume_ok",
+        "market_cap_cr", "avg_traded_value_cr",
     ]
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -2789,6 +2867,8 @@ def _export_nss_csv(path: str, picks) -> None:
                 "range_pct": p.range_pct,
                 "atr_ratio": p.atr_ratio,
                 "risk_pct": p.risk_pct,
+                "breakout_ok": getattr(p, "breakout_ok", False),
+                "volume_ok": getattr(p, "volume_ok", False),
                 "market_cap_cr": p.market_cap_cr,
                 "avg_traded_value_cr": p.avg_traded_value_cr,
             })
@@ -2801,7 +2881,7 @@ def nss(
     save: bool = typer.Option(True, "--save/--no-save", help="Save picks to NSS book."),
     export: Optional[str] = typer.Option(None, "--export", help="Write results to CSV."),
 ):
-    """Screen NSE stocks for NSS structure-first swing setups (30–90 day hold).
+    """Screen NSE stocks for NSS structure-first swing setups (40-day max hold).
 
     Consolidation + breakout scoring with explainable stages. Top 20 by composite score."""
     from tradingagents.screening.nss_screener import screen_nss
@@ -2814,9 +2894,9 @@ def nss(
         config["nss_top_n"] = top
 
     console.print(Panel.fit(
-        "[bold]NANDA Swing Scanner (NSS)[/bold] · structure-first · 30–90 day hold\n"
-        "EMA50>EMA200 · consolidation + ATR contraction · fresh breakout\n"
-        "Vol ≥1.5× 20d · RSI 45–65 · ADX≥15 · risk ≤8%\n"
+        "[bold]NANDA Swing Scanner (NSS)[/bold] · structure-first · 40-day max hold\n"
+        "EMA50>EMA200 · consolidation + ATR contraction · BO/VOL scored (shown, not required)\n"
+        "RSI 45–65 · ADX≥15 · risk ≤8% · max 4 names per sector\n"
         "Excludes swing early-entry & momentum continuation zones\n"
         f"Top [bold]{config['nss_top_n']}[/bold] by composite score (min {config['nss_min_score']})\n"
         "[dim]No AI calls — review list, then run analyze on your picks.[/dim]",
@@ -2832,7 +2912,7 @@ def nss(
         raise typer.Exit()
 
     _render_nss_picks(picks)
-    console.print(f"\n[dim]{len(picks)} pick(s). Hold window 30–90 trading days.[/dim]")
+    console.print(f"\n[dim]{len(picks)} pick(s). T1 full exit · 40 trading-day max hold.[/dim]")
 
     if save:
         book = NSSPositionBook(config)
@@ -2877,7 +2957,7 @@ def nss_positions():
         add_open_meta_columns(t)
         t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Rem%", justify="right")
         t.add_column("Trail Rs", justify="right")
@@ -2891,7 +2971,7 @@ def nss_positions():
                 *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('remaining_pct', 100):.0f}",
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
@@ -2931,25 +3011,15 @@ def nss_daily(
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Daily NSS portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
-    from tradingagents.nss import NSSPaperTradeManager, ReplacementProposal, run_nss_daily
+    from tradingagents.nss import NSSPaperTradeManager, run_nss_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full (20).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]NSS daily run...", spinner="dots") as status:
         report = run_nss_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -2970,9 +3040,6 @@ def nss_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents nss-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents nss-report[/bold]")
 
@@ -3274,8 +3341,8 @@ def supertrend_rsi_cmd(
     console.print(Panel.fit(
         f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]supertrend_rsi[/cyan]\n"
         "ST(10,3) crossover + RSI(14) confirmation + 9-component scoring\n"
-        "Filters: opposite flip, ATR, candle body, ST distance, volume\n"
-        f"Top [bold]{config['strsi_top_n']}[/bold] · Min score [bold]{min_label}[/bold] · Fresh flip ≤[bold]{config['strsi_mandatory_flip_max_age']}[/bold] bars",
+        "BUY opens only · SELL closes matching open longs · T1 full exit · 20d max · max 4/sector\n"
+        f"Top [bold]{config['strsi_top_n']}[/bold] BUY · Min score [bold]{min_label}[/bold] · Fresh flip ≤[bold]{config['strsi_mandatory_flip_max_age']}[/bold] bars",
         title="SuperTrend + RSI",
     ))
 
@@ -3296,10 +3363,13 @@ def supertrend_rsi_cmd(
     if save:
         book = SuperTrendRSIPositionBook(config)
         saved = book.save_picks(picks)
+        sell_n = sum(1 for p in picks if p.direction == "SELL")
         console.print(
             f"\n[green]Saved {len(saved)} BUY position(s) to supertrend_rsi[/green] "
             f"[dim]({book.path})[/dim]"
         )
+        if sell_n:
+            console.print(f"[dim]Stored {sell_n} SELL signal(s) (used on daily to close open longs).[/dim]")
         console.print("[dim]View book:[/dim] [bold]tradingagents supertrend-rsi-positions[/bold]")
         console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/supertrend-rsi[/bold]")
 
@@ -3353,7 +3423,7 @@ def supertrend_rsi_positions():
         add_open_meta_columns(t)
         t.add_column("Entry Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Trail Rs", justify="right")
         t.add_column("RSI", justify="right")
@@ -3366,7 +3436,7 @@ def supertrend_rsi_positions():
                 *open_meta_cells(p),
                 f"{p['entry_price']:.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
                 f"{p.get('rsi', 0):.1f}",
@@ -3405,28 +3475,17 @@ def supertrend_rsi_daily(
 ):
     """Daily SuperTrend+RSI portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
     from tradingagents.supertrend_rsi import (
-        ReplacementProposal,
         SuperTrendRSIPaperTradeManager,
         run_supertrend_rsi_daily,
     )
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full ({config['strsi_max_positions']}).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]ST+RSI daily run...", spinner="dots") as status:
         report = run_supertrend_rsi_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -3447,9 +3506,6 @@ def supertrend_rsi_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents supertrend-rsi-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents supertrend-rsi-report[/bold]")
 
@@ -3655,9 +3711,9 @@ def trama(
     console.print(Panel.fit(
         f"[bold]{STRATEGY_NAME}[/bold] v1.0 · [cyan]trama[/cyan]\n"
         "LuxAlgo TRAMA (TradingView default length=100, src=close)\n"
-        "Signal: closing candle crossover of the TRAMA line\n"
+        "BUY opens only · SELL closes matching open longs · T1 full exit · 20d · max 4/sector\n"
         f"Freshness: cross within last [bold]{config['trama_cross_max_age']}[/bold] trading days\n"
-        f"Hold check: age 1–2 must still be on signal side · Top [bold]{config['trama_top_n']}[/bold]\n"
+        f"Hold check: age 1–2 must still be on signal side · Top [bold]{config['trama_top_n']}[/bold] BUY\n"
         f"Directions: [bold]{config['trama_directions']}[/bold]",
         title="TRAMA Crossover",
     ))
@@ -3684,6 +3740,8 @@ def trama(
             f"\n[green]Saved {len(saved)} BUY position(s) to trama[/green] "
             f"[dim]({book.path})[/dim]"
         )
+        if sells:
+            console.print(f"[dim]Stored {sells} SELL signal(s) (used on daily to close open longs).[/dim]")
         console.print("[dim]View book:[/dim] [bold]tradingagents trama-positions[/bold]")
         console.print("[dim]Desk:[/dim] [bold]http://localhost:3000/trama[/bold]")
 
@@ -3738,7 +3796,7 @@ def trama_positions():
         t.add_column("Entry Rs", justify="right")
         t.add_column("TRAMA Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Trail Rs", justify="right")
         for p in open_positions:
@@ -3751,7 +3809,7 @@ def trama_positions():
                 f"{p['entry_price']:.2f}",
                 f"{p.get('trama_value', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
             )
@@ -3788,25 +3846,15 @@ def trama_daily(
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Daily TRAMA portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
-    from tradingagents.trama import ReplacementProposal, run_trama_daily
+    from tradingagents.trama import run_trama_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full ({config['trama_max_positions']}).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]TRAMA daily run...", spinner="dots") as status:
         report = run_trama_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -3827,9 +3875,6 @@ def trama_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents trama-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents trama-report[/bold]")
 
@@ -4056,7 +4101,7 @@ def gap_fill_positions():
         t.add_column("Entry Rs", justify="right")
         t.add_column("Target Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Trail Rs", justify="right")
         for p in open_positions:
@@ -4070,7 +4115,7 @@ def gap_fill_positions():
                 f"{p['entry_price']:.2f}",
                 f"{p.get('fill_target', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
             )
@@ -4129,25 +4174,15 @@ def gap_fill_daily(
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Daily Gap Fill portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
-    from tradingagents.gap_fill import ReplacementProposal, run_gap_fill_daily
+    from tradingagents.gap_fill import run_gap_fill_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full ({config['gap_fill_max_positions']}).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]Gap Fill daily run...", spinner="dots") as status:
         report = run_gap_fill_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -4168,9 +4203,6 @@ def gap_fill_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents gap-fill-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents gap-fill-report[/bold]")
 
@@ -4628,7 +4660,7 @@ def nw_envelope_positions():
         t.add_column("Entry Rs", justify="right")
         t.add_column("Lower Rs", justify="right")
         t.add_column("Stop%", justify="right")
-        t.add_column("T2%", justify="right")
+        t.add_column("T1%", justify="right")
         t.add_column("Phase")
         t.add_column("Trail Rs", justify="right")
         for p in open_positions:
@@ -4641,7 +4673,7 @@ def nw_envelope_positions():
                 f"{p['entry_price']:.2f}",
                 f"{p.get('nwe_lower', 0):.2f}",
                 f"{p.get('stop_loss_pct', 0):.1f}%",
-                f"+{p.get('target_2_pct', 0):.1f}%",
+                f"+{p.get('target_1_pct', 0):.1f}%",
                 p.get("phase", "initial"),
                 f"{p.get('trailing_stop', p.get('stop_loss', 0)):.2f}",
             )
@@ -4672,31 +4704,43 @@ def nw_envelope_positions():
     console.print("[dim]Daily report:[/dim] [bold]tradingagents nw-envelope-report[/bold]")
 
 
+@app.command("nw-envelope-reset")
+def nw_envelope_reset(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm reset without prompt."),
+):
+    """Clear NW Envelope paper book and pending replacement proposals."""
+    from tradingagents.nw_envelope import NwEnvelopePaperTradeManager
+
+    if not yes:
+        confirmed = questionary.confirm(
+            "Reset NW Envelope paper book and pending replacements?",
+            default=False,
+        ).ask()
+        if not confirmed:
+            raise typer.Exit(0)
+
+    manager = NwEnvelopePaperTradeManager(DEFAULT_CONFIG.copy())
+    manager.reset_portfolio()
+    console.print("[green]NW Envelope paper book reset.[/green]")
+    console.print(f"[dim]Book:[/dim] {manager.book.path}")
+    console.print("[dim]Next:[/dim] [bold]tradingagents nw-envelope-daily --yes[/bold]")
+
+
 @app.command("nw-envelope-daily")
 def nw_envelope_daily(
     force: bool = typer.Option(False, "--force", help="Deprecated no-op; daily runs every calendar day."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve replacement proposals."),
 ):
     """Daily NW Envelope portfolio job (9:30 / 11:45 / 14:30 IST every day)."""
-    from tradingagents.nw_envelope import ReplacementProposal, run_nw_envelope_daily
+    from tradingagents.nw_envelope import run_nw_envelope_daily
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\n[yellow]Portfolio full ({config['nwe_max_positions']}).[/yellow] Replace "
-            f"[bold]{proposal.close_stock_name}[/bold] with "
-            f"[bold]{proposal.new_stock_name}[/bold]?"
-        )
-        return questionary.confirm("Approve foreclosure?", default=False).ask() or False
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]NW Envelope daily run...", spinner="dots") as status:
         report = run_nw_envelope_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve,
             force=force,
         )
 
@@ -4707,6 +4751,7 @@ def nw_envelope_daily(
     console.print(Panel.fit(
         f"[bold]nw_envelope daily[/bold] · chart: [cyan]1D[/cyan]\n"
         f"Date: {report.get('date')} · BUY picks: {report.get('screener_picks')} · "
+        f"SELL: {report.get('sell_signals', 0)} · "
         f"opened: {len(report.get('opened', []))} · exits: {len(report.get('exits', []))} · "
         f"open: {report.get('open_positions')}",
         title="NW Envelope daily",
@@ -4717,9 +4762,6 @@ def nw_envelope_daily(
             console.print(f"  [dim]exit[/dim] {e['ticker']} · {e['reason']} · {e.get('raw_return', 0)*100:+.1f}%")
     if report.get("opened"):
         console.print(f"  [green]opened:[/green] {', '.join(report['opened'])}")
-    if report.get("proposals") and not yes:
-        console.print(f"\n[yellow]{len(report['proposals'])} replacement(s) pending approval.[/yellow]")
-        console.print("[dim]Run:[/dim] [bold]tradingagents nw-envelope-approve[/bold]")
 
     console.print("[dim]Full report:[/dim] [bold]tradingagents nw-envelope-report[/bold]")
 
@@ -4942,26 +4984,14 @@ def pattern_forecast_daily(
 ):
     """Run Pattern Forecast screener and update 5-day paper book."""
     from tradingagents.pattern_forecast import run_pattern_forecast_daily
-    from tradingagents.pattern_forecast.manager import ReplacementProposal
 
     config = DEFAULT_CONFIG.copy()
-
-    def _approve(proposal: ReplacementProposal) -> bool:
-        if yes:
-            return True
-        console.print(
-            f"\nReplace [bold]{proposal.close_stock_name}[/bold] "
-            f"(prob {proposal.close_score:.1f}%) with "
-            f"[bold]{proposal.new_stock_name}[/bold] "
-            f"(prob {proposal.new_probability:.1f}%)?"
-        )
-        return questionary.confirm("Approve?", default=False).ask()
+    _ = yes  # foreclosure disabled; kept for CLI compatibility
 
     with console.status("[bold green]Running daily...", spinner="dots") as status:
         report = run_pattern_forecast_daily(
             config,
             progress=lambda m: status.update(f"[bold green]{m}"),
-            approve=_approve if not yes else (lambda _: True),
             force=force,
         )
 

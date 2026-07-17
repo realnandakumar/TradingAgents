@@ -20,7 +20,14 @@ export default function PatternForecastDeskPage() {
       positions={book?.positions ?? []}
       hasBook={Boolean(book)}
       blotter={<PatternForecastBlotter positions={book?.positions ?? []} />}
-      extraBadges={["5D hold"]}
+      extraBadges={["5D hold", "Target Full Exit", "Max 4 / Sector", "UP only"]}
+      headerExtra={
+        <div>
+          Opens UP forecasts only. Exits 100% at projected 5d max high, stop, or day-5 time.
+          New entries capped at 4 open names per sector. Existing over-cap names exit naturally.
+        </div>
+      }
+      emptyHint="Use Daily run in Desk actions above, or run all dailies from Command center."
     />
   );
 }

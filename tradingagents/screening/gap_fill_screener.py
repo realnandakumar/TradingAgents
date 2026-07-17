@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
@@ -77,7 +78,7 @@ def screen_gap_fill(
     metadata = load_universe_metadata(
         csv_path=config.get("screen_universe_csv"),
         cache_dir=config.get("data_cache_dir"),
-        allow_download=False,
+        allow_download=True,
     )
 
     period = config.get("gap_fill_history_period", "1y")
@@ -89,6 +90,7 @@ def screen_gap_fill(
 
     max_age = int(config.get("gap_fill_max_age", 30))
     top_n = int(config.get("gap_fill_top_n", 20))
+    max_per_sector = int(config.get("gap_fill_max_per_sector", 4))
     directions = str(config.get("gap_fill_directions", "UP,DOWN"))
 
     picks: List[GapFillPick] = []
@@ -113,16 +115,35 @@ def screen_gap_fill(
         picks.append(GapFillPick(signal=sig, stock_name=name, sector=sector))
 
     picks.sort(key=lambda p: (p.gap_age, -abs(p.signal.gap_pct)))
-    capped = picks[:top_n]
+
+    sells = [p for p in picks if gap_trade_side(p.direction) == "SELL"]
+    buys = [p for p in picks if gap_trade_side(p.direction) == "BUY"]
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped_buys: List[GapFillPick] = []
+        for pick in buys:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped_buys.append(pick)
+            sector_counts[sector] += 1
+            if len(capped_buys) >= top_n:
+                break
+        buys = capped_buys
+    else:
+        buys = buys[:top_n]
+
+    result = buys + sells
+    result.sort(key=lambda p: (p.gap_age, -abs(p.signal.gap_pct)))
     _log(
-        f"{STRATEGY_NAME}: {len(picks)} active gap(s) in last {max_age} days "
-        f"(checked {n_checked}, no gap {n_reject})"
+        f"{STRATEGY_NAME}: {len(buys)} DOWN/BUY (max {max_per_sector}/sector) + {len(sells)} UP/SELL "
+        f"in last {max_age} days (checked {n_checked}, no gap {n_reject})"
     )
 
     snapshot_path = config.get("gap_fill_screener_snapshot_path")
     if snapshot_path:
         rows = []
-        for i, p in enumerate(capped, 1):
+        for i, p in enumerate(result, 1):
             s = p.signal
             rows.append({
                 "rank": i,
@@ -151,13 +172,14 @@ def screen_gap_fill(
                 "max_fill_pct": config.get("gap_fill_max_progress"),
                 "directions": directions,
                 "exclude_today": config.get("gap_fill_exclude_today", True),
+                "max_per_sector": max_per_sector,
             },
             "checked": n_checked,
             "total_hits": len(picks),
             "picks": rows,
         })
 
-    return capped
+    return result
 
 
 __all__ = ["GapFillPick", "screen_gap_fill", "STRATEGY_ID", "STRATEGY_NAME"]

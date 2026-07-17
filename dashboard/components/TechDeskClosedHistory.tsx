@@ -28,7 +28,13 @@ function inRange(exitDate: string | null | undefined, from: string, to: string):
   return exitDate >= from && exitDate <= to;
 }
 
-export function TechDeskClosedHistory({ trades }: { trades: TechDeskPosition[] }) {
+export function TechDeskClosedHistory({
+  trades,
+  deskLabel = "Tech Desk",
+}: {
+  trades: TechDeskPosition[];
+  deskLabel?: string;
+}) {
   const [preset, setPreset] = useState<Preset>("all");
   const [fromDate, setFromDate] = useState(offsetDate(90));
   const [toDate, setToDate] = useState(todayIso());
@@ -61,7 +67,7 @@ export function TechDeskClosedHistory({ trades }: { trades: TechDeskPosition[] }
         <div>
           <h2 className="text-sm font-medium">Closed trade history</h2>
           <p className="text-xs text-muted mt-0.5">
-            Permanent archive of every closed Tech Desk paper trade ({trades.length} total).
+            Permanent archive of every closed {deskLabel} paper trade ({trades.length} total).
           </p>
         </div>
         <div className="text-xs text-muted text-right tabular-nums">

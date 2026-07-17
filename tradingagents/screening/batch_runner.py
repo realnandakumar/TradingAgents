@@ -1,12 +1,8 @@
 """Screening funnel: universe -> relative strength -> pattern engine -> rank,
-then (optionally) deep AI analysis + paper trades on the top names.
+then Market Analyst on top-N → RS Desk PM (Tech-Desk-style) on a separate book.
 
-Two entry points:
-- :func:`screen_candidates` -- free/fast: returns ranked candidates with their
-  RS and which technical signals fired. No LLM calls. Use it to preview picks.
-- :func:`run_screen` -- the full pipeline: takes the top-N candidates, runs the
-  TradingAgents analysis on each (India mode), records bullish calls in the
-  paper book, and marks the book to market.
+Reports are written to the shared ``tech_analyze_reports_dir`` so Tech Desk and
+RS Desk both see the latest MA report per ticker.
 """
 
 from __future__ import annotations
@@ -14,18 +10,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .levels import compute_levels
 from .patterns import PatternScore, score_patterns
 from .prices import download_history
 from .relative_strength import RSResult, compute_relative_strength
-from .universe import load_universe
+from .universe import load_universe, load_universe_metadata
 
 logger = logging.getLogger(__name__)
-
-# Ratings that trigger a simulated buy in the paper book.
-BULLISH_RATINGS = {"Buy", "Overweight"}
 
 
 @dataclass
@@ -33,11 +27,13 @@ class Candidate:
     symbol: str
     rs: RSResult
     pattern: PatternScore
-    composite: float                 # ranking score: pattern weight + RS bonus
-    levels: Optional[dict] = None    # entry / stoploss / target (ATR-based)
-    # Filled by run_screen after AI analysis:
+    composite: float
+    levels: Optional[dict] = None
+    sector: str = ""
+    stock_name: str = ""
     decision_rating: Optional[str] = None
     report: Optional[str] = None
+    ma_summary: Optional[dict] = None
 
     @property
     def fired_signals(self) -> List[str]:
@@ -45,13 +41,8 @@ class Candidate:
 
 
 def screen_candidates(config: dict, progress: Optional[Callable[[str], None]] = None) -> List[Candidate]:
-    """Run the free part of the funnel and return ranked candidates.
+    """Run the free part of the funnel and return ranked candidates."""
 
-    Ranking gate: keep names at/above ``screen_rs_min_percentile`` relative
-    strength, then sort by a composite = pattern score + (RS percentile / 100).
-    Patterns drive the ranking; relative strength breaks ties and rewards the
-    strongest names.
-    """
     def _log(msg: str):
         logger.info(msg)
         if progress:
@@ -64,6 +55,11 @@ def screen_candidates(config: dict, progress: Optional[Callable[[str], None]] = 
     universe = load_universe(
         csv_path=config.get("screen_universe_csv"),
         cache_dir=config.get("data_cache_dir"),
+    )
+    metadata = load_universe_metadata(
+        csv_path=config.get("screen_universe_csv"),
+        cache_dir=config.get("data_cache_dir"),
+        allow_download=True,
     )
     _log(f"Universe: {len(universe)} tickers")
 
@@ -90,20 +86,77 @@ def screen_candidates(config: dict, progress: Optional[Callable[[str], None]] = 
             stop_atr_mult=float(config.get("levels_stop_atr_mult", 2.0)),
             target_rr=float(config.get("levels_target_rr", 2.0)),
         )
+        meta = metadata.get(r.symbol, {})
         candidates.append(
-            Candidate(symbol=r.symbol, rs=r, pattern=ps, composite=composite, levels=levels)
+            Candidate(
+                symbol=r.symbol,
+                rs=r,
+                pattern=ps,
+                composite=composite,
+                levels=levels,
+                sector=meta.get("sector") or "—",
+                stock_name=meta.get("name") or r.symbol.replace(".NS", "").replace(".BO", ""),
+            )
         )
 
     candidates.sort(key=lambda c: c.composite, reverse=True)
+
+    max_per_sector = int(config.get("paper_max_per_sector", 4))
+    if max_per_sector > 0:
+        from collections import Counter
+
+        counts: Counter[str] = Counter()
+        diversified: List[Candidate] = []
+        for c in candidates:
+            sector = c.sector or "—"
+            if counts[sector] >= max_per_sector:
+                continue
+            diversified.append(c)
+            counts[sector] += 1
+        candidates = diversified
+
     return candidates
 
 
 @dataclass
 class ScreenRun:
     trade_date: str
-    candidates: List[Candidate]          # the top-N that were analyzed
+    candidates: List[Candidate]
     paper_summary: Dict = field(default_factory=dict)
     opened: List[str] = field(default_factory=list)
+    waits: List[str] = field(default_factory=list)
+    skipped: List[dict] = field(default_factory=list)
+    rs_desk_report: Dict = field(default_factory=dict)
+
+
+def _analyze_candidate_ma(
+    cand: Candidate,
+    trade_date: str,
+    config: dict,
+) -> Tuple[Optional[dict], Optional[str]]:
+    """Run Market Analyst only; save under shared tech_reports; return summary."""
+    from tradingagents.analysis.tech_analyze import run_tech_analyze, save_tech_report
+    from tradingagents.tech_desk.report_excerpt import extract_final_proposal, extract_pm_summary
+
+    result = run_tech_analyze(cand.symbol, trade_date, config=config, asset_type="stock")
+    market_report = result.get("market_report") or ""
+    summary = extract_pm_summary(market_report) or {}
+    if not summary.get("proposal"):
+        proposal = (extract_final_proposal(market_report) or "").upper()
+        if proposal:
+            summary = {**summary, "proposal": proposal}
+
+    try:
+        base = Path(
+            config.get("tech_analyze_reports_dir")
+            or Path.home() / ".tradingagents" / "tech_reports"
+        )
+        out = base / cand.symbol.replace(".NS", "").replace(".BO", "") / trade_date
+        save_tech_report(result, out)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not save tech report for %s (%s)", cand.symbol, e)
+
+    return summary or None, market_report
 
 
 def run_screen(
@@ -112,12 +165,11 @@ def run_screen(
     progress: Optional[Callable[[str], None]] = None,
     analyze: bool = True,
 ) -> ScreenRun:
-    """Full funnel: screen -> analyze top-N -> paper-trade bullish calls.
-
-    Set ``analyze=False`` to stop after screening (no LLM calls) -- handy for
-    a dry-run preview. ``trade_date`` defaults to today (YYYY-MM-DD).
-    """
-    from tradingagents.paper.book import PaperBook  # local import: cheap preview path
+    """Full funnel: screen → MA on top-N → RS Desk PM → separate RS book."""
+    from tradingagents.rs_desk import as_tech_desk_config, run_rs_desk_process
+    from tradingagents.tech_desk.manager import TechDeskPaperTradeManager
+    from tradingagents.tech_desk.plan_from_ma import trade_plan_from_pm_summary
+    from tradingagents.tech_desk.schemas import PlanAction
 
     def _log(msg: str):
         if progress:
@@ -125,61 +177,121 @@ def run_screen(
 
     trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
     top_n = int(config.get("screen_top_n", 10))
+    min_conf = int(config.get("rs_desk_min_confidence", config.get("tech_desk_min_confidence", 60)))
 
     all_candidates = screen_candidates(config, progress=progress)
     top = all_candidates[:top_n]
-    _log(f"Selected top {len(top)} of {len(all_candidates)} candidates for analysis")
+    _log(f"Selected top {len(top)} of {len(all_candidates)} candidates for Market Analyst")
 
-    book = PaperBook(config)
+    rs_cfg = as_tech_desk_config(config)
+    manager = TechDeskPaperTradeManager(rs_cfg)
     run = ScreenRun(trade_date=trade_date, candidates=top)
-
-    # Always mark existing positions to market / close matured ones.
-    run.paper_summary = book.mark_to_market()
+    run.paper_summary = manager.book.stats()
 
     if not analyze:
         return run
 
-    # India mode for the analysis pipeline.
-    ta_config = dict(config)
-    ta_config["reddit_market"] = "india"
-    ta_config["stocktwits_market"] = "india"
-
-    from tradingagents.graph.trading_graph import TradingAgentsGraph
-
-    ta = TradingAgentsGraph(config=ta_config)
+    analyzed_tickers: List[str] = []
 
     for i, cand in enumerate(top, 1):
-        _log(f"[{i}/{len(top)}] Analyzing {cand.symbol} (signals: {cand.pattern.summary()})...")
+        _log(
+            f"[{i}/{len(top)}] Market Analyst {cand.symbol} "
+            f"(signals: {cand.pattern.summary()})..."
+        )
         try:
-            _state, rating = ta.propagate(cand.symbol, trade_date, asset_type="stock")
-        except Exception as e:  # noqa: BLE001 - one bad ticker shouldn't sink the run
-            logger.warning("Analysis failed for %s: %s", cand.symbol, e)
+            summary, report = _analyze_candidate_ma(cand, trade_date, config)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Market Analyst failed for %s: %s", cand.symbol, e)
             continue
-        cand.decision_rating = rating
 
-        if rating in BULLISH_RATINGS:
-            pos = book.open_position(
-                ticker=cand.symbol,
-                rating=rating,
-                entry_price=cand.rs.close,
-                entry_date=trade_date,
-                signals=cand.fired_signals,
-                levels=cand.levels,
+        cand.report = report
+        cand.ma_summary = summary
+        if summary:
+            cand.decision_rating = str(summary.get("proposal") or "").upper() or None
+
+        analyzed_tickers.append(cand.symbol)
+        price = float(cand.rs.close)
+        live = manager.book.latest_price(cand.symbol)
+        if live is not None:
+            price = float(live)
+
+        plan, skip_reason = trade_plan_from_pm_summary(
+            cand.symbol, summary, price, min_confidence=min_conf
+        )
+        if plan is not None:
+            cand.levels = {
+                "stoploss": plan.stop_loss,
+                "target": plan.target_1,
+                "entry_zone_low": plan.zone_low,
+                "entry_zone_high": plan.zone_high,
+            }
+            if plan.action == PlanAction.WAIT:
+                cand.decision_rating = cand.decision_rating or "WAIT"
+            _log(
+                f"    -> MA {cand.decision_rating}: preview "
+                f"{plan.action.value}/{plan.entry_type.value} "
+                f"SL {plan.stop_loss} T1 {plan.target_1} "
+                f"zone {plan.zone_low}–{plan.zone_high}"
             )
-            if pos is not None:
-                run.opened.append(cand.symbol)
-                _log(f"    -> {rating}: opened paper position in {cand.symbol}")
+        else:
+            _log(f"    -> MA skip preview: {skip_reason}")
 
-    # Refresh summary after opening new positions.
-    run.paper_summary = book.mark_to_market()
+    if not analyzed_tickers:
+        _log("No Market Analyst reports — skipping RS Desk PM")
+        try:
+            from tradingagents.paper.snapshots import save_screen_snapshot
 
-    # Persist results locally for the offline dashboard (best-effort).
+            save_screen_snapshot(config, trade_date, top, opened=[], waits=[])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Dashboard snapshot save failed: %s", e)
+        return run
+
+    _log(
+        f"RS Desk PM on {len(analyzed_tickers)} tickers "
+        f"(shared tech_reports, separate rs_desk book)..."
+    )
+    report = run_rs_desk_process(
+        config,
+        tickers=analyzed_tickers,
+        process_date=trade_date,
+        progress=progress,
+    )
+
+    if report.get("skipped"):
+        _log(f"RS Desk process skipped: {report.get('reason')}")
+        run.rs_desk_report = report
+        return run
+
+    run.opened = list(report.get("opened") or [])
+    run.waits = list(report.get("waits") or [])
+    raw_skips = report.get("skip_entries")
+    run.skipped = raw_skips if isinstance(raw_skips, list) else []
+    run.rs_desk_report = report
+    run.paper_summary = TechDeskPaperTradeManager(as_tech_desk_config(config)).book.stats()
+
+    for cand in top:
+        if cand.symbol in run.opened:
+            cand.decision_rating = cand.decision_rating or "BUY"
+        elif cand.symbol in run.waits:
+            cand.decision_rating = cand.decision_rating or "WAIT"
+
+    _log(
+        f"Done: opened {run.opened}; waits {run.waits}; "
+        f"skipped {len(run.skipped)} (RS Desk book)"
+    )
+
     try:
-        from tradingagents.paper.snapshots import save_results
+        from tradingagents.paper.snapshots import save_screen_snapshot
 
-        save_results(config, trade_date, top, run.opened, book)
-        _log("Saved results for the dashboard")
-    except Exception as e:  # noqa: BLE001 - persistence must never break a run
+        save_screen_snapshot(
+            config,
+            trade_date,
+            top,
+            opened=run.opened,
+            waits=run.waits,
+        )
+        _log("Saved screen results for the dashboard")
+    except Exception as e:  # noqa: BLE001
         logger.warning("Dashboard snapshot save failed: %s", e)
 
     return run

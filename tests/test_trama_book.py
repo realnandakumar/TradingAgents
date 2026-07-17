@@ -34,7 +34,7 @@ def test_strategy_name():
 def test_open_buy_position(tmp_path):
     cfg = {
         "trama_book_path": str(tmp_path / "positions.json"),
-        "trama_max_positions": 10,
+        "trama_max_positions": 20,
         "desk_capital": 100_000.0,
     }
     book = TramaPositionBook(cfg)
@@ -42,8 +42,8 @@ def test_open_buy_position(tmp_path):
     assert pos is not None
     assert pos["ticker"] == "TEST.NS"
     assert pos["entry_price"] == 100.0
-    assert pos["shares"] == 100  # ₹10k slot / ₹100
-    assert pos["notional"] == pytest.approx(10_000.0)
+    assert pos["shares"] == 50  # ₹5k slot (100k/20) / ₹100
+    assert pos["notional"] == pytest.approx(5_000.0)
     assert pos["stop_loss"] == 95.0
     assert pos["cross_age"] == 1
     assert pos["dist_pct"] == 5.26
@@ -51,7 +51,7 @@ def test_open_buy_position(tmp_path):
 
 
 def test_same_day_exit_skipped(tmp_path, monkeypatch):
-    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 10}
+    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 20}
     book = TramaPositionBook(cfg)
     book.open_position(_make_pick(), "2026-07-09")
 
@@ -81,7 +81,7 @@ def test_skips_sell_signals(tmp_path):
 
 
 def test_save_picks_only_buy(tmp_path):
-    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 10}
+    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 20}
     book = TramaPositionBook(cfg)
     saved = book.save_picks([
         _make_pick("AAA.NS", "BUY"),
@@ -90,6 +90,73 @@ def test_save_picks_only_buy(tmp_path):
     ])
     assert len(saved) == 2
     assert book.open_count() == 2
+    assert any(s["ticker"] == "BBB.NS" for s in book.sell_signals)
+
+
+def test_open_position_respects_sector_cap(tmp_path):
+    cfg = {
+        "trama_book_path": str(tmp_path / "positions.json"),
+        "trama_max_per_sector": 2,
+        "trama_max_positions": 10,
+        "desk_capital": 100_000.0,
+    }
+    book = TramaPositionBook(cfg)
+    for i in range(2):
+        assert book.open_position(_make_pick(f"IT{i}.NS"), "2026-07-01") is not None
+    assert book.open_position(_make_pick("IT2.NS"), "2026-07-01") is None
+    assert book.open_count() == 2
+
+
+def test_close_on_sell_signal(tmp_path):
+    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 20, "desk_capital": 100_000.0}
+    book = TramaPositionBook(cfg)
+    assert book.open_position(_make_pick("TEST.NS", "BUY"), "2026-07-01") is not None
+    events = book.close_on_sell_signals(
+        [_make_pick("TEST.NS", "SELL")],
+        as_of="2026-07-04",
+    )
+    assert len(events) == 1
+    assert events[0]["reason"] == "signal_sell"
+    assert book.open_count() == 0
+
+
+def test_close_legacy_runners(tmp_path):
+    cfg = {"trama_book_path": str(tmp_path / "positions.json")}
+    book = TramaPositionBook(cfg)
+    book._state = {
+        "positions": [
+            {
+                "ticker": "RUN.NS",
+                "stock_name": "Runner",
+                "sector": "IT",
+                "screen_date": "2026-07-01",
+                "entry_price": 100.0,
+                "shares": 10,
+                "stop_loss": 90.0,
+                "trailing_stop": 90.0,
+                "target_1": 115.0,
+                "status": "open",
+                "phase": "runner",
+                "remaining_pct": 25.0,
+                "t2_partial_done": True,
+                "partial_exits": [
+                    {
+                        "date": "2026-07-05",
+                        "price": 125.0,
+                        "pct": 75.0,
+                        "reason": "target_2_partial",
+                        "return": 0.25,
+                        "rupee_pnl": 187.5,
+                    }
+                ],
+            }
+        ],
+        "sell_signals": [],
+    }
+    events = book.close_legacy_runners(as_of="2026-07-16")
+    assert len(events) == 1
+    assert events[0]["reason"] == "legacy_runner_close"
+    assert book.open_count() == 0
 
 
 def test_finite_price_rejects_nan():
@@ -99,7 +166,7 @@ def test_finite_price_rejects_nan():
 
 
 def test_save_writes_strict_json_without_nan(tmp_path):
-    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 10}
+    cfg = {"trama_book_path": str(tmp_path / "positions.json"), "trama_max_positions": 20}
     book = TramaPositionBook(cfg)
     book.open_position(_make_pick(), "2026-07-08")
     book.positions[0]["exit_price"] = float("nan")

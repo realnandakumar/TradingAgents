@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -12,6 +13,7 @@ import pandas as pd
 
 from tradingagents.screening.momentum_indicators import (
     adx_rising,
+    higher_high_after_pullback,
     macd,
     pct_above_ema,
     supertrend_buy_age,
@@ -59,6 +61,7 @@ class MomentumPick:
     volume_ratio_5_20: float
     extension_pct: float
     adx_rising: bool
+    hh_pullback: bool = False
     risk_pct: float = 0.0
     market_cap_cr: Optional[float] = None
     avg_traded_value_cr: Optional[float] = None
@@ -102,6 +105,9 @@ def _passes_technical_filters(df: pd.DataFrame, config: dict) -> Optional[dict]:
     st_min_buy = int(config.get("momentum_st_min_buy_sessions", 4))
     swing_flip_sessions = int(config.get("swing_flip_lookback_sessions", 3))
     exclude_swing_overlap = config.get("momentum_exclude_swing_overlap", True)
+    pullback_sessions = int(config.get("momentum_pullback_sessions", 10))
+    hh_lookback = int(config.get("momentum_hh_lookback", 10))
+    ema_pullback_tol = float(config.get("momentum_ema_pullback_tolerance", 1.02))
 
     close = df["Close"]
     volume = df["Volume"]
@@ -168,6 +174,13 @@ def _passes_technical_filters(df: pd.DataFrame, config: dict) -> Optional[dict]:
     risk = 100.0 * (latest_close - stop) / latest_close if latest_close > 0 else 0.0
     avg_traded = _avg_daily_traded_value_inr(df, vol_long)
     rising = adx_rising(adx_series, sessions=adx_rise_sessions)
+    hh_pullback = higher_high_after_pullback(
+        df,
+        ema50,
+        pullback_sessions=pullback_sessions,
+        hh_lookback=hh_lookback,
+        ema_tolerance=ema_pullback_tol,
+    )
 
     return {
         **levels,
@@ -179,6 +192,7 @@ def _passes_technical_filters(df: pd.DataFrame, config: dict) -> Optional[dict]:
         "volume_ratio_5_20": round(vol_ratio, 4),
         "extension_pct": round(extension, 2),
         "adx_rising": rising,
+        "hh_pullback": hh_pullback,
         "avg_traded_value_inr": avg_traded,
         "risk_pct": round(risk, 2),
     }
@@ -259,6 +273,7 @@ def screen_momentum(
                 volume_ratio_5_20=snap["volume_ratio_5_20"],
                 extension_pct=snap["extension_pct"],
                 adx_rising=snap["adx_rising"],
+                hh_pullback=snap.get("hh_pullback", False),
                 risk_pct=snap.get("risk_pct", 0.0),
                 market_cap_cr=round(cap / _CRORE, 1),
                 avg_traded_value_cr=round(snap["avg_traded_value_inr"] / _CRORE, 2),
@@ -276,6 +291,23 @@ def screen_momentum(
     )
     top_n = int(config.get("momentum_top_n", 10))
     total = len(picks)
-    picks = picks[:top_n]
-    _log(f"{total} momentum candidate(s) after market-cap filter; showing top {len(picks)}")
+    max_per_sector = int(config.get("momentum_max_per_sector", 4))
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped: List[MomentumPick] = []
+        for pick in picks:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped.append(pick)
+            sector_counts[sector] += 1
+            if len(capped) >= top_n:
+                break
+        picks = capped
+    else:
+        picks = picks[:top_n]
+    _log(
+        f"{total} momentum candidate(s) after market-cap filter; "
+        f"showing top {len(picks)} with max {max_per_sector} per sector"
+    )
     return picks

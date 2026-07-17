@@ -43,7 +43,12 @@ export function CandidatesTable({
                   {shortSymbol(c.symbol)}
                   {c.opened && (
                     <span className="ml-2 text-[10px] text-bull border border-bull/30 rounded px-1 py-0.5 align-middle">
-                      paper
+                      open
+                    </span>
+                  )}
+                  {c.waiting && (
+                    <span className="ml-2 text-[10px] text-muted border border-border rounded px-1 py-0.5 align-middle">
+                      wait
                     </span>
                   )}
                 </td>

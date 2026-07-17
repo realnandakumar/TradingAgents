@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from collections import Counter
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -277,6 +278,23 @@ def screen_swing(
     )
     top_n = int(config.get("swing_top_n", 10))
     total = len(picks)
-    picks = picks[:top_n]
-    _log(f"{total} swing candidate(s) after market-cap filter; showing top {len(picks)}")
+    max_per_sector = int(config.get("swing_max_per_sector", 4))
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped: List[SwingPick] = []
+        for pick in picks:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped.append(pick)
+            sector_counts[sector] += 1
+            if len(capped) >= top_n:
+                break
+        picks = capped
+    else:
+        picks = picks[:top_n]
+    _log(
+        f"{total} swing candidate(s) after market-cap filter; "
+        f"showing top {len(picks)} with max {max_per_sector} per sector"
+    )
     return picks

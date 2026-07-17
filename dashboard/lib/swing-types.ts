@@ -27,6 +27,9 @@ export interface SwingPosition {
   relative_volume?: number;
   range_pct?: number;
   atr_ratio?: number;
+  hh_pullback?: boolean;
+  breakout_ok?: boolean;
+  volume_ok?: boolean;
   raw_return?: number | null;
   exit_date?: string | null;
   exit_reason?: string | null;

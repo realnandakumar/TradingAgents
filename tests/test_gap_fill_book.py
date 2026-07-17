@@ -136,3 +136,57 @@ def test_save_picks_only_buy(tmp_path):
     ])
     assert len(saved) == 2
     assert book.open_count() == 2
+    assert len(book.sell_signals) == 1
+    assert book.sell_signals[0]["ticker"] == "BBB.NS"
+
+
+def test_sector_cap_blocks_fifth(tmp_path):
+    cfg = {
+        "gap_fill_book_path": str(tmp_path / "positions.json"),
+        "gap_fill_max_positions": 20,
+        "gap_fill_max_per_sector": 4,
+        "desk_capital": 100_000.0,
+    }
+    book = GapFillPositionBook(cfg)
+    for i in range(4):
+        pick = _make_pick(f"T{i}.NS", "DOWN")
+        pick.sector = "IT"
+        pick.signal.sector = "IT"
+        assert book.open_position(pick, "2026-07-08") is not None
+    fifth = _make_pick("T4.NS", "DOWN")
+    fifth.sector = "IT"
+    fifth.signal.sector = "IT"
+    assert book.open_position(fifth, "2026-07-08") is None
+    assert book.open_count() == 4
+
+
+def test_close_on_up_gap_signal(tmp_path):
+    cfg = {
+        "gap_fill_book_path": str(tmp_path / "positions.json"),
+        "gap_fill_max_positions": 10,
+        "desk_capital": 100_000.0,
+    }
+    book = GapFillPositionBook(cfg)
+    assert book.open_position(_make_pick("TEST.NS", "DOWN"), "2026-07-01") is not None
+    up = _make_pick("TEST.NS", "UP")
+    up.signal.close = 98.0
+    events = book.close_on_sell_signals([up], as_of="2026-07-08")
+    assert len(events) == 1
+    assert events[0]["reason"] == "signal_sell"
+    assert book.open_count() == 0
+
+
+def test_reset_portfolio_via_manager(tmp_path):
+    from tradingagents.gap_fill.manager import GapFillPaperTradeManager
+
+    cfg = {
+        "gap_fill_book_path": str(tmp_path / "positions.json"),
+        "gap_fill_pending_path": str(tmp_path / "pending.json"),
+        "gap_fill_daily_dir": str(tmp_path / "daily"),
+        "gap_fill_max_positions": 10,
+    }
+    mgr = GapFillPaperTradeManager(cfg)
+    mgr.book.open_position(_make_pick(), "2026-07-08")
+    assert mgr.book.open_count() == 1
+    mgr.reset_portfolio()
+    assert mgr.book.open_count() == 0

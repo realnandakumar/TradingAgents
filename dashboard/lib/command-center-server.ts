@@ -7,6 +7,7 @@ import { readPatternForecastBook } from "@/lib/pattern-forecast-server";
 import { readStrsiBook } from "@/lib/supertrend-rsi-server";
 import { readSwingBook } from "@/lib/swing-server";
 import { readTechDeskBook } from "@/lib/tech-desk-server";
+import { readRsDeskBook } from "@/lib/rs-desk-server";
 import { readTramaBook } from "@/lib/trama-server";
 import type { SwingBook } from "@/lib/swing-types";
 
@@ -21,6 +22,7 @@ const BOOK_READERS: Record<string, BookReader> = {
   "gap-fill": readGapFillBook as BookReader,
   "nw-envelope": readNwEnvelopeBook as BookReader,
   "pattern-forecast": readPatternForecastBook as BookReader,
+  positions: readRsDeskBook as BookReader,
   "tech-desk": readTechDeskBook as BookReader,
 };
 

@@ -1,4 +1,4 @@
-"""Tests for swing exit rules (partial T2 + trail)."""
+"""Tests for swing exit rules (full T1, stop, time)."""
 
 import pandas as pd
 import pytest
@@ -23,10 +23,9 @@ def _pos(**kwargs):
         "entry_price": 100,
         "stop_loss": 95,
         "trailing_stop": 95,
+        "target_1": 115,
         "target_2": 120,
-        "phase": "initial",
         "remaining_pct": 100.0,
-        "t2_partial_done": False,
     }
     base.update(kwargs)
     return base
@@ -42,27 +41,24 @@ def test_stop_full_exit():
     assert acts[0].exit_pct == 100.0
 
 
-def test_t2_partial_exit():
-    hist = _hist([100, 105, 115], highs=[100, 105, 121])
+def test_t1_full_exit():
+    hist = _hist([100, 105, 115], highs=[100, 105, 116])
     bar = hist.iloc[-1]
     bd = hist.index[-1].strftime("%Y-%m-%d")
-    acts = evaluate_bar_exits(_pos(), bar, bd, 20, hist, t2_exit_pct=75.0)
+    acts = evaluate_bar_exits(_pos(), bar, bd, 20, hist)
     assert len(acts) == 1
-    assert acts[0].reason == ExitReason.TARGET_2_PARTIAL
-    assert acts[0].partial is True
-    assert acts[0].exit_pct == 75.0
+    assert acts[0].reason == ExitReason.TARGET_1
+    assert acts[0].partial is False
+    assert acts[0].exit_pct == 100.0
 
 
-def test_runner_trail_stop():
-    hist = _hist([100, 110, 108], lows=[100, 110, 104], highs=[100, 110, 108])
+def test_stop_wins_over_t1_same_bar():
+    hist = _hist([100, 110, 108], lows=[100, 110, 94], highs=[100, 110, 116])
     bar = hist.iloc[-1]
     bd = hist.index[-1].strftime("%Y-%m-%d")
-    acts = evaluate_bar_exits(
-        _pos(phase="runner", remaining_pct=25.0, t2_partial_done=True, trailing_stop=105),
-        bar, bd, 20, hist,
-    )
+    acts = evaluate_bar_exits(_pos(), bar, bd, 20, hist)
     assert len(acts) == 1
-    assert acts[0].reason == ExitReason.TRAIL_STOP
+    assert acts[0].reason == ExitReason.STOP
 
 
 def test_risk_pct():

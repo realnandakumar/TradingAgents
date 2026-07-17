@@ -14,6 +14,33 @@ _REPORT_NAMES = ("market.md", "complete_report.md")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _ticker_match_keys(ticker: str) -> set[str]:
+    """Match ``BHEL.NS`` folders to ``BHEL`` (and the reverse)."""
+    u = (ticker or "").upper().strip()
+    if not u:
+        return set()
+    keys = {u}
+    for suf in (".NS", ".BO"):
+        if u.endswith(suf):
+            keys.add(u[: -len(suf)])
+            return keys
+    keys.add(f"{u}.NS")
+    keys.add(f"{u}.BO")
+    return keys
+
+
+def _preferred_ticker(path_ticker: str, requested: Optional[List[str]]) -> str:
+    """Prefer the caller’s symbol form (usually ``TICKER.NS``) over bare folder names."""
+    path_keys = _ticker_match_keys(path_ticker)
+    if requested:
+        for wanted in requested:
+            if path_keys & _ticker_match_keys(wanted):
+                return wanted
+    if "." not in path_ticker:
+        return f"{path_ticker}.NS"
+    return path_ticker
+
+
 @dataclass
 class TechReportSnapshot:
     ticker: str
@@ -37,12 +64,13 @@ def _parse_date_from_path(path: Path) -> Optional[str]:
 
 
 def _report_sort_key(snap: TechReportSnapshot) -> tuple:
-    """Prefer path date, then file mtime."""
+    """Prefer path date, then complete report, then file mtime."""
     try:
         mtime = (snap.report_dir / snap.source_file).stat().st_mtime
     except OSError:
         mtime = 0.0
-    return (snap.report_date, mtime)
+    source_priority = 1 if snap.source_file == "complete_report.md" else 0
+    return (snap.report_date, source_priority, mtime)
 
 
 def _read_report_file(report_dir: Path) -> Optional[tuple[str, str]]:
@@ -83,7 +111,12 @@ def load_tech_reports(
         return [], []
 
     as_of = as_of or datetime.now().strftime("%Y-%m-%d")
-    ticker_filter = {t.upper() for t in tickers} if tickers else None
+    requested = list(tickers) if tickers else None
+    filter_keys: Optional[set[str]] = None
+    if tickers:
+        filter_keys = set()
+        for t in tickers:
+            filter_keys |= _ticker_match_keys(t)
     by_ticker: dict[str, TechReportSnapshot] = {}
     stale_tickers: List[str] = []
 
@@ -96,8 +129,8 @@ def load_tech_reports(
         if not ticker or ticker.startswith("."):
             continue
 
-        norm_ticker = ticker.upper()
-        if ticker_filter and norm_ticker not in ticker_filter:
+        path_keys = _ticker_match_keys(ticker)
+        if filter_keys is not None and not (path_keys & filter_keys):
             continue
 
         report_date = _parse_date_from_path(report_dir) or datetime.fromtimestamp(
@@ -122,8 +155,10 @@ def load_tech_reports(
                     pm_summary = data["pm_summary"]
             except Exception:
                 pass
+
+        display_ticker = _preferred_ticker(ticker, requested)
         snap = TechReportSnapshot(
-            ticker=ticker,
+            ticker=display_ticker,
             report_date=report_date,
             report_dir=report_dir,
             market_text=content,
@@ -131,9 +166,19 @@ def load_tech_reports(
             pm_summary=pm_summary,
         )
 
-        existing = by_ticker.get(norm_ticker)
+        # Dedupe by exchange-stripped key so BHEL and BHEL.NS collapse
+        dedupe_key = next(iter(sorted(k for k in path_keys if "." not in k)), display_ticker.upper())
+        existing = by_ticker.get(dedupe_key)
         if existing is None or _report_sort_key(snap) > _report_sort_key(existing):
-            by_ticker[norm_ticker] = snap
+            by_ticker[dedupe_key] = snap
 
-    stale_unique = sorted({t for t in stale_tickers if t.upper() not in by_ticker})
+    stale_unique = sorted(
+        {
+            t
+            for t in stale_tickers
+            if not any(
+                (_ticker_match_keys(t) & _ticker_match_keys(s.ticker)) for s in by_ticker.values()
+            )
+        }
+    )
     return sorted(by_ticker.values(), key=lambda s: s.ticker), stale_unique

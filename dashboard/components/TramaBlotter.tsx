@@ -7,12 +7,8 @@ import { shortSector } from "@/lib/swing-types";
 import { ChartTickerLink } from "@/components/ChartTickerLink";
 import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
-const MAX_POSITIONS = 10;
+const MAX_POSITIONS = 20;
 const MAX_HOLD_DAYS = 20;
-
-function phaseLabel(phase?: string): string {
-  return phase === "runner" ? "RUN" : "INIT";
-}
 
 function cushionPct(last: number | null, stop: number): number | null {
   if (last == null || last <= 0) return null;
@@ -54,7 +50,10 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
 
   const avgRisk =
     open.reduce((s, p) => s + Math.abs(p.stop_loss_pct), 0) / (open.length || 1);
-  const avgT2 = open.reduce((s, p) => s + p.target_2_pct, 0) / (open.length || 1);
+  const avgT1 = open.reduce((s, p) => s + p.target_1_pct, 0) / (open.length || 1);
+
+  const sectors: Record<string, number> = {};
+  for (const p of open) sectors[p.sector] = (sectors[p.sector] ?? 0) + 1;
 
   return (
     <div className="space-y-0">
@@ -69,7 +68,7 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
           },
           { label: "Slots free", value: String(MAX_POSITIONS - open.length), sub: "capacity" },
           { label: "Avg risk", value: pct(-avgRisk), sub: "to stop", tone: "text-bear" },
-          { label: "Avg T2", value: pct(avgT2, 2), sub: "upside", tone: "text-bull" },
+          { label: "Avg T1", value: pct(avgT1, 2), sub: "upside", tone: "text-bull" },
           { label: "Max hold", value: `${MAX_HOLD_DAYS}d`, sub: "time exit" },
         ].map((k) => (
           <div key={k.label} className="px-4 py-3 border-r border-border/60 last:border-r-0">
@@ -85,7 +84,7 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
           <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2 text-xs">
             <span className="font-medium uppercase tracking-wide">Position blotter</span>
             <span className="text-muted">{open.length} lines</span>
-            <span className="ml-auto text-muted">1D · TRAMA cross · 20-day hold</span>
+            <span className="ml-auto text-muted">1D · T1 full · SELL closes · 20d</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs font-mono">
@@ -104,8 +103,7 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
                   <th className="text-right py-2 px-2">MTM</th>
                   <th className="text-right py-2 px-2">Stop</th>
                   <th className="text-right py-2 px-2">Cush</th>
-                  <th className="text-right py-2 px-2">T2</th>
-                  <th className="text-center py-2 px-2">Ph</th>
+                  <th className="text-right py-2 px-2">T1</th>
                   <th className="text-left py-2 px-3">Sector</th>
                 </tr>
               </thead>
@@ -141,9 +139,8 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
                       {cushion != null ? pct(cushion, 1) : "—"}
                     </td>
                     <td className="py-2 px-2 text-right tabular-nums text-bull">
-                      {pct(p.target_2_pct, 1)}
+                      {pct(p.target_1_pct, 1)}
                     </td>
-                    <td className="py-2 px-2 text-center">{phaseLabel(p.phase)}</td>
                     <td className="py-2 px-3 text-muted truncate max-w-[100px]">
                       {shortSector(p.sector)}
                     </td>
@@ -155,6 +152,21 @@ export function TramaBlotter({ positions }: { positions: TramaPosition[] }) {
         </div>
 
         <div className="p-4 space-y-4 text-xs">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted mb-2">Sector exposure</div>
+            <p className="text-muted mb-1.5">Max 4 open names per sector on new entries</p>
+            <ul className="space-y-1.5">
+              {Object.entries(sectors)
+                .sort((a, b) => b[1] - a[1])
+                .map(([sector, count]) => (
+                  <li key={sector} className="flex justify-between">
+                    <span>{shortSector(sector)}</span>
+                    <span className="text-muted">{count}</span>
+                  </li>
+                ))}
+            </ul>
+          </div>
+
           <div>
             <div className="text-[10px] uppercase tracking-wider text-muted mb-2">Remarks</div>
             {rows.length === 0 ? (

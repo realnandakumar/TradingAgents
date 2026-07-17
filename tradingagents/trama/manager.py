@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, TYPE_CHECKING
 
 from .book import TramaPositionBook
-from tradingagents.swing.exits import ExitReason
 
 if TYPE_CHECKING:
     from tradingagents.screening.trama_screener import TramaPick
@@ -38,7 +37,8 @@ class TramaPaperTradeManager:
         cfg = config or {}
         self.config = cfg
         self.book = TramaPositionBook(cfg)
-        self.max_positions = int(cfg.get("trama_max_positions", 10))
+        self.max_positions = int(cfg.get("trama_max_positions", 20))
+        self.max_per_sector = int(cfg.get("trama_max_per_sector", 4))
         trama_dir = Path(
             cfg.get("trama_book_path", os.path.join(_DEFAULT_HOME, "trama", "positions.json"))
         ).parent
@@ -107,24 +107,11 @@ class TramaPaperTradeManager:
         )
 
     def approve_replacement(self, proposal_id: str, pick: "TramaPick") -> bool:
+        """Disabled — positions exit via stop/target (or time) only."""
         pending = self._load_pending()
-        match = next((p for p in pending if p["id"] == proposal_id and not p.get("approved")), None)
-        if match is None:
-            return False
-        price = self.book.latest_price(match["close_ticker"])
-        if price is None:
-            return False
-        screen_date = datetime.now().strftime("%Y-%m-%d")
-        self.book.close_position(
-            match["close_ticker"],
-            exit_price=price,
-            exit_date=screen_date,
-            reason=ExitReason.FORECLOSURE.value,
-        )
-        self.book.open_position(pick, screen_date)
-        match["approved"] = True
-        self._save_pending(pending)
-        return True
+        if pending:
+            self._save_pending([])
+        return False
 
     def run_daily(
         self,
@@ -134,22 +121,35 @@ class TramaPaperTradeManager:
     ) -> dict:
         screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
         buy_picks = [p for p in picks if p.direction == "BUY"]
+        sell_picks = [p for p in picks if p.direction == "SELL"]
         report: dict = {
             "date": screen_date,
             "chart_timeframe": "1d",
             "screener_picks": len(buy_picks),
+            "sell_signals": len(sell_picks),
             "exits": [],
             "opened": [],
             "skipped_duplicate": [],
+            "skipped_sector_cap": [],
             "proposals": [],
             "approved_replacements": [],
         }
 
-        exit_summary = self.book.evaluate_and_close_exits(as_of=screen_date)
-        report["exits"] = exit_summary.get("closed", [])
+        stored_sells = self.book.store_sell_signals(picks, screen_date=screen_date)
+        report["stored_sell_signals"] = [s["ticker"] for s in stored_sells]
 
-        today_tickers = {p.symbol for p in buy_picks}
+        legacy = self.book.close_legacy_runners(as_of=screen_date)
+        exit_summary = self.book.evaluate_and_close_exits(as_of=screen_date)
+        sell_closes = self.book.close_on_sell_signals(sell_picks, as_of=screen_date)
+        report["exits"] = legacy + exit_summary.get("closed", []) + sell_closes
+        report["legacy_runner_closes"] = [e["ticker"] for e in legacy]
+        report["signal_sell_closes"] = [e["ticker"] for e in sell_closes]
+
         open_count = self.book.open_count()
+        sector_counts = self.book.sector_open_counts()
+
+        if self._load_pending():
+            self._save_pending([])  # foreclosure disabled
 
         for pick in buy_picks:
             if self.book.has_open_position(pick.symbol):
@@ -157,42 +157,22 @@ class TramaPaperTradeManager:
                 report["skipped_duplicate"].append(pick.symbol)
                 continue
 
+            sector = pick.sector or (pick.signal.sector if pick.signal else None) or ""
+            if sector_counts.get(sector, 0) >= self.max_per_sector:
+                report["skipped_sector_cap"].append(pick.symbol)
+                continue
+
             if open_count < self.max_positions:
                 pos = self.book.open_position(pick, screen_date)
                 if pos:
                     report["opened"].append(pick.symbol)
                     open_count += 1
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 continue
 
-            pending = self._load_pending()
-            if any(
-                not p.get("approved") and p.get("new_ticker") == pick.symbol
-                for p in pending
-            ):
-                continue
-
-            proposal = self.propose_replacement(pick, today_tickers)
-            report["proposals"].append(asdict(proposal))
-
-            if approve and approve(proposal):
-                price = self.book.latest_price(proposal.close_ticker)
-                if price is not None:
-                    self.book.close_position(
-                        proposal.close_ticker,
-                        exit_price=price,
-                        exit_date=screen_date,
-                        reason=ExitReason.FORECLOSURE.value,
-                    )
-                    self.book.open_position(pick, screen_date)
-                    report["approved_replacements"].append({
-                        "closed": proposal.close_ticker,
-                        "opened": pick.symbol,
-                    })
-                    proposal.approved = True
-
-            pending = self._load_pending()
-            pending.append(asdict(proposal))
-            self._save_pending(pending)
+            # Portfolio full — no foreclosure; wait for stop/target (or time) exits.
+            report.setdefault("skipped_full", []).append(pick.symbol)
+            continue
 
         report["open_positions"] = self.book.open_count()
         report["stats"] = self.book.stats()

@@ -49,15 +49,20 @@ export default function GapFillDeskPage() {
           maxFillPct={maxFillPct}
         />
       }
-      extraBadges={["≤50% fill"]}
+      extraBadges={["≤50% fill", "T1 Full Exit", "Max 4 / Sector", "UP Closes"]}
       emptyHint="Run screener then daily from Desk actions. Only gaps not yet more than 50% closed are traded."
       headerExtra={
-        snapshot ? (
-          <div>
-            Screener {snapshotUpdated} IST · {snapshot.total_hits} candidate
-            {snapshot.total_hits === 1 ? "" : "s"}
-          </div>
-        ) : null
+        <div>
+          Opens gap-down (BUY) only. Exits 100% at fill target (T1), stop, 20-day time, or matching UP-gap
+          signal. New entries capped at 4 open names per sector.
+          {snapshot ? (
+            <>
+              {" "}
+              Screener {snapshotUpdated} IST · {snapshot.total_hits} candidate
+              {snapshot.total_hits === 1 ? "" : "s"}.
+            </>
+          ) : null}
+        </div>
       }
       screenerPanel={
         <section className="card p-5 space-y-4">
@@ -68,7 +73,8 @@ export default function GapFillDeskPage() {
               </h2>
               <p className="text-muted text-sm mt-1">
                 Entry band: gap fill progress {10}–{maxFillPct}% (gap down = long). Daily opens{" "}
-                <strong>gap-down</strong> names not already in the book; skips if portfolio is full.
+                <strong>gap-down</strong> names not already in the book (max 4/sector); UP gaps close
+                matching longs. Skips if portfolio is full.
               </p>
               {snapshot && openPositions.length > 0 ? (
                 <p className="text-muted text-xs mt-2 font-mono">

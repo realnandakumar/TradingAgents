@@ -32,11 +32,7 @@ export function TechDeskActivityPanel() {
             Date {String(process.date ?? "—")} · opened{" "}
             {Array.isArray(process.opened) ? process.opened.length : 0} · waits{" "}
             {Array.isArray(process.waits) ? process.waits.length : 0} · closes{" "}
-            {Array.isArray(process.closes) ? process.closes.length : 0}
-            {Array.isArray(process.pending_replacements) &&
-            (process.pending_replacements as unknown[]).length > 0
-              ? ` · replacements ${(process.pending_replacements as unknown[]).length}`
-              : ""}{" "}
+            {Array.isArray(process.closes) ? process.closes.length : 0}{" "}
             · open {String(process.open_positions ?? "—")}
           </div>
           {Array.isArray(process.stale_tickers) && process.stale_tickers.length > 0 ? (

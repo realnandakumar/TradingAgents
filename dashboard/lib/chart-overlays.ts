@@ -6,6 +6,7 @@ import { readPatternForecastBook } from "@/lib/pattern-forecast-server";
 import { readStrsiBook } from "@/lib/supertrend-rsi-server";
 import { readSwingBook } from "@/lib/swing-server";
 import { readTechDeskBook, readTechDeskPending } from "@/lib/tech-desk-server";
+import { readRsDeskBook, readRsDeskPending } from "@/lib/rs-desk-server";
 import { readTramaBook } from "@/lib/trama-server";
 import {
   readChartPatternScreenerSnapshot,
@@ -147,25 +148,29 @@ function swingPositionOverlay(
   return out;
 }
 
-function techDeskOverlay(norm: string): DeskChartOverlay {
-  const out = emptyOverlay("tech-desk");
+function managedDeskOverlay(
+  norm: string,
+  deskId: "tech-desk" | "positions",
+): DeskChartOverlay {
+  const out = emptyOverlay(deskId);
 
-  const book = readTechDeskBook();
+  const book = deskId === "tech-desk" ? readTechDeskBook() : readRsDeskBook();
   for (const p of book?.positions ?? []) {
     if (!matchesTicker(p.ticker, norm) || p.status !== "open") continue;
-    const row = swingPositionOverlay("tech-desk", p as unknown as Record<string, unknown>);
+    const row = swingPositionOverlay(deskId, p as unknown as Record<string, unknown>);
     out.hlines.push(...row.hlines);
     out.markers.push(...row.markers);
   }
 
-  for (const pe of readTechDeskPending()) {
+  const pending = deskId === "tech-desk" ? readTechDeskPending() : readRsDeskPending();
+  for (const pe of pending) {
     if (!matchesTicker(pe.ticker, norm)) continue;
     const zl = num(pe.zone_low);
     const zh = num(pe.zone_high);
     if (zl != null && zh != null && zh > zl) {
       out.zones.push({
-        id: "tech_desk_pending_zone",
-        deskId: "tech-desk",
+        id: `${deskId}_pending_zone`,
+        deskId,
         low: zl,
         high: zh,
         label: `${out.deskLabel} buy zone`,
@@ -272,7 +277,7 @@ function chartPatternOverlay(norm: string, patternId?: string | null): DeskChart
   return out;
 }
 
-type BookReader = () => { positions: Record<string, unknown>[] } | null;
+type BookReader = () => { positions: unknown[] } | null;
 
 const SWING_BOOK_READERS: Record<string, BookReader> = {
   swing: () => readSwingBook(),
@@ -304,7 +309,8 @@ export function collectDeskOverlays(
   for (const deskId of Object.keys(SWING_BOOK_READERS)) {
     const book = SWING_BOOK_READERS[deskId]();
     const bundle = emptyOverlay(deskId);
-    for (const p of book?.positions ?? []) {
+    for (const raw of book?.positions ?? []) {
+      const p = raw as Record<string, unknown>;
       if ((p.status as string) !== "open") continue;
       if (!matchesTicker(String(p.ticker ?? ""), norm)) continue;
       appendBundle(bundle, swingPositionOverlay(deskId, p));
@@ -314,9 +320,11 @@ export function collectDeskOverlays(
     }
   }
 
-  const tech = techDeskOverlay(norm);
-  if (tech.hlines.length || tech.zones.length || tech.markers.length) {
-    overlays.push(tech);
+  for (const deskId of ["tech-desk", "positions"] as const) {
+    const managed = managedDeskOverlay(norm, deskId);
+    if (managed.hlines.length || managed.zones.length || managed.markers.length) {
+      overlays.push(managed);
+    }
   }
 
   const patterns = chartPatternOverlay(norm, patternId);

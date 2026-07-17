@@ -1,6 +1,6 @@
 // Shapes mirror the JSON snapshots pushed by tradingagents/sync/supabase_sync.py.
 
-export type Rating = "Buy" | "Overweight" | "Hold" | "Underweight" | "Sell";
+export type Rating = "BUY" | "Buy" | "Overweight" | "Hold" | "Underweight" | "Sell" | "WAIT" | "SELL" | "HOLD";
 
 export interface Candidate {
   rank: number;
@@ -12,12 +12,18 @@ export interface Candidate {
   signals: string[];
   rating: Rating | null;
   opened: boolean;
+  waiting?: boolean;
+  stoploss?: number | null;
+  target?: number | null;
+  entry_zone_low?: number | null;
+  entry_zone_high?: number | null;
 }
 
 export interface ScreenSnapshot {
   trade_date: string;
   generated_at: string;
   opened: string[];
+  waits?: string[];
   candidates: Candidate[];
 }
 
@@ -35,8 +41,12 @@ export interface Position {
   notional?: number;
   stoploss?: number | null;
   target?: number | null;
-  stop_pct?: number | null;       // negative %, downside to stop
-  target_pct?: number | null;     // positive %, upside to target
+  stop_pct?: number | null;
+  target_pct?: number | null;
+  sector?: string | null;
+  stock_name?: string | null;
+  exit_reason?: string | null;
+  outcome?: string | null;
   status: "open" | "closed";
   exit_date: string | null;
   exit_price: number | null;

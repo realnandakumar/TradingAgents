@@ -65,3 +65,32 @@ def test_rejects_missing_stop(tmp_path):
     pick = _make_pick()
     pick.signal.stop_loss = 100.0
     assert book.open_position(pick, "2026-07-08") is None
+
+
+def test_sector_cap_blocks_fifth(tmp_path):
+    cfg = {
+        "pattern_forecast_book_path": str(tmp_path / "positions.json"),
+        "pattern_forecast_max_positions": 20,
+        "pattern_forecast_max_per_sector": 4,
+        "desk_capital": 100_000.0,
+    }
+    book = PatternForecastPositionBook(cfg)
+    for i in range(4):
+        pick = _make_pick(f"T{i}.NS", "UP")
+        pick.sector = "IT"
+        pick.signal.sector = "IT"
+        assert book.open_position(pick, "2026-07-08") is not None
+    fifth = _make_pick("T4.NS", "UP")
+    fifth.sector = "IT"
+    fifth.signal.sector = "IT"
+    assert book.open_position(fifth, "2026-07-08") is None
+    assert book.open_count() == 4
+
+
+def test_defaults_hold_five_max_twenty(tmp_path):
+    book = PatternForecastPositionBook({
+        "pattern_forecast_book_path": str(tmp_path / "positions.json"),
+    })
+    assert book.holding_days == 5
+    assert book.max_positions == 20
+    assert book.max_per_sector == 4

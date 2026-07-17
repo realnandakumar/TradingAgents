@@ -101,19 +101,35 @@ def _today_iso() -> str:
     return pd.Timestamp.today().normalize().strftime("%Y-%m-%d")
 
 
+def expected_completed_session(now: Optional[pd.Timestamp] = None) -> pd.Timestamp:
+    """Latest completed weekday session in IST (market close buffer: 16:00)."""
+    current = now if now is not None else pd.Timestamp.now(tz="Asia/Kolkata")
+    if current.tzinfo is None:
+        current = current.tz_localize("Asia/Kolkata")
+    else:
+        current = current.tz_convert("Asia/Kolkata")
+    session = current.normalize()
+    if current.hour < 16:
+        session -= pd.Timedelta(days=1)
+    while session.weekday() >= 5:
+        session -= pd.Timedelta(days=1)
+    return session.tz_localize(None)
+
+
 def manifest_eod_ran_today(cache_dir: Optional[str] = None) -> bool:
-    """True when ``last_eod_run`` in the manifest matches today."""
+    """True when ``last_eod_run`` covers the latest completed NSE session."""
     manifest = _load_manifest(cache_dir)
-    return manifest.get("last_eod_run") == _today_iso()
+    expected = expected_completed_session().strftime("%Y-%m-%d")
+    return manifest.get("last_eod_run") == expected
 
 
 def set_manifest_eod_run(cache_dir: Optional[str] = None) -> str:
-    """Record today's date as the last successful EOD pipeline run."""
+    """Record the latest completed NSE session as the last successful EOD run."""
     manifest = _load_manifest(cache_dir)
-    today = _today_iso()
-    manifest["last_eod_run"] = today
+    session = expected_completed_session().strftime("%Y-%m-%d")
+    manifest["last_eod_run"] = session
     _save_manifest(manifest, cache_dir)
-    return today
+    return session
 
 
 def get_manifest_eod_status(cache_dir: Optional[str] = None) -> dict:
@@ -201,6 +217,7 @@ def _needs_sync(
     cache_dir: Optional[str] = None,
     *,
     mode: str = "incremental",
+    require_through: Optional[pd.Timestamp] = None,
 ) -> bool:
     if mode == "full":
         return True
@@ -210,10 +227,28 @@ def _needs_sync(
 
     entry = manifest.get("symbols", {}).get(symbol, {})
     last_str = entry.get("last_bar")
+    last: Optional[pd.Timestamp] = None
     if last_str:
         last = pd.to_datetime(last_str).normalize()
-        if last > cutoff:
+
+    # EOD / forced refresh: need bars through *require_through* (usually today).
+    if require_through is not None:
+        target = require_through.normalize()
+        if last is not None and last >= target:
             return False
+        path = canonical_csv_path(symbol, cache_dir)
+        if path.exists():
+            try:
+                df = read_bars(symbol, cache_dir=cache_dir)
+                last = _last_bar_date(df)
+                if last is not None and last >= target:
+                    return False
+            except Exception:  # noqa: BLE001
+                pass
+        return True
+
+    if last is not None and last > cutoff:
+        return False
 
     path = canonical_csv_path(symbol, cache_dir)
     if path.exists():
@@ -468,13 +503,23 @@ def sync_price_cache(
     period: str = "5y",
     batch_size: int = 100,
     cache_dir: Optional[str] = None,
+    *,
+    require_through: Optional[str] = None,
 ) -> SyncReport:
-    """Sync canonical OHLCV CSVs from Yahoo for *universe*."""
+    """Sync canonical OHLCV CSVs from Yahoo for *universe*.
+
+    When *require_through* is set (YYYY-MM-DD, usually today), symbols whose
+    last bar is older than that date are refreshed — used by the EOD pipeline
+    so a 15 Jul bar is not treated as fresh on 16 Jul evening.
+    """
     cache_dir = _default_cache_dir(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
 
     report = SyncReport(mode=mode, symbols_total=len(universe))
     manifest = _load_manifest(cache_dir)
+    through_ts = (
+        pd.to_datetime(require_through).normalize() if require_through else None
+    )
 
     to_sync: List[str] = []
     for sym in universe:
@@ -484,7 +529,7 @@ def sync_price_cache(
             report.failed += 1
             report.errors.append(f"{sym}: {e}")
             continue
-        if _needs_sync(sym, manifest, cache_dir, mode=mode):
+        if _needs_sync(sym, manifest, cache_dir, mode=mode, require_through=through_ts):
             to_sync.append(sym)
         else:
             report.skipped += 1

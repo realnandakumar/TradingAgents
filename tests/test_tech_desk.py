@@ -13,7 +13,7 @@ import pandas as pd
 from tradingagents.analysis.tech_analyze import strip_market_report_preamble
 from tradingagents.paper.sizing import compute_position_size
 from tradingagents.tech_desk.book import TechDeskPositionBook
-from tradingagents.tech_desk.exits import zone_fill_price
+from tradingagents.tech_desk.exits import evaluate_bar_exits, zone_fill_price
 from tradingagents.tech_desk.pm_validation import enforce_entry_timing
 from tradingagents.tech_desk.report_excerpt import extract_pm_summary, format_report_excerpt, parse_key_levels
 from tradingagents.tech_desk.report_loader import TechReportSnapshot
@@ -88,18 +88,17 @@ class ReportLoaderTests(unittest.TestCase):
             self.assertEqual(snaps, [])
             self.assertIn("RELIANCE.NS", stale)
 
-    def test_load_filters_by_ticker_list(self):
+    def test_load_filters_bare_folder_with_ns_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for ticker in ("RELIANCE.NS", "TCS.NS", "INFY.NS"):
-                d = root / ticker / "2026-07-10"
-                d.mkdir(parents=True)
-                (d / "market.md").write_text(f"{ticker} report", encoding="utf-8")
+            d = root / "BHEL" / "2026-07-16"
+            d.mkdir(parents=True)
+            (d / "market.md").write_text("bhel report", encoding="utf-8")
 
-            snaps, _ = load_tech_reports(root, tickers=["RELIANCE.NS", "TCS.NS"])
-            tickers = {s.ticker for s in snaps}
-            self.assertEqual(tickers, {"RELIANCE.NS", "TCS.NS"})
-            self.assertNotIn("INFY.NS", tickers)
+            snaps, _ = load_tech_reports(root, tickers=["BHEL.NS"])
+            self.assertEqual(len(snaps), 1)
+            self.assertEqual(snaps[0].ticker, "BHEL.NS")
+            self.assertEqual(snaps[0].market_text, "bhel report")
 
     def test_report_path_property(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,6 +108,18 @@ class ReportLoaderTests(unittest.TestCase):
             (d / "market.md").write_text("body", encoding="utf-8")
             snaps, _ = load_tech_reports(root)
             self.assertTrue(snaps[0].report_path.endswith("market.md"))
+
+    def test_complete_report_preferred_over_market_for_same_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report_dir = Path(tmp) / "TCS.NS" / "2026-07-10"
+            report_dir.mkdir(parents=True)
+            (report_dir / "complete_report.md").write_text("complete", encoding="utf-8")
+            (report_dir / "market.md").write_text("market", encoding="utf-8")
+
+            snaps, _ = load_tech_reports(tmp)
+
+            self.assertEqual(snaps[0].source_file, "complete_report.md")
+            self.assertEqual(snaps[0].market_text, "complete")
 
 
 class MetaStripTests(unittest.TestCase):
@@ -365,6 +376,24 @@ Wait for pullback to ₹256-260.
 
 
 class ZoneFillTests(unittest.TestCase):
+    def test_exit_uses_t1_even_when_bar_also_hits_t2(self):
+        position = {
+            "ticker": "TCS.NS",
+            "screen_date": "2026-07-01",
+            "entry_price": 100.0,
+            "stop_loss": 95.0,
+            "target_1": 108.0,
+            "target_2": 112.0,
+            "remaining_pct": 100.0,
+        }
+        hist = pd.DataFrame(
+            [{"Low": 99.0, "High": 115.0, "Close": 110.0}],
+            index=pd.to_datetime(["2026-07-02"]),
+        )
+        actions = evaluate_bar_exits(position, hist.iloc[0], "2026-07-02", 20, hist)
+        self.assertEqual(actions[0].reason.value, "target_1")
+        self.assertEqual(actions[0].exit_price, 108.0)
+
     def test_zone_fill_when_bar_overlaps(self):
         bar = pd.Series({"Low": 99.0, "High": 101.0, "Close": 100.0})
         self.assertEqual(zone_fill_price(bar, 98.0, 102.0), 100.0)
@@ -407,6 +436,39 @@ class ZoneFillTests(unittest.TestCase):
             self.assertEqual(len(fills), 1)
             self.assertTrue(book.has_open_position("TCS.NS"))
             self.assertEqual(book.pending_entries(), [])
+
+    def test_pending_fill_scans_intermediate_bars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "desk_capital": 100_000.0,
+                "tech_desk_max_positions": 10,
+                "tech_desk_min_confidence": 60,
+                "tech_desk_book_path": str(Path(tmp) / "positions.json"),
+                "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+            }
+            book = TechDeskPositionBook(cfg)
+            plan = _sample_plan("TCS.NS", entry=100.0).model_copy(
+                update={
+                    "entry_type": EntryType.LIMIT_ZONE,
+                    "zone_low": 98.0,
+                    "zone_high": 102.0,
+                    "stop_loss": 95.0,
+                    "target_1": 110.0,
+                }
+            )
+            book.add_pending_entry(plan, "2026-07-10", current_price=105.0)
+            hist = pd.DataFrame(
+                [
+                    {"Low": 99.0, "High": 104.0, "Close": 101.0},
+                    {"Low": 106.0, "High": 110.0, "Close": 108.0},
+                ],
+                index=pd.to_datetime(["2026-07-10", "2026-07-11"]),
+            )
+            with patch.object(TechDeskPositionBook, "_history", return_value=hist):
+                fills = book.evaluate_pending_fills(as_of="2026-07-11")
+
+            self.assertEqual(fills[0]["fill_price"], 101.0)
+            self.assertEqual(fills[0]["position"]["screen_date"], "2026-07-10")
 
 
 class ProcessBatchTests(unittest.TestCase):
@@ -500,73 +562,55 @@ class ProcessBatchTests(unittest.TestCase):
                     process_date="2026-07-11",
                 )
             self.assertEqual(len(report2["foreclosures"]), 0)
-            self.assertEqual(len(report2["pending_replacements"]), 1)
-            self.assertEqual(report2["pending_replacements"][0]["open"], "HDFCBANK.NS")
+            self.assertEqual(len(report2["pending_replacements"]), 0)
             self.assertNotIn("HDFCBANK.NS", report2["opened"])
+            self.assertTrue(
+                any(
+                    s.get("ticker") == "HDFCBANK.NS"
+                    and "no foreclosure" in str(s.get("reason", ""))
+                    for s in report2["skipped"]
+                )
+            )
 
-    def test_apply_pending_replacements(self):
+    def test_apply_pending_replacements_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             manager = TechDeskPaperTradeManager(self._cfg(tmp))
             manager.book.open_from_plan(_sample_plan("RELIANCE.NS"), 2500.0, "2026-07-10")
             manager.book.open_from_plan(_sample_plan("TCS.NS", entry=3500.0), 3500.0, "2026-07-10")
 
-            new_plan = _sample_plan("HDFCBANK.NS", entry=1600.0)
-            decision = TechDeskBatchDecision(opens=[new_plan], waits=[], skips=[], closes=[])
-            with patch.object(TechDeskPaperTradeManager, "_weakest_open") as mock_weak:
-                mock_weak.return_value = manager.book.positions[0]
-                manager.process_batch(
-                    decision, {"HDFCBANK.NS": 1600.0}, process_date="2026-07-11"
-                )
-
-            with patch.object(TechDeskPositionBook, "latest_price", return_value=2480.0):
-                result = manager.apply_pending_replacements(
-                    process_date="2026-07-11",
-                    prices={"RELIANCE.NS": 2480.0, "HDFCBANK.NS": 1600.0},
-                )
-
-            self.assertEqual(len(result["applied"]), 1)
-            self.assertFalse(manager.book.has_open_position("RELIANCE.NS"))
-            self.assertTrue(manager.book.has_open_position("HDFCBANK.NS"))
-
-    def test_apply_pending_replacements_selective(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = TechDeskPaperTradeManager(self._cfg(tmp))
-            manager.book.open_from_plan(_sample_plan("RELIANCE.NS"), 2500.0, "2026-07-10")
-            manager.book.open_from_plan(_sample_plan("TCS.NS", entry=3500.0), 3500.0, "2026-07-10")
-
-            plans = [
-                _sample_plan("HDFCBANK.NS", entry=1600.0),
-                _sample_plan("INFY.NS", entry=1800.0),
-            ]
-            decision = TechDeskBatchDecision(opens=plans, waits=[], skips=[], closes=[])
-            with patch.object(TechDeskPaperTradeManager, "_weakest_open") as mock_weak:
-                mock_weak.side_effect = [
-                    manager.book.positions[0],
-                    manager.book.positions[1],
-                ]
-                manager.process_batch(
-                    decision,
-                    {"HDFCBANK.NS": 1600.0, "INFY.NS": 1800.0},
-                    process_date="2026-07-11",
-                )
-
-            replacement_id = "RELIANCE.NS->HDFCBANK.NS"
-            with patch.object(TechDeskPositionBook, "latest_price", return_value=2480.0):
-                result = manager.apply_pending_replacements(
-                    process_date="2026-07-11",
-                    prices={"RELIANCE.NS": 2480.0, "HDFCBANK.NS": 1600.0, "INFY.NS": 1800.0},
-                    selected_ids=[replacement_id],
-                )
-
-            self.assertEqual(len(result["applied"]), 1)
-            self.assertFalse(manager.book.has_open_position("RELIANCE.NS"))
-            self.assertTrue(manager.book.has_open_position("HDFCBANK.NS"))
-            self.assertTrue(manager.book.has_open_position("TCS.NS"))
-
-            log_path = Path(tmp) / "process" / "2026-07-11.json"
+            log_path = manager.process_log_dir / "2026-07-11.json"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "pending_replacements": [
+                            {
+                                "id": "RELIANCE.NS->HDFCBANK.NS",
+                                "foreclose": "RELIANCE.NS",
+                                "open": "HDFCBANK.NS",
+                                "plan": _sample_plan("HDFCBANK.NS", entry=1600.0).model_dump(),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = manager.apply_pending_replacements(process_date="2026-07-11")
+            self.assertEqual(result["applied"], [])
+            self.assertIn("disabled", result.get("message", "").lower())
+            self.assertTrue(manager.book.has_open_position("RELIANCE.NS"))
+            self.assertFalse(manager.book.has_open_position("HDFCBANK.NS"))
             log = json.loads(log_path.read_text(encoding="utf-8"))
-            self.assertEqual(len(log["pending_replacements"]), 1)
-            self.assertEqual(log["pending_replacements"][0]["open"], "INFY.NS")
+            self.assertEqual(log.get("pending_replacements"), [])
+
+    def test_apply_pending_replacements_selective_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = TechDeskPaperTradeManager(self._cfg(tmp))
+            result = manager.apply_pending_replacements(
+                process_date="2026-07-11",
+                selected_ids=["RELIANCE.NS->HDFCBANK.NS"],
+            )
+            self.assertEqual(result["applied"], [])
+            self.assertIn("disabled", result.get("message", "").lower())
 
 
 class ProcessOrchestrationTests(unittest.TestCase):
@@ -578,7 +622,12 @@ class ProcessOrchestrationTests(unittest.TestCase):
 
         mock_wl.return_value = ["RELIANCE.NS"]
         mock_load.return_value = ([], [])
-        result = run_tech_desk_process({"tech_analyze_reports_dir": "/tmp"})
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_tech_desk_process({
+                "tech_analyze_reports_dir": "/tmp",
+                "tech_desk_book_path": str(Path(tmp) / "positions.json"),
+                "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+            })
         self.assertTrue(result["skipped"])
         self.assertEqual(result["reason"], "no_reports")
         mock_llm.assert_not_called()
@@ -590,7 +639,12 @@ class ProcessOrchestrationTests(unittest.TestCase):
         from tradingagents.tech_desk.process import run_tech_desk_process
 
         mock_wl.return_value = []
-        result = run_tech_desk_process({"tech_analyze_reports_dir": "/tmp"})
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_tech_desk_process({
+                "tech_analyze_reports_dir": "/tmp",
+                "tech_desk_book_path": str(Path(tmp) / "positions.json"),
+                "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+            })
         self.assertTrue(result["skipped"])
         self.assertEqual(result["reason"], "empty_watchlist")
 

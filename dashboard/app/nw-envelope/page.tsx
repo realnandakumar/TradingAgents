@@ -20,6 +20,14 @@ export default function NwEnvelopeDeskPage() {
       positions={book?.positions ?? []}
       hasBook={Boolean(book)}
       blotter={<NwEnvelopeBlotter positions={book?.positions ?? []} />}
+      extraBadges={["T1 Full Exit", "Max 4 / Sector", "SELL Closes"]}
+      headerExtra={
+        <div>
+          Opens BUY only (close below lower band). Exits 100% at Target 1, stop, 20-day time, or
+          matching SELL signal (close above upper). New entries capped at 4 open names per sector.
+        </div>
+      }
+      emptyHint="Use Daily run in Desk actions above, or run all dailies from Command center."
     />
   );
 }

@@ -2,9 +2,8 @@
 
 Rules:
 - Dynamic trailing stop = Supertrend buy line, ratcheted up daily only
-- Stop hit → exit remaining position (full if pre-T2, runner if post-T2 partial)
-- Target 2 → sell configured % (default 75%), trail remainder on Supertrend
-- Target 1 ignored
+- Stop hit → exit remaining position
+- Target 1 → exit 100% of the position
 - 20 trading days → close whatever remains
 """
 
@@ -20,10 +19,13 @@ import pandas as pd
 
 class ExitReason(str, Enum):
     STOP = "stop_loss"
+    TARGET_1 = "target_1"
     TARGET_2_PARTIAL = "target_2_partial"
     TRAIL_STOP = "trail_stop"
     TIME = "time_exit"
     FORECLOSURE = "foreclosure"
+    LEGACY_RUNNER = "legacy_runner_close"
+    SIGNAL_SELL = "signal_sell"
 
 
 @dataclass
@@ -54,17 +56,15 @@ def evaluate_bar_exits(
     bar_date: str,
     holding_days: int,
     history: pd.DataFrame,
-    t2_exit_pct: float = 75.0,
 ) -> List[ExitAction]:
-    """Return zero or more exit actions for today's bar (stop before T2 on same bar)."""
+    """Return zero or more exit actions for today's bar (stop before target on same bar)."""
     actions: List[ExitAction] = []
     remaining = float(position.get("remaining_pct", 100.0))
     if remaining <= 0:
         return actions
 
-    phase = position.get("phase", "initial")
     stop = float(position.get("trailing_stop") or position.get("stop_loss") or 0)
-    target_2 = float(position.get("target_2") or 0)
+    target_1 = float(position.get("target_1") or 0)
     low = float(bar["Low"])
     high = float(bar["High"])
     close = float(bar["Close"])
@@ -72,11 +72,10 @@ def evaluate_bar_exits(
 
     # 1) Trailing / initial stop on remaining size
     if stop > 0 and low <= stop:
-        reason = ExitReason.TRAIL_STOP if phase == "runner" else ExitReason.STOP
         actions.append(
             ExitAction(
                 ticker=position["ticker"],
-                reason=reason,
+                reason=ExitReason.STOP,
                 exit_price=round(stop, 2),
                 exit_date=bar_date,
                 exit_pct=remaining,
@@ -85,17 +84,16 @@ def evaluate_bar_exits(
         )
         return actions
 
-    # 2) T2 partial (initial phase only, once)
-    if phase == "initial" and not position.get("t2_partial_done") and target_2 > 0 and high >= target_2:
-        sell_pct = min(t2_exit_pct, remaining)
+    # 2) T1 full exit
+    if target_1 > 0 and high >= target_1:
         actions.append(
             ExitAction(
                 ticker=position["ticker"],
-                reason=ExitReason.TARGET_2_PARTIAL,
-                exit_price=round(target_2, 2),
+                reason=ExitReason.TARGET_1,
+                exit_price=round(target_1, 2),
                 exit_date=bar_date,
-                exit_pct=sell_pct,
-                partial=True,
+                exit_pct=remaining,
+                partial=False,
             )
         )
         return actions

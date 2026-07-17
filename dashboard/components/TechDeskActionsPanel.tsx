@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { MarkdownViewer } from "@/components/MarkdownViewer";
-import { ReplacementApprovalModal } from "@/components/ReplacementApprovalModal";
 import {
   formatCliCommand,
   getDeskConfig,
@@ -14,10 +13,6 @@ import { notifyDeskJobStarted } from "@/lib/desk-cli-events";
 import { useDeskJob } from "@/lib/desk-job-context";
 import type { DeskCliJobProgress } from "@/lib/desk-cli-server";
 import type { TechDeskStatus } from "@/lib/tech-desk-status-server";
-import {
-  type ReplacementApprovalRequest,
-  useReplacementApproval,
-} from "@/lib/useReplacementApproval";
 
 function actionCommand(action: DeskAction, ticker?: string): string {
   return formatCliCommand(action.cliArgs, ticker, {
@@ -165,10 +160,7 @@ export function TechDeskActionsPanel() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [progress?.lines]);
 
-  const startDeskJob = async (
-    action: DeskAction,
-    extra?: { proposalIds?: string[]; processDate?: string },
-  ) => {
+  const startDeskJob = async (action: DeskAction) => {
     setError(null);
     setRunning(true);
     setActiveAction(action);
@@ -184,8 +176,6 @@ export function TechDeskActionsPanel() {
           deskId: "tech-desk",
           actionId: action.id,
           ticker: action.needsTicker ? ticker.trim() : undefined,
-          proposalIds: extra?.proposalIds,
-          processDate: extra?.processDate,
         }),
       });
       const data = await res.json();
@@ -202,44 +192,18 @@ export function TechDeskActionsPanel() {
     }
   };
 
-  const replacement = useReplacementApproval({
-    onApprove: async (request: ReplacementApprovalRequest) => {
-      const action = config?.actions.find((a) => a.id === request.actionId);
-      if (!action) throw new Error("Unknown replacement action");
-      await startDeskJob(action, {
-        proposalIds: request.proposalIds,
-        processDate: request.processDate,
-      });
-    },
-    onEmpty: () => {
-      setError("No queued portfolio replacements from the latest process run.");
-    },
-    onError: (message) => setError(message),
-  });
-
   const runAction = async (action: DeskAction) => {
     if (action.needsTicker && !ticker.trim()) {
       setError("Enter a ticker for single-ticker analysis");
       return;
     }
-    if (isJobRunning || running || replacement.loading) {
+    if (isJobRunning || running) {
       setError("Another job is already running — check the status bar.");
       return;
     }
     if (action.requiresApiKey && status && !status.apiKey.configured) {
       setError(status.apiKey.message);
       return;
-    }
-    if (replacement.isReplacementAction(action.id)) {
-      const handled = await replacement.openReplacementModal({
-        deskId: "tech-desk",
-        actionId: action.id,
-        title: action.label,
-        description:
-          action.description ??
-          "Select replacements to apply. This will foreclose positions on the Tech Desk book.",
-      });
-      if (handled) return;
     }
     if (action.destructive) {
       const msg =
@@ -432,20 +396,6 @@ export function TechDeskActionsPanel() {
           <MarkdownViewer text={reviewMarkdown} />
         </section>
       ) : null}
-
-      <ReplacementApprovalModal
-        open={replacement.open}
-        title={replacement.modalTitle}
-        description={replacement.modalDescription}
-        items={replacement.items}
-        loading={replacement.loading}
-        submitting={replacement.submitting}
-        selectedIds={replacement.selectedIds}
-        onToggle={replacement.toggleId}
-        onToggleAll={replacement.toggleAll}
-        onApprove={replacement.approveSelected}
-        onCancel={replacement.closeModal}
-      />
     </div>
   );
 }

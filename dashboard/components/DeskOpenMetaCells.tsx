@@ -10,9 +10,9 @@ import {
   type DeskPositionMeta,
 } from "@/lib/desk-position";
 
-/** Standard open-position meta columns: entry date, days, qty, purchase, budget, OK */
+/** Standard open-position meta: entry date, days, qty, @Buy (unit), BUY (notional), budget, OK */
 export function deskOpenMetaHeaders(): string[] {
-  return ["ENT", "DAYS", "QTY", "BUY", "SLOT", "OK"];
+  return ["ENT", "DAYS", "QTY", "@Buy", "BUY", "SLOT", "OK"];
 }
 
 export function DeskOpenMetaCells({ p }: { p: DeskPositionMeta }) {
@@ -22,6 +22,9 @@ export function DeskOpenMetaCells({ p }: { p: DeskPositionMeta }) {
       <td className="py-2 px-2 text-right tabular-nums text-muted whitespace-nowrap">{entryDate(p)}</td>
       <td className="py-2 px-2 text-right tabular-nums">{daysInTrade(p)}</td>
       <td className="py-2 px-2 text-right tabular-nums">{p.shares ?? "—"}</td>
+      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+        {p.entry_price != null ? inr(p.entry_price) : "—"}
+      </td>
       <td className="py-2 px-2 text-right tabular-nums">{inr(purchaseNotional(p))}</td>
       <td className="py-2 px-2 text-right tabular-nums text-muted">
         {slotBudget(p) ? inr(slotBudget(p)) : "—"}

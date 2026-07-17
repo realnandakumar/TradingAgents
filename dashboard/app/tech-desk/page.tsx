@@ -33,12 +33,14 @@ export default function TechDeskPage() {
       <div className="px-4 sm:px-6 py-3 border-b border-border bg-surface flex flex-wrap items-center gap-4">
         <div>
           <div className="text-sm font-semibold tracking-tight">Tech Desk</div>
-          <div className="text-[10px] font-mono text-muted uppercase">TECH_DESK · LLM PM</div>
+          <div className="text-[10px] font-mono text-muted uppercase">
+            TECH_DESK · LLM PM · shared tech_reports
+          </div>
         </div>
         <div className="flex gap-1.5 text-[10px] font-mono uppercase">
           <span className="px-2 py-0.5 rounded bg-accent/20 text-accent">Paper</span>
           <span className="px-2 py-0.5 rounded bg-surface-2 border border-border">NSE</span>
-          <span className="px-2 py-0.5 rounded bg-surface-2 border border-border">10 slots</span>
+          <span className="px-2 py-0.5 rounded bg-surface-2 border border-border">20 slots</span>
         </div>
         <div className="ml-auto text-right text-xs text-muted">
           {updated ? <div>Book updated {updated} IST</div> : null}
@@ -75,7 +77,7 @@ export default function TechDeskPage() {
       ) : (
         <>
           <div className="card overflow-hidden mx-4 sm:mx-6 mt-4 sm:mt-6">
-            <TechDeskBlotter positions={positions} pending={pending} />
+            <TechDeskBlotter positions={positions} pending={pending} maxPositions={20} />
           </div>
 
           {open.length === 0 && !hasPending && hasBook && (

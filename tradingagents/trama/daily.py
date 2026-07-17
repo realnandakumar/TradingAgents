@@ -31,4 +31,5 @@ def run_trama_daily(
     report = manager.run_daily(picks, screen_date=screen_date, approve=approve)
     report["skipped"] = False
     report["picks"] = [p.symbol for p in picks if p.direction == "BUY"]
+    report["sell_picks"] = [p.symbol for p in picks if p.direction == "SELL"]
     return report

@@ -15,7 +15,7 @@ from tradingagents.screening.swing_indicators import (
     supertrend_flip_to_buy_within,
     volume_spike_pct,
 )
-from tradingagents.screening.swing_screener import _passes_technical_filters
+from tradingagents.screening.swing_screener import _passes_technical_filters, screen_swing
 from tradingagents.screening.universe import load_universe_metadata, _parse_universe_records
 
 
@@ -143,3 +143,54 @@ def test_technical_filter_rejects_short_history():
         "swing_target_2_rr": 2.5,
     }
     assert _passes_technical_filters(df, config) is None
+
+
+def test_screen_swing_caps_sector_exposure():
+    config = {
+        "screen_universe_csv": None,
+        "data_cache_dir": None,
+        "swing_history_period": "2y",
+        "swing_min_market_cap_cr": 5000.0,
+        "swing_min_avg_traded_value_cr": 10.0,
+        "swing_top_n": 10,
+        "swing_max_per_sector": 4,
+    }
+    metadata = {
+        f"IT{i}.NS": {"name": f"IT{i}", "sector": "Information Technology"} for i in range(6)
+    }
+    metadata.update({
+        "BANK1.NS": {"name": "Bank1", "sector": "Financial Services"},
+        "BANK2.NS": {"name": "Bank2", "sector": "Financial Services"},
+    })
+    universe = list(metadata.keys())
+    price_data = {sym: _ohlcv(list(np.linspace(100, 150, 260)), volumes=[1000] * 259 + [3000]) for sym in universe}
+    snap = {
+        "entry": 100.0,
+        "stop_loss": 90.0,
+        "target_1": 115.0,
+        "target_2": 125.0,
+        "stop_loss_pct": -10.0,
+        "target_1_pct": 15.0,
+        "target_2_pct": 25.0,
+        "risk_reward_ratio": 1.5,
+        "risk_reward_ratio_2": 2.5,
+        "supertrend_status": "Buy",
+        "rsi": 60.0,
+        "adx": 20.0,
+        "volume_spike_pct": 100.0,
+        "relative_volume": 2.0,
+        "avg_traded_value_inr": 20 * 10_000_000.0,
+        "risk_pct": 10.0,
+    }
+    caps = {sym: 6000 * 10_000_000.0 for sym in universe}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("tradingagents.screening.swing_screener.load_universe", lambda **kwargs: universe)
+        mp.setattr("tradingagents.screening.swing_screener.load_universe_metadata", lambda **kwargs: metadata)
+        mp.setattr("tradingagents.screening.swing_screener._passes_technical_filters", lambda df, cfg: dict(snap))
+        mp.setattr("tradingagents.screening.swing_screener._fetch_market_caps", lambda symbols: caps)
+        picks = screen_swing(config, price_data=price_data)
+
+    sectors = [p.sector for p in picks]
+    assert sectors.count("Information Technology") == 4
+    assert len(picks) == 6

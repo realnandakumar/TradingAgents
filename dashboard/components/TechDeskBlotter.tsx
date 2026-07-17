@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 
 import { ChartTickerLink } from "@/components/ChartTickerLink";
@@ -10,8 +9,6 @@ import { useQuotes } from "@/lib/useQuotes";
 import type { TechDeskPendingEntry, TechDeskPosition } from "@/lib/tech-desk-server";
 import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
-const MAX_POSITIONS = 10;
-
 function cushionPct(last: number | null, stop: number): number | null {
   if (last == null || last <= 0) return null;
   return ((last - stop) / last) * 100;
@@ -20,9 +17,13 @@ function cushionPct(last: number | null, stop: number): number | null {
 export function TechDeskBlotter({
   positions,
   pending,
+  maxPositions = 20,
+  deskId = "tech-desk",
 }: {
   positions: TechDeskPosition[];
   pending: TechDeskPendingEntry[];
+  maxPositions?: number;
+  deskId?: string;
 }) {
   const { quotes, loading } = useQuotes(positions.map((p) => p.ticker));
   const open = positions.filter((p) => p.status === "open");
@@ -49,23 +50,19 @@ export function TechDeskBlotter({
     }
   };
 
-  let mtmSum = 0;
-  let haveLive = false;
-
   const rows = open.map((p) => {
     const q = quotes[p.ticker];
     const live = q?.price ?? p.entry_price;
     const stop = p.stop_loss;
     const mtmPct = ((live - p.entry_price) / p.entry_price) * 100;
     const mtmAbs = (live - p.entry_price) * (p.shares ?? 0);
-    if (q?.price != null) {
-      mtmSum += mtmAbs;
-      haveLive = true;
-    }
     const cushion = cushionPct(live, stop);
     const tight = cushion != null && cushion < 3;
-    return { p, live, stop, mtmPct, cushion, tight };
+    return { p, live, stop, mtmPct, mtmAbs, cushion, tight, hasQuote: q?.price != null };
   });
+  const quotedRows = rows.filter((row) => row.hasQuote);
+  const mtmSum = quotedRows.reduce((sum, row) => sum + row.mtmAbs, 0);
+  const haveLive = quotedRows.length > 0;
 
   const avgConf =
     open.reduce((s, p) => s + (p.confidence ?? 0), 0) / (open.length || 1);
@@ -74,7 +71,7 @@ export function TechDeskBlotter({
     <div className="space-y-0">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 border-b border-border bg-surface-2/50">
         {[
-          { label: "Open", value: `${open.length}/${MAX_POSITIONS}`, sub: "slots" },
+          { label: "Open", value: `${open.length}/${maxPositions}`, sub: "slots" },
           {
             label: "MTM P&L",
             value: haveLive ? inr(mtmSum) : loading ? "…" : inr(0),
@@ -82,7 +79,7 @@ export function TechDeskBlotter({
             tone: haveLive ? (mtmSum >= 0 ? "text-bull" : "text-bear") : "text-muted",
           },
           { label: "Pending", value: String(pending.length), sub: "zone waits" },
-          { label: "Slots free", value: String(MAX_POSITIONS - open.length), sub: "capacity" },
+          { label: "Slots free", value: String(Math.max(0, maxPositions - open.length)), sub: "capacity" },
           { label: "Avg conf", value: open.length ? String(Math.round(avgConf)) : "—", sub: "0–100" },
           { label: "Closed", value: String(closedCount), sub: "lifetime" },
         ].map((k) => (
@@ -123,7 +120,7 @@ export function TechDeskBlotter({
                 }`}
               >
                 <td className="py-2 px-3 font-medium">
-                  <ChartTickerLink ticker={p.ticker} desk="tech-desk" />
+                  <ChartTickerLink ticker={p.ticker} desk={deskId} />
                 </td>
                 <DeskOpenMetaCells p={p} />
                 <td className="py-2 px-2 text-right tabular-nums">{p.confidence ?? "—"}</td>

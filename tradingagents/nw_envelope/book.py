@@ -44,9 +44,9 @@ class NwEnvelopePositionBook:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.holding_days = int(cfg.get("nwe_holding_days", 20))
-        self.max_positions = int(cfg.get("nwe_max_positions", 10))
+        self.max_positions = int(cfg.get("nwe_max_positions", 20))
+        self.max_per_sector = int(cfg.get("nwe_max_per_sector", 4))
         self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
-        self.t2_exit_pct = float(cfg.get("nwe_t2_exit_pct", 75.0))
         self.bandwidth = float(cfg.get("nwe_bandwidth", 8.0))
         self.mult = float(cfg.get("nwe_mult", 3.0))
         self.lookback = int(cfg.get("nwe_lookback", 500))
@@ -55,6 +55,7 @@ class NwEnvelopePositionBook:
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
         self._state = self._load()
         self._migrate_positions()
+        self._backfill_sectors()
 
     def _migrate_positions(self) -> None:
         changed = False
@@ -87,16 +88,47 @@ class NwEnvelopePositionBook:
             changed = True
         return changed
 
+    def _backfill_sectors(self) -> None:
+        need = [
+            p for p in self.positions
+            if p.get("status") == "open" and (not p.get("sector") or p.get("sector") == "—")
+        ]
+        if not need:
+            return
+        try:
+            from tradingagents.screening.universe import load_universe_metadata
+
+            metadata = load_universe_metadata(
+                csv_path=self.config.get("screen_universe_csv"),
+                cache_dir=self.config.get("data_cache_dir"),
+                allow_download=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not backfill NW Envelope sectors (%s)", e)
+            return
+        changed = False
+        for p in need:
+            meta = metadata.get(p["ticker"], {})
+            sector = meta.get("sector")
+            if sector and sector != "—":
+                p["sector"] = sector
+                if meta.get("name"):
+                    p["stock_name"] = meta["name"]
+                changed = True
+        if changed:
+            self._save()
+
     def _load(self) -> dict:
         if self.path.exists():
             try:
                 return json.loads(self.path.read_text(encoding="utf-8"))
             except Exception as e:  # noqa: BLE001
                 logger.warning("Could not read NW Envelope book (%s); starting fresh", e)
-        return {"strategy": STRATEGY_NAME, "positions": []}
+        return {"strategy": STRATEGY_NAME, "positions": [], "sell_signals": []}
 
     def _save(self) -> None:
         self._state["strategy"] = STRATEGY_NAME
+        self._state.setdefault("sell_signals", [])
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
@@ -105,6 +137,10 @@ class NwEnvelopePositionBook:
     @property
     def positions(self) -> List[dict]:
         return self._state["positions"]
+
+    @property
+    def sell_signals(self) -> List[dict]:
+        return self._state.setdefault("sell_signals", [])
 
     def open_count(self) -> int:
         return sum(1 for p in self.positions if p.get("status") == "open")
@@ -118,12 +154,28 @@ class NwEnvelopePositionBook:
                 p["last_screen_date"] = screen_date
         self._save()
 
+    def reset_book(self) -> None:
+        """Clear all positions and start a fresh paper book."""
+        self._state = {"strategy": STRATEGY_NAME, "positions": [], "sell_signals": []}
+        self._save()
+
+    def sector_open_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for p in self.positions:
+            if p.get("status") == "open":
+                sector = p.get("sector") or ""
+                counts[sector] = counts.get(sector, 0) + 1
+        return counts
+
     def open_position(self, pick: "NwEnvelopePick", screen_date: str) -> Optional[dict]:
         if pick.direction != "BUY":
             return None
         if self.has_open_position(pick.symbol):
             return None
         if self.open_count() >= self.max_positions:
+            return None
+        sector = pick.sector or (pick.signal.sector if pick.signal else None) or ""
+        if self.sector_open_counts().get(sector, 0) >= self.max_per_sector:
             return None
         row = self._pick_to_position(pick, screen_date)
         if row is None:
@@ -132,8 +184,124 @@ class NwEnvelopePositionBook:
         self._save()
         return row
 
+    def store_sell_signals(
+        self,
+        picks: List["NwEnvelopePick"],
+        screen_date: Optional[str] = None,
+    ) -> List[dict]:
+        screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
+        rows: List[dict] = []
+        for pick in picks:
+            if pick.direction != "SELL":
+                continue
+            sig = pick.signal
+            rows.append({
+                "ticker": pick.symbol,
+                "stock_name": pick.stock_name or sig.stock_name or pick.symbol.replace(".NS", ""),
+                "sector": pick.sector or sig.sector or "—",
+                "screen_date": screen_date,
+                "direction": "SELL",
+                "close": float(sig.close),
+                "nwe_middle": float(sig.middle),
+                "nwe_upper": float(sig.upper),
+                "nwe_lower": float(sig.lower),
+                "dist_pct": float(sig.dist_pct),
+                "cross_age": int(sig.cross_age),
+                "remark": sig.remark,
+            })
+        kept = [s for s in self.sell_signals if s.get("screen_date") != screen_date]
+        kept.extend(rows)
+        if len(kept) > 500:
+            kept = kept[-500:]
+        self._state["sell_signals"] = kept
+        self._save()
+        return rows
+
+    def close_on_sell_signals(
+        self,
+        picks: List["NwEnvelopePick"],
+        as_of: Optional[str] = None,
+    ) -> List[dict]:
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        events: List[dict] = []
+        for pick in picks:
+            if pick.direction != "SELL":
+                continue
+            if not self.has_open_position(pick.symbol):
+                continue
+            pos = next(
+                p for p in self.positions
+                if p["ticker"] == pick.symbol and p.get("status") == "open"
+            )
+            if skip_exit_for_entry_day(pos["screen_date"], as_of):
+                continue
+            self._ensure_position_fields(pos)
+            remaining = float(pos.get("remaining_pct", 100.0))
+            if remaining <= 0:
+                continue
+            exit_price = float(pick.signal.close)
+            hist = self._history(
+                pos["ticker"],
+                pos["screen_date"],
+                (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+            if hist is None:
+                hist = pd.DataFrame({"Close": [exit_price]}, index=pd.to_datetime([as_of]))
+            action = ExitAction(
+                ticker=pos["ticker"],
+                reason=ExitReason.SIGNAL_SELL,
+                exit_price=round(exit_price, 2),
+                exit_date=as_of,
+                exit_pct=remaining,
+                partial=False,
+            )
+            events.append(self._apply_action(pos, action, hist))
+        if events:
+            self._save()
+        return events
+
+    def close_legacy_runners(self, as_of: Optional[str] = None) -> List[dict]:
+        """Force-close remaining size on legacy T2 partial runners."""
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        events: List[dict] = []
+        for p in list(self.positions):
+            if p.get("status") != "open":
+                continue
+            remaining = float(p.get("remaining_pct", 100.0))
+            is_legacy = (
+                p.get("phase") == "runner"
+                or bool(p.get("t2_partial_done"))
+                or remaining < 100.0
+            )
+            if not is_legacy:
+                continue
+            self._ensure_position_fields(p)
+            price = self.latest_price(p["ticker"])
+            if price is None:
+                price = float(p.get("entry_price") or 0)
+            hist = self._history(
+                p["ticker"],
+                p["screen_date"],
+                (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+            if hist is None:
+                hist = pd.DataFrame({"Close": [price]}, index=pd.to_datetime([as_of]))
+            action = ExitAction(
+                ticker=p["ticker"],
+                reason=ExitReason.LEGACY_RUNNER,
+                exit_price=round(float(price), 2),
+                exit_date=as_of,
+                exit_pct=remaining,
+                partial=False,
+            )
+            events.append(self._apply_action(p, action, hist))
+        if events:
+            self._save()
+        return events
+
     def save_picks(self, picks: List["NwEnvelopePick"], screen_date: Optional[str] = None) -> List[dict]:
         screen_date = screen_date or datetime.now().strftime("%Y-%m-%d")
+        self.store_sell_signals(picks, screen_date=screen_date)
         saved: List[dict] = []
         for pick in picks:
             if pick.direction != "BUY":
@@ -164,6 +332,9 @@ class NwEnvelopePositionBook:
         levels = compute_trade_levels(entry, stop, self.target_1_rr, self.target_2_rr)
 
         sizing = compute_position_size(self.desk_capital, self.max_positions, levels["entry"])
+        if int(sizing["shares"] or 0) < 1:
+            logger.warning("Skip %s — cannot fit in INR %.0f slot at entry %.2f", pick.symbol, sizing["alloc"], levels["entry"])
+            return None
         return {
             "strategy": STRATEGY_NAME,
             "ticker": pick.symbol,
@@ -267,15 +438,31 @@ class NwEnvelopePositionBook:
             if hist is None or hist.empty:
                 continue
 
-            self._update_trailing_stop(p, hist)
-            last = hist.iloc[-1]
-            bar_date = hist.index[-1].strftime("%Y-%m-%d")
-
-            actions = evaluate_bar_exits(
-                p, last, bar_date, self.holding_days, hist, t2_exit_pct=self.t2_exit_pct
-            )
-            for action in actions:
-                events.append(self._apply_action(p, action, hist))
+            replay = dict(p)
+            initial_stop = float(p.get("initial_stop_loss") or p.get("stop_loss") or 0)
+            replay["stop_loss"] = initial_stop
+            replay["trailing_stop"] = initial_stop
+            closed = False
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                history_to_bar = hist.iloc[: i + 1]
+                if bar_date <= p["screen_date"]:
+                    self._update_trailing_stop(replay, history_to_bar)
+                    continue
+                if bar_date > as_of:
+                    break
+                actions = evaluate_bar_exits(
+                    replay, hist.iloc[i], bar_date, self.holding_days, history_to_bar
+                )
+                if actions:
+                    events.append(self._apply_action(p, actions[0], history_to_bar))
+                    closed = True
+                    break
+                self._update_trailing_stop(replay, history_to_bar)
+            if not closed:
+                p["trailing_stop"] = replay.get("trailing_stop", p.get("trailing_stop"))
+                p["stop_loss"] = replay.get("stop_loss", p.get("stop_loss"))
+                p["stop_loss_pct"] = replay.get("stop_loss_pct", p.get("stop_loss_pct"))
 
         self._save()
         return {"closed": events, "open_positions": self.open_count()}
@@ -345,7 +532,14 @@ class NwEnvelopePositionBook:
     def _outcome_for_reason(self, reason: ExitReason, blended: float) -> str:
         if reason == ExitReason.STOP:
             return "loss"
-        if reason in (ExitReason.TARGET_2_PARTIAL, ExitReason.TRAIL_STOP, ExitReason.TIME):
+        if reason in (
+            ExitReason.TARGET_1,
+            ExitReason.TARGET_2_PARTIAL,
+            ExitReason.TRAIL_STOP,
+            ExitReason.TIME,
+            ExitReason.SIGNAL_SELL,
+            ExitReason.LEGACY_RUNNER,
+        ):
             return "success" if blended > 0 else "loss"
         return "success" if blended > 0 else "loss"
 
@@ -430,9 +624,12 @@ class NwEnvelopePositionBook:
         by_reason: Dict[str, dict] = {}
         for reason in (
             ExitReason.STOP.value,
+            ExitReason.TARGET_1.value,
             ExitReason.TARGET_2_PARTIAL.value,
             ExitReason.TRAIL_STOP.value,
             ExitReason.TIME.value,
+            ExitReason.SIGNAL_SELL.value,
+            ExitReason.LEGACY_RUNNER.value,
             ExitReason.FORECLOSURE.value,
         ):
             subset = [p for p in closed if p.get("exit_reason") == reason]

@@ -28,7 +28,7 @@
 # TradingAgents: Multi-Agents LLM Financial Trading Framework
 
 ## News
-- [2026-07] **Unified EOD price sync** — Local SQLite + CSV OHLCV store for the Nifty-500 universe (plus watchlist, custom tickers, and open positions). Scheduled pipeline syncs prices, runs all desk screeners and dailies; Command Center **Sync now** for manual catch-up.
+- [2026-07] **Unified EOD price sync** — Local SQLite + CSV OHLCV store for the Nifty-500 universe (plus watchlist, custom tickers, and open positions). Run manually from Command Center **Sync now** (no automatic EOD schedule by default).
 - [2026-07] **Daily charts** — `/charts` with desk overlays (stops, targets, pattern geometry), 5m/15m intraday panel, and local-first cache (no Yahoo call per page load).
 - [2026-07] **Chart Patterns screener** — Classic pattern detection (double bottom, triangles, flags, etc.) with pattern-specific trade levels, geometry on charts, and optional historical T1 audit.
 - [2026-07] **Tech Desk** — LLM watchlist pipeline (`tech-analyze` → PM batch process → daily rules), dashboard at `/tech-desk`, pullback zone entries, and explicit approval for portfolio replacements.
@@ -232,23 +232,22 @@ cd dashboard && npm install && npm run dev   # http://localhost:3000
 tradingagents screen --top 10
 ```
 
-### EOD price sync (scheduled + manual)
+### EOD price sync (manual)
 
-After the NSE close, one pipeline refreshes prices through the last trading day, then runs every desk screener and daily job:
+After the NSE close, run the pipeline from **Command Center → Sync now**, or from the CLI. It refreshes prices through the last trading day, then runs every desk screener and daily job:
 
 ```bash
-python scripts/run_eod_pipeline.py              # full pipeline
-python scripts/run_eod_pipeline.py --force      # re-sync even if already ran today
-python scripts/run_eod_if_missed.py             # catch-up at logon if PC was off at 4:10 PM
+python scripts/run_eod_pipeline.py --force      # recommended: full re-sync + screeners + dailies
+python scripts/run_eod_pipeline.py              # skips price re-sync if already completed today
 ```
 
-**Windows scheduler** (IST timezone):
+EOD tasks are **not** registered by default. To remove any leftover Windows tasks:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/schedule_eod_pipeline.ps1
 ```
 
-Registers **4:10 PM** weekday EOD plus **logon catch-up**. Dashboard **Command Center** (`/command-center`) has a **Sync now** button for the same flow.
+(Optional automation only if you explicitly want it: `...\schedule_eod_pipeline.ps1 -Enable`.)
 
 **Sync symbol set:** Nifty 500 ∪ watchlist ∪ custom tickers ∪ open desk positions.
 
@@ -449,7 +448,7 @@ See `tradingagents/default_config.py` or `TRADINGAGENTS_*` env vars. Key knobs:
 - **Price store:** `data_cache_dir`, `prices_db_path`, `custom_tickers_path`; env `TRADINGAGENTS_CACHE_DIR`, `TRADINGAGENTS_PRICES_DB_PATH`
 - **Tech Desk:** `tech_desk_max_positions`, `tech_desk_min_confidence`,
   `tech_desk_holding_days`, `tech_desk_max_report_age_days`, `tech_analyze_reports_dir`
-- **Desk capital:** `desk_capital` (₹1L per strategy desk, equal-weight slots)
+- **Desk capital:** `desk_capital` (₹2L per strategy desk, 20 equal-weight ₹10k slots; notional never exceeds slot)
 
 > Pattern detection (especially cup-and-handle and ascending triangle) is heuristic
 > and approximate. The paper-trading layer exists precisely to measure which

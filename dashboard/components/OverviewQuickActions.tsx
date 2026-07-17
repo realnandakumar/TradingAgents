@@ -11,7 +11,7 @@ const ACTIONS = [
   { deskId: "control-center", actionId: "eod-sync-now", label: "Sync now", primary: true },
   { deskId: "control-center", actionId: "all-dailies", label: "All dailies", primary: false },
   { deskId: "positions", actionId: "screen", label: "RS screen", primary: true },
-  { deskId: "positions", actionId: "paper", label: "Refresh RS paper", primary: false },
+  { deskId: "positions", actionId: "daily", label: "RS Desk daily", primary: false },
 ] as const;
 
 export function OverviewQuickActions() {

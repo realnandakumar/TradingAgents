@@ -42,10 +42,10 @@ class NSSPositionBook:
         )
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.max_holding_days = int(cfg.get("nss_max_holding_days", 90))
+        self.max_holding_days = int(cfg.get("nss_max_holding_days", 40))
         self.max_positions = int(cfg.get("nss_max_positions", 20))
+        self.max_per_sector = int(cfg.get("nss_max_per_sector", 4))
         self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
-        self.t2_exit_pct = float(cfg.get("nss_t2_exit_pct", 75.0))
         self.st_period = int(cfg.get("nss_supertrend_period", 10))
         self.st_mult = float(cfg.get("nss_supertrend_multiplier", 3.0))
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
@@ -70,11 +70,14 @@ class NSSPositionBook:
             "t2_partial_done": False,
             "partial_exits": [],
             "risk_pct": p.get("stop_loss_pct"),
+            "breakout_ok": False,
+            "volume_ok": False,
         }
         for key, val in defaults.items():
             if key not in p or p[key] is None:
                 p[key] = val
                 changed = True
+        # Legacy runners are force-closed on daily; stop promoting partial state.
         if p.get("t2_partial_done") and p.get("status") == "open":
             if p.get("phase") != "runner":
                 p["phase"] = "runner"
@@ -123,12 +126,25 @@ class NSSPositionBook:
                 return True
         return False
 
+    def sector_open_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for p in self.positions:
+            if p.get("status") == "open":
+                sector = p.get("sector") or ""
+                counts[sector] = counts.get(sector, 0) + 1
+        return counts
+
     def open_position(self, pick: "NSSPick", screen_date: str) -> Optional[dict]:
         if self.has_open_position(pick.symbol):
             return None
         if self.open_count() >= self.max_positions:
             return None
+        sector = pick.sector or ""
+        if self.sector_open_counts().get(sector, 0) >= self.max_per_sector:
+            return None
         row = self._pick_to_position(pick, screen_date)
+        if int(row.get("shares") or 0) < 1:
+            return None
         self.positions.append(row)
         self._save()
         return row
@@ -180,6 +196,8 @@ class NSSPositionBook:
             "relative_volume": pick.relative_volume,
             "range_pct": pick.range_pct,
             "atr_ratio": pick.atr_ratio,
+            "breakout_ok": getattr(pick, "breakout_ok", False),
+            "volume_ok": getattr(pick, "volume_ok", False),
             "market_cap_cr": pick.market_cap_cr,
             "avg_traded_value_cr": pick.avg_traded_value_cr,
             "phase": "initial",
@@ -249,18 +267,73 @@ class NSSPositionBook:
             if hist is None or hist.empty:
                 continue
 
-            self._update_trailing_stop(p, hist)
-            last = hist.iloc[-1]
-            bar_date = hist.index[-1].strftime("%Y-%m-%d")
-
-            actions = evaluate_momentum_bar_exits(
-                p, last, bar_date, self.max_holding_days, hist, t2_exit_pct=self.t2_exit_pct
-            )
-            for action in actions:
-                events.append(self._apply_action(p, action, hist))
+            replay = dict(p)
+            initial_stop = float(p.get("initial_stop_loss") or p.get("stop_loss") or 0)
+            replay["stop_loss"] = initial_stop
+            replay["trailing_stop"] = initial_stop
+            closed = False
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                history_to_bar = hist.iloc[: i + 1]
+                if bar_date <= p["screen_date"]:
+                    self._update_trailing_stop(replay, history_to_bar)
+                    continue
+                if bar_date > as_of:
+                    break
+                actions = evaluate_momentum_bar_exits(
+                    replay, hist.iloc[i], bar_date, self.max_holding_days, history_to_bar
+                )
+                if actions:
+                    events.append(self._apply_action(p, actions[0], history_to_bar))
+                    closed = True
+                    break
+                self._update_trailing_stop(replay, history_to_bar)
+            if not closed:
+                p["trailing_stop"] = replay.get("trailing_stop", p.get("trailing_stop"))
+                p["stop_loss"] = replay.get("stop_loss", p.get("stop_loss"))
+                p["stop_loss_pct"] = replay.get("stop_loss_pct", p.get("stop_loss_pct"))
 
         self._save()
         return {"closed": events, "open_positions": self.open_count()}
+
+    def close_legacy_runners(self, as_of: Optional[str] = None) -> List[dict]:
+        """Force-close remaining size on legacy T2 partial runners."""
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        events: List[dict] = []
+        for p in list(self.positions):
+            if p.get("status") != "open":
+                continue
+            remaining = float(p.get("remaining_pct", 100.0))
+            is_legacy = (
+                p.get("phase") == "runner"
+                or bool(p.get("t2_partial_done"))
+                or remaining < 100.0
+            )
+            if not is_legacy:
+                continue
+            self._ensure_position_fields(p)
+            price = self.latest_price(p["ticker"])
+            if price is None:
+                price = float(p.get("entry_price") or 0)
+            hist = self._history(
+                p["ticker"],
+                p["screen_date"],
+                (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+            if hist is None:
+                hist = pd.DataFrame({"Close": [price]}, index=pd.to_datetime([as_of]))
+            action = ExitAction(
+                ticker=p["ticker"],
+                reason=ExitReason.LEGACY_RUNNER,
+                exit_price=round(float(price), 2),
+                exit_date=as_of,
+                exit_pct=remaining,
+                partial=False,
+            )
+            events.append(self._apply_action(p, action, hist))
+        if events:
+            self._save()
+        return events
 
     def _apply_action(self, p: dict, action: ExitAction, history: pd.DataFrame) -> dict:
         entry = float(p["entry_price"])
@@ -327,7 +400,13 @@ class NSSPositionBook:
     def _outcome_for_reason(self, reason: ExitReason, blended: float) -> str:
         if reason == ExitReason.STOP:
             return "loss"
-        if reason in (ExitReason.TARGET_2_PARTIAL, ExitReason.TRAIL_STOP, ExitReason.TIME):
+        if reason in (
+            ExitReason.TARGET_1,
+            ExitReason.TARGET_2_PARTIAL,
+            ExitReason.TRAIL_STOP,
+            ExitReason.TIME,
+            ExitReason.LEGACY_RUNNER,
+        ):
             return "success" if blended > 0 else "loss"
         return "success" if blended > 0 else "loss"
 
@@ -412,9 +491,11 @@ class NSSPositionBook:
         by_reason: Dict[str, dict] = {}
         for reason in (
             ExitReason.STOP.value,
+            ExitReason.TARGET_1.value,
             ExitReason.TARGET_2_PARTIAL.value,
             ExitReason.TRAIL_STOP.value,
             ExitReason.TIME.value,
+            ExitReason.LEGACY_RUNNER.value,
             ExitReason.FORECLOSURE.value,
         ):
             subset = [p for p in closed if p.get("exit_reason") == reason]

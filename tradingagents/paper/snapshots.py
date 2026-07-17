@@ -67,7 +67,11 @@ def save_paper_snapshot(config: dict, book) -> Path:
 
 
 def save_screen_snapshot(
-    config: dict, trade_date: str, candidates: List, opened: Optional[List[str]] = None
+    config: dict,
+    trade_date: str,
+    candidates: List,
+    opened: Optional[List[str]] = None,
+    waits: Optional[List[str]] = None,
 ) -> Path:
     """Prepend a screen run to the local history file (newest first, capped)."""
     path = _screens_path(config)
@@ -80,7 +84,7 @@ def save_screen_snapshot(
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not read screens history (%s); starting fresh", e)
 
-    history.insert(0, _row(screen_snapshot(trade_date, candidates, opened)))
+    history.insert(0, _row(screen_snapshot(trade_date, candidates, opened, waits=waits)))
     limit = int(config.get("paper_screens_history", 30))
     history = history[:limit]
     _write_json(path, history)
@@ -88,8 +92,13 @@ def save_screen_snapshot(
 
 
 def save_results(
-    config: dict, trade_date: str, candidates: List, opened: Optional[List[str]], book
+    config: dict,
+    trade_date: str,
+    candidates: List,
+    opened: Optional[List[str]],
+    book,
+    waits: Optional[List[str]] = None,
 ) -> None:
     """Persist both a screen snapshot and a paper snapshot locally."""
-    save_screen_snapshot(config, trade_date, candidates, opened)
+    save_screen_snapshot(config, trade_date, candidates, opened, waits=waits)
     save_paper_snapshot(config, book)

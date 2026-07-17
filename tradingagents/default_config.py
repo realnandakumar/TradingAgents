@@ -103,6 +103,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
     "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
     "TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS": "tech_desk_max_report_age_days",
+    "TRADINGAGENTS_RS_DESK_MAX_REPORT_AGE_DAYS": "rs_desk_max_report_age_days",
+    "TRADINGAGENTS_RS_DESK_BOOK_PATH": "rs_desk_book_path",
     "TRADINGAGENTS_CUSTOM_TICKERS_PATH": "custom_tickers_path",
     "TRADINGAGENTS_PRICES_DB_PATH": "prices_db_path",
 }
@@ -139,7 +141,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "prices_db_path": os.path.join(_TRADINGAGENTS_HOME, "prices.db"),
     "tech_analyze_reports_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_reports"),
     # Tech Desk paper trading (batch PM over saved tech-analyze reports)
-    "tech_desk_max_positions": 10,
+    "tech_desk_max_positions": 20,
     "tech_desk_holding_days": 20,
     "tech_desk_min_confidence": 60,
     "tech_desk_book_path": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "positions.json"),
@@ -157,6 +159,28 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_pending_dismissed_path": os.path.join(
         _TRADINGAGENTS_HOME, "tech_desk", "pending_dismissed.json"
     ),
+    # RS Desk — same PM/rules as Tech Desk; own book; shared tech_reports
+    "rs_desk_max_positions": 20,
+    "rs_desk_holding_days": 20,
+    "rs_desk_min_confidence": 60,
+    "rs_desk_book_path": os.path.join(_TRADINGAGENTS_HOME, "rs_desk", "positions.json"),
+    "rs_desk_pending_path": os.path.join(_TRADINGAGENTS_HOME, "rs_desk", "pending_entries.json"),
+    "rs_desk_pending_dismissed_path": os.path.join(
+        _TRADINGAGENTS_HOME, "rs_desk", "pending_dismissed.json"
+    ),
+    "rs_desk_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "rs_desk", "daily"),
+    "rs_desk_process_log_dir": os.path.join(_TRADINGAGENTS_HOME, "rs_desk", "process"),
+    "rs_desk_closed_history_path": os.path.join(
+        _TRADINGAGENTS_HOME, "rs_desk", "closed_history.json"
+    ),
+    "rs_desk_max_report_age_days": 14,
+    "rs_desk_zone_proximity_pct": 1.5,
+    "rs_desk_min_reward_to_zone_ratio": 2.5,
+    "rs_desk_proximity_min_confidence": 65,
+    "rs_desk_proximity_stop_at_zone_low": True,
+    "rs_desk_pending_max_days": 10,
+    "rs_desk_target_path_skip_pct": 0.80,
+    "rs_desk_invalidate_on_stop_break": True,
     # Per-run directory for full tool response logs (StockTwits, Reddit,
     # yfinance news, technical indicators). None disables this logging; the
     # CLI sets it per run to a tool_responses/ subdir under results_dir.
@@ -241,12 +265,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "screen_benchmark": "^NSEI",          # Nifty 50 — market baseline for RS
     "screen_history_period": "1y",        # yfinance lookback for screening
     "screen_rs_min_percentile": 50.0,     # gate: keep top X% by relative strength
-    "screen_top_n": 10,                   # how many to deep-analyze with the AI
-    # Paper book (no real money): used to measure reliability of the calls.
-    "desk_capital": 100_000.0,            # virtual ₹ per strategy desk
-    "paper_capital": 100_000.0,           # legacy RS paper book (same per-desk size)
-    "paper_max_positions": 20,            # equal-weight sizing divisor
-    "paper_holding_days": 20,             # trading days to hold before scoring
+    "screen_top_n": 10,                   # Market Analyst–only on top N
+    # Paper book (no real money): RS screen + MA BUY opens
+    "desk_capital": 200_000.0,            # virtual ₹ per strategy desk (20 × ₹10k)
+    "paper_capital": 200_000.0,           # RS paper book capital (20 × ₹10k)
+    "paper_max_positions": 20,            # hard slot cap + equal-weight sizing
+    "paper_max_per_sector": 4,            # cap open names per sector
+    "paper_holding_days": 20,             # trading-day time exit
     "paper_benchmark": "^NSEI",           # alpha baseline for paper trades
     # Offline dashboard snapshots (local JSON — no Supabase required)
     "paper_snapshot_path": os.path.join(_TRADINGAGENTS_HOME, "paper", "paper_snapshot.json"),
@@ -266,7 +291,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "swing_volume_mult": 1.2,             # 120% of 20-day average volume
     "swing_ema_mid": 50,
     "swing_ema_mid_stack": False,       # early entry: only price > EMA20 (not 20>50)
-    "swing_top_n": 10,                    # ranked shortlist size
+    "swing_top_n": 30,                    # ranked shortlist size (≥ max_positions)
+    "swing_max_per_sector": 4,            # cap swing candidates per sector
     "swing_max_positions": 20,            # max open paper positions
     "swing_holding_days": 20,             # trading-day hold before time exit
     "swing_book_path": os.getenv(
@@ -277,7 +303,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "swing_min_avg_traded_value_cr": 10.0,  # ₹10 crore avg daily traded value
     "swing_target_1_rr": 1.5,
     "swing_target_2_rr": 2.5,
-    "swing_t2_exit_pct": 75.0,            # sell this % at Target 2; trail the rest
+    "swing_t2_exit_pct": 75.0,            # legacy/unused: swing now exits 100% at Target 1
     # Run times (IST, informational — scheduler uses scripts/schedule_swing_daily.ps1)
     "swing_run_times": ["09:30", "11:45", "14:30"],
     # --- Momentum continuation screener (NSE) ---
@@ -304,10 +330,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "momentum_max_extension_pct": 15.0,
     "momentum_st_min_buy_sessions": 4,
     "momentum_exclude_swing_overlap": True,
-    "momentum_top_n": 10,
+    "momentum_top_n": 30,
     "momentum_max_positions": 20,
-    "momentum_min_holding_days": 30,
-    "momentum_max_holding_days": 90,
+    "momentum_max_per_sector": 4,         # cap open names per sector
+    "momentum_max_holding_days": 20,      # trading-day hold before time exit
     "momentum_book_path": os.getenv(
         "TRADINGAGENTS_MOMENTUM_BOOK_PATH",
         os.path.join(_TRADINGAGENTS_HOME, "momentum", "positions.json"),
@@ -318,9 +344,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "momentum_min_avg_traded_value_cr": 10.0,
     "momentum_target_1_rr": 1.5,
     "momentum_target_2_rr": 2.5,
-    "momentum_t2_exit_pct": 75.0,
+    "momentum_t2_exit_pct": 75.0,          # legacy/unused: momentum now exits 100% at T1
     "momentum_run_times": ["09:30", "11:45", "14:30"],
-    # NANDA Swing Scanner (NSS) — structure-first early swing, top 20, 30–90 day hold
+    # NANDA Swing Scanner (NSS) — structure-first early swing, top 20, 40-day max hold
     "nss_history_period": "2y",
     "nss_supertrend_period": 10,
     "nss_supertrend_multiplier": 3.0,
@@ -352,8 +378,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "nss_min_score": 50.0,
     "nss_top_n": 20,
     "nss_max_positions": 20,
-    "nss_min_holding_days": 30,
-    "nss_max_holding_days": 90,
+    "nss_max_per_sector": 4,              # cap open names per sector
+    "nss_max_holding_days": 40,           # trading-day hold before time exit
     "nss_book_path": os.getenv(
         "TRADINGAGENTS_NSS_BOOK_PATH",
         os.path.join(_TRADINGAGENTS_HOME, "nss", "positions.json"),
@@ -364,7 +390,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "nss_min_avg_traded_value_cr": 10.0,
     "nss_target_1_rr": 1.5,
     "nss_target_2_rr": 2.5,
-    "nss_t2_exit_pct": 75.0,
+    "nss_t2_exit_pct": 75.0,              # legacy/unused: NSS now exits 100% at T1
     "nss_run_times": ["09:30", "11:45", "14:30"],
     "nss_near_miss_limit": 50,
     # v1.1 diagnostics / scoring (screening gates unchanged — mode fixed)
@@ -396,7 +422,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "strsi_min_bars": 60,
     "strsi_min_score": 0,
     "strsi_mandatory_flip_max_age": 5,
-    "strsi_top_n": 10,
+    "strsi_top_n": 30,
     "strsi_min_market_cap_cr": 500.0,
     "strsi_min_avg_traded_value_cr": 1.0,
     "strsi_opposite_flip_lookback": 3,
@@ -404,11 +430,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "strsi_min_body_pct": 0.15,
     "strsi_max_st_distance_atr": 3.0,
     "strsi_min_volume_ratio": 0.60,
-    "strsi_max_positions": 10,
+    "strsi_max_positions": 20,
+    "strsi_max_per_sector": 4,            # cap open names per sector
     "strsi_holding_days": 20,
     "strsi_target_1_rr": 1.5,
     "strsi_target_2_rr": 2.5,
-    "strsi_t2_exit_pct": 75.0,
+    "strsi_t2_exit_pct": 75.0,            # legacy/unused: STRSI exits 100% at T1
     "strsi_book_path": os.getenv(
         "TRADINGAGENTS_STRSI_BOOK_PATH",
         os.path.join(_TRADINGAGENTS_HOME, "supertrend_rsi", "positions.json"),
@@ -424,11 +451,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "trama_require_still_on_side": True,  # age 1–2: close must stay on signal side
     "trama_top_n": 20,
     "trama_directions": "BUY,SELL",       # both sides; set "BUY" for long-only
-    "trama_max_positions": 10,
+    "trama_max_positions": 20,
+    "trama_max_per_sector": 4,            # cap open names per sector
     "trama_holding_days": 20,
     "trama_target_1_rr": 1.5,
     "trama_target_2_rr": 2.5,
-    "trama_t2_exit_pct": 75.0,
+    "trama_t2_exit_pct": 75.0,            # legacy/unused: TRAMA exits 100% at T1
     "trama_book_path": os.getenv(
         "TRADINGAGENTS_TRAMA_BOOK_PATH",
         os.path.join(_TRADINGAGENTS_HOME, "trama", "positions.json"),
@@ -451,11 +479,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "gap_fill_max_progress": 50,
     "gap_fill_top_n": 50,
     "gap_fill_directions": "UP,DOWN",
-    "gap_fill_max_positions": 10,
-    "gap_fill_holding_days": 15,
+    "gap_fill_max_positions": 20,
+    "gap_fill_max_per_sector": 4,         # cap open names per sector
+    "gap_fill_holding_days": 20,          # trading-day hold before time exit
     "gap_fill_target_1_rr": 1.5,
     "gap_fill_target_2_rr": 2.5,
-    "gap_fill_t2_exit_pct": 75.0,
+    "gap_fill_t2_exit_pct": 75.0,         # legacy/unused: gap fill exits 100% at T1 (fill)
     "gap_fill_stop_buffer_pct": 0.5,
     "gap_fill_min_bars": 30,
     "gap_fill_book_path": os.getenv(
@@ -499,12 +528,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "nwe_cross_max_age": 3,
     "nwe_require_still_on_side": True,
     "nwe_top_n": 20,
-    "nwe_directions": "BUY",
-    "nwe_max_positions": 10,
-    "nwe_holding_days": 20,
+    "nwe_directions": "BUY,SELL",       # SELL screened to close open longs
+    "nwe_max_positions": 20,
+    "nwe_max_per_sector": 4,            # cap open names per sector
+    "nwe_holding_days": 20,             # trading-day hold before time exit
     "nwe_target_1_rr": 1.5,
     "nwe_target_2_rr": 2.5,
-    "nwe_t2_exit_pct": 75.0,
+    "nwe_t2_exit_pct": 75.0,            # legacy/unused: NWE exits 100% at T1
     "nwe_book_path": os.getenv(
         "TRADINGAGENTS_NWE_BOOK_PATH",
         os.path.join(_TRADINGAGENTS_HOME, "nw_envelope", "positions.json"),
@@ -519,7 +549,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "pattern_forecast_use_v17": False,
     "pattern_forecast_min_correlation": 0.56,
     "pattern_forecast_min_bars": 126,
-    "pattern_forecast_top_n": 10,
+    "pattern_forecast_top_n": 30,
     "pattern_forecast_directions": "UP",
     "pattern_forecast_bullish_only": True,
     "pattern_forecast_correlation_method": "pearson",
@@ -555,8 +585,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "pattern_forecast_min_stop_pct": 2.0,
     "pattern_forecast_stop_on_close_only": False,
     "pattern_forecast_breakeven_trigger_pct": 0.0,
-    "pattern_forecast_max_positions": 10,
-    "pattern_forecast_holding_days": 5,
+    "pattern_forecast_max_positions": 20,
+    "pattern_forecast_max_per_sector": 4,  # cap open names per sector
+    "pattern_forecast_holding_days": 5,    # matches 5d forecast horizon
     "pattern_forecast_book_path": os.path.join(
         os.path.expanduser("~"), ".tradingagents", "pattern_forecast", "positions.json"
     ),

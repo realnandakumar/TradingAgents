@@ -56,7 +56,16 @@ def run_tech_desk_process(
     reports_dir = reports_dir or config.get("tech_analyze_reports_dir")
 
     watchlist = load_watchlist()
-    if not watchlist:
+    manager = TechDeskPaperTradeManager(config)
+    open_positions = [p for p in manager.book.positions if p.get("status") == "open"]
+    pending_tickers = [
+        row["ticker"] for row in manager.book._load_pending() if row.get("ticker")  # noqa: SLF001
+    ]
+    # Shared reports: watchlist screening + open/pending (may have been written by RS Desk MA)
+    report_tickers = list(
+        dict.fromkeys([*(watchlist or []), *[p["ticker"] for p in open_positions], *pending_tickers])
+    )
+    if not report_tickers:
         return {
             "skipped": True,
             "reason": "empty_watchlist",
@@ -64,11 +73,14 @@ def run_tech_desk_process(
             "stale_tickers": [],
         }
 
-    _log(f"Loading saved tech-analyze reports for {len(watchlist)} watchlist tickers...")
+    _log(
+        f"Loading latest shared tech reports for {len(report_tickers)} tickers "
+        f"(watchlist + open/pending)..."
+    )
     max_age = config.get("tech_desk_max_report_age_days")
     candidates, stale_tickers = load_tech_reports(
         reports_dir,
-        tickers=watchlist,
+        tickers=report_tickers,
         max_report_age_days=max_age,
         as_of=process_date,
     )
@@ -83,8 +95,6 @@ def run_tech_desk_process(
 
     snapshots_by_ticker = {s.ticker.upper(): s for s in candidates}
 
-    manager = TechDeskPaperTradeManager(config)
-    open_positions = [p for p in manager.book.positions if p.get("status") == "open"]
     slots_available = max(0, manager.max_positions - len(open_positions))
 
     all_tickers = list({c.ticker for c in candidates} | {p["ticker"] for p in open_positions})

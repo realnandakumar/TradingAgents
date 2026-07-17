@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
@@ -62,7 +63,7 @@ def screen_trama(
     metadata = load_universe_metadata(
         csv_path=config.get("screen_universe_csv"),
         cache_dir=config.get("data_cache_dir"),
-        allow_download=False,
+        allow_download=True,
     )
 
     period = config.get("trama_history_period", "1y")
@@ -72,6 +73,7 @@ def screen_trama(
 
     max_age = int(config.get("trama_cross_max_age", 3))
     top_n = int(config.get("trama_top_n", 20))
+    max_per_sector = int(config.get("trama_max_per_sector", 4))
     directions = str(config.get("trama_directions", "BUY,SELL")).upper()
     allow_buy = "BUY" in directions
     allow_sell = "SELL" in directions
@@ -103,11 +105,31 @@ def screen_trama(
 
     # Freshest first, then larger distance from TRAMA (stronger post-cross).
     picks.sort(key=lambda p: (p.cross_age, -abs(p.signal.dist_pct)))
+
+    sells = [p for p in picks if p.direction == "SELL"]
+    buys = [p for p in picks if p.direction == "BUY"]
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped_buys: List[TramaPick] = []
+        for pick in buys:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped_buys.append(pick)
+            sector_counts[sector] += 1
+            if len(capped_buys) >= top_n:
+                break
+        buys = capped_buys
+    else:
+        buys = buys[:top_n]
+
+    result = buys + sells
+    result.sort(key=lambda p: (p.cross_age, -abs(p.signal.dist_pct)))
     _log(
-        f"{STRATEGY_NAME}: {len(picks)} crossover(s) in last {max_age} days "
-        f"(checked {n_checked}, rejected {n_reject})"
+        f"{STRATEGY_NAME}: {len(buys)} BUY (max {max_per_sector}/sector) + {len(sells)} SELL "
+        f"in last {max_age} days (checked {n_checked}, rejected {n_reject})"
     )
-    return picks[:top_n]
+    return result
 
 
 __all__ = ["TramaPick", "screen_trama", "STRATEGY_ID", "STRATEGY_NAME"]

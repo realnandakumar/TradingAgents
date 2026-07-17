@@ -84,13 +84,20 @@ class SupabaseSync:
 # Snapshot serializers — turn in-memory objects into JSON-safe dicts.
 # --------------------------------------------------------------------------
 
-def screen_snapshot(trade_date: str, candidates: List, opened: Optional[List[str]] = None) -> dict:
+def screen_snapshot(
+    trade_date: str,
+    candidates: List,
+    opened: Optional[List[str]] = None,
+    waits: Optional[List[str]] = None,
+) -> dict:
     """Serialize a screen run (list of Candidate objects) for the dashboard."""
     opened = opened or []
+    waits = waits or []
     return {
         "trade_date": trade_date,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "opened": opened,
+        "waits": waits,
         "candidates": [
             {
                 "rank": i + 1,
@@ -102,10 +109,13 @@ def screen_snapshot(trade_date: str, candidates: List, opened: Optional[List[str
                 "signals": c.fired_signals,
                 "rating": c.decision_rating,
                 "opened": c.symbol in opened,
+                "waiting": c.symbol in waits,
                 "stoploss": (c.levels or {}).get("stoploss"),
                 "target": (c.levels or {}).get("target"),
                 "stop_pct": (c.levels or {}).get("stop_pct"),
                 "target_pct": (c.levels or {}).get("target_pct"),
+                "entry_zone_low": (c.levels or {}).get("entry_zone_low"),
+                "entry_zone_high": (c.levels or {}).get("entry_zone_high"),
             }
             for i, c in enumerate(candidates)
         ],

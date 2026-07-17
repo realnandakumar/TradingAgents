@@ -32,27 +32,24 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "swing",
     label: "Swing Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["swing-daily", "--yes"], variant: "primary", description: "Exits, opens, and daily portfolio job" },
+      { id: "daily", label: "Daily run", cliArgs: ["swing-daily"], variant: "primary", description: "Full exit at T1, no foreclosure, max 4 open names per sector" },
       { id: "report", label: "Report", cliArgs: ["swing-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["swing-approve"], variant: "secondary" },
     ],
   },
   {
     id: "momentum",
     label: "Momentum Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["momentum-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["momentum-daily"], variant: "primary", description: "Full exit at T1, no foreclosure, max 4 open names per sector" },
       { id: "report", label: "Report", cliArgs: ["momentum-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["momentum-approve"], variant: "secondary" },
     ],
   },
   {
     id: "nss",
     label: "NSS Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["nss-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["nss-daily"], variant: "primary", description: "Full exit at T1, no foreclosure, max 4 open names per sector" },
       { id: "report", label: "Report", cliArgs: ["nss-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["nss-approve"], variant: "secondary" },
       { id: "diagnostics", label: "Diagnostics", cliArgs: ["nss-diagnostics"], variant: "secondary" },
     ],
   },
@@ -60,9 +57,8 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "supertrend-rsi",
     label: "SuperTrend RSI Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["supertrend-rsi-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["supertrend-rsi-daily"], variant: "primary", description: "T1 full exit, SELL closes longs, max 4/sector, 20 slots" },
       { id: "report", label: "Report", cliArgs: ["supertrend-rsi-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["supertrend-rsi-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["supertrend-rsi-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -70,9 +66,8 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "trama",
     label: "TRAMA Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["trama-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["trama-daily"], variant: "primary", description: "T1 full exit, SELL closes longs, max 4/sector, 20 slots" },
       { id: "report", label: "Report", cliArgs: ["trama-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["trama-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["trama-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -80,9 +75,8 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "gap-fill",
     label: "Gap Fill Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["gap-fill-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["gap-fill-daily"], variant: "primary", description: "T1 full exit, UP closes longs, max 4/sector, 20 slots" },
       { id: "report", label: "Report", cliArgs: ["gap-fill-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["gap-fill-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["gap-fill-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -90,9 +84,8 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "nw-envelope",
     label: "NW Envelope Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["nw-envelope-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["nw-envelope-daily"], variant: "primary", description: "T1 full exit, SELL closes longs, max 4/sector, 20 slots" },
       { id: "report", label: "Report", cliArgs: ["nw-envelope-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["nw-envelope-approve"], variant: "secondary" },
       { id: "explain", label: "Explain ticker", cliArgs: ["nw-envelope-explain"], needsTicker: true, variant: "secondary" },
     ],
   },
@@ -100,9 +93,8 @@ const DESK_CONFIGS: DeskConfig[] = [
     id: "pattern-forecast",
     label: "Pattern Forecast Desk",
     actions: [
-      { id: "daily", label: "Daily run", cliArgs: ["pattern-forecast-daily", "--yes"], variant: "primary" },
+      { id: "daily", label: "Daily run", cliArgs: ["pattern-forecast-daily"], variant: "primary", description: "Target full exit, max 4/sector, 20 slots, 5d hold" },
       { id: "report", label: "Report", cliArgs: ["pattern-forecast-report"], variant: "secondary" },
-      { id: "approve", label: "Approve replacements", cliArgs: ["pattern-forecast-approve"], variant: "secondary" },
     ],
   },
   {
@@ -150,18 +142,7 @@ const DESK_CONFIGS: DeskConfig[] = [
         requiresApiKey: true,
         group: "desk",
         description:
-          "Read saved tech-analyze reports for watchlist tickers (≤14 days old), run the AI portfolio manager, open new trades or queue pullback zones. Portfolio replacements require explicit Apply.",
-      },
-      {
-        id: "process-apply",
-        label: "Apply replacements",
-        cliArgs: ["tech-desk-apply-process"],
-        variant: "secondary",
-        destructive: true,
-        requiresApiKey: false,
-        group: "desk",
-        description:
-          "Execute queued portfolio replacements from the latest Process run (foreclose weakest + open stronger). Review the process log first.",
+          "Read latest shared tech_reports for watchlist ∪ open/pending (reports may come from RS Desk MA), run the AI portfolio manager, open or queue zones on the Tech Desk book only.",
       },
       {
         id: "daily",
@@ -211,17 +192,63 @@ const DESK_CONFIGS: DeskConfig[] = [
   },
   {
     id: "positions",
-    label: "RS Paper Positions",
+    label: "RS Desk",
     actions: [
-      { id: "screen", label: "Run screen", cliArgs: ["screen", "--yes"], variant: "primary", description: "Screen and paper-trade top picks" },
-      { id: "paper", label: "Refresh positions", cliArgs: ["paper"], variant: "secondary", description: "Mark to market and refresh snapshot" },
+      {
+        id: "screen",
+        label: "Screen + MA + PM",
+        cliArgs: ["screen", "--yes"],
+        variant: "primary",
+        requiresApiKey: true,
+        description:
+          "RS shortlist → Market Analyst on top 10 (writes shared tech_reports/) → RS Desk PM opens/waits on the rs_desk book.",
+      },
+      {
+        id: "process",
+        label: "Process zones",
+        cliArgs: ["rs-desk-process"],
+        variant: "secondary",
+        requiresApiKey: true,
+        description:
+          "Re-run RS Desk PM on latest shared reports for last screen ∪ open/pending (no new MA). Same agent as Tech Desk; separate book.",
+      },
+      {
+        id: "daily",
+        label: "Daily run",
+        cliArgs: ["rs-desk-daily"],
+        variant: "primary",
+        description:
+          "Rules-only: stop / target / time exits and pending zone fills on the RS Desk book. No LLM.",
+      },
+      {
+        id: "positions",
+        label: "CLI positions",
+        cliArgs: ["rs-desk-positions"],
+        variant: "secondary",
+        description: "Print RS Desk open positions and pending zones in the terminal.",
+      },
     ],
   },
   {
     id: "screens",
     label: "Screen History",
     actions: [
-      { id: "screen", label: "Run screen", cliArgs: ["screen", "--yes"], variant: "primary", description: "Screen and paper-trade top picks" },
+      {
+        id: "screen",
+        label: "Screen + MA + PM",
+        cliArgs: ["screen", "--yes"],
+        variant: "primary",
+        requiresApiKey: true,
+        description:
+          "RS shortlist → MA top 10 → RS Desk PM. History listed here; blotter on RS Desk (/positions).",
+      },
+      {
+        id: "preview",
+        label: "Preview screen (free)",
+        cliArgs: ["screen", "--preview", "--yes"],
+        variant: "secondary",
+        description: "Ranked RS picks only — no Market Analyst, no PM, no token cost.",
+      },
     ],
   },
   {
@@ -246,7 +273,7 @@ const DESK_CONFIGS: DeskConfig[] = [
         variant: "secondary",
         supportsForce: true,
         description:
-          "Same as scheduled EOD; skips price re-sync if already completed today (use Sync now to force)",
+          "Same pipeline as Sync now, but skips price re-sync if already completed today",
       },
       {
         id: "all-dailies",
@@ -266,17 +293,19 @@ const DESK_CONFIGS: DeskConfig[] = [
       },
       {
         id: "rs-screen",
-        label: "RS screen",
+        label: "RS screen + MA + PM",
         cliArgs: ["screen", "--yes"],
         variant: "primary",
-        description: "Screen and paper-trade top RS picks",
+        requiresApiKey: true,
+        description:
+          "RS shortlist → MA top 10 (shared tech_reports) → RS Desk PM (separate book)",
       },
       {
-        id: "rs-paper",
-        label: "RS paper refresh",
-        cliArgs: ["paper"],
+        id: "rs-desk-daily",
+        label: "RS Desk daily",
+        cliArgs: ["rs-desk-daily"],
         variant: "secondary",
-        description: "Mark to market and refresh RS paper snapshot",
+        description: "RS Desk rules-only exits and zone fills",
       },
     ],
   },
@@ -291,6 +320,7 @@ const PORTFOLIO_DESK_IDS = [
   "gap-fill",
   "nw-envelope",
   "pattern-forecast",
+  "positions",
   "tech-desk",
 ] as const;
 

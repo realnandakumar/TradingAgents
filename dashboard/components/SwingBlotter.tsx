@@ -9,10 +9,6 @@ import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMet
 
 const MAX_POSITIONS = 20;
 
-function phaseLabel(phase?: string): string {
-  return phase === "runner" ? "RUN" : "INIT";
-}
-
 function cushionPct(last: number | null, stop: number): number | null {
   if (last == null || last <= 0) return null;
   return ((last - stop) / last) * 100;
@@ -22,9 +18,6 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
   const { quotes, loading } = useQuotes(positions.map((p) => p.ticker));
   const open = positions.filter((p) => p.status === "open");
 
-  let mtmSum = 0;
-  let haveLive = false;
-
   const rows = open.map((p) => {
     const q = quotes[p.ticker];
     const live = q?.price ?? p.entry_price;
@@ -32,14 +25,13 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
     const rem = (p.remaining_pct ?? 100) / 100;
     const mtmPct = ((live - p.entry_price) / p.entry_price) * 100;
     const mtmAbs = (live - p.entry_price) * rem;
-    if (q?.price != null) {
-      mtmSum += mtmAbs;
-      haveLive = true;
-    }
     const cushion = cushionPct(live, stop);
     const tight = cushion != null && cushion < 7;
-    return { p, live, stop, mtmPct, cushion, tight, hasQuote: q?.price != null };
+    return { p, live, stop, mtmPct, mtmAbs, cushion, tight, hasQuote: q?.price != null };
   });
+  const quotedRows = rows.filter((row) => row.hasQuote);
+  const mtmSum = quotedRows.reduce((sum, row) => sum + row.mtmAbs, 0);
+  const haveLive = quotedRows.length > 0;
 
   const avgRisk =
     open.reduce((s, p) => s + Math.abs(p.stop_loss_pct), 0) / (open.length || 1);
@@ -85,12 +77,12 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="text-muted uppercase tracking-wide border-b border-border bg-surface/40">
-                  {["SYM", "NAME", "SECT", ...deskOpenMetaHeaders(), "LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "ST", "SIZE", "RSI", "ADX"].map(
+                  {["SYM", "NAME", "SECT", ...deskOpenMetaHeaders(), "LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "RSI", "ADX"].map(
                     (h) => (
                       <th
                         key={h}
                         className={`font-medium py-2 px-2 whitespace-nowrap ${
-                          ["LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "SIZE", "RSI", "ADX", ...deskOpenMetaHeaders()].includes(h)
+                          ["LAST", "MTM%", "STOP", "RISK%", "T1", "UPSIDE", "CUSH%", "RSI", "ADX", ...deskOpenMetaHeaders()].includes(h)
                             ? "text-right"
                             : "text-left"
                         }`}
@@ -124,8 +116,6 @@ export function SwingBlotter({ positions }: { positions: SwingPosition[] }) {
                     <td className={`py-2 px-2 text-right tabular-nums ${tight ? "text-bear font-semibold" : ""}`}>
                       {cushion == null ? "—" : pct(cushion, 2)}
                     </td>
-                    <td className="py-2 px-2">{phaseLabel(p.phase)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums">{(p.remaining_pct ?? 100).toFixed(0)}%</td>
                     <td className="py-2 px-2 text-right tabular-nums">{p.rsi?.toFixed(1) ?? "—"}</td>
                     <td className="py-2 px-2 text-right tabular-nums">{p.adx?.toFixed(1) ?? "—"}</td>
                   </tr>

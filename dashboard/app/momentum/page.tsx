@@ -20,6 +20,14 @@ export default function MomentumDeskPage() {
       positions={book?.positions ?? []}
       hasBook={Boolean(book)}
       blotter={<MomentumBlotter positions={book?.positions ?? []} />}
+      extraBadges={["T1 Full Exit", "Max 4 / Sector"]}
+      headerExtra={
+        <div>
+          Momentum exits 100% at Target 1. New entries capped at 4 open names per sector (20-day max, SuperTrend stop).
+          PB ✓ = HH after EMA pullback (informational, not required for entry).
+        </div>
+      }
+      emptyHint="Use Daily run in Desk actions above, or run all dailies from Command center."
     />
   );
 }

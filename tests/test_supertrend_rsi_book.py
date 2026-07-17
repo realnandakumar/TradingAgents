@@ -33,7 +33,7 @@ def test_strategy_name():
 
 
 def test_open_buy_position(tmp_path):
-    cfg = {"strsi_book_path": str(tmp_path / "positions.json"), "strsi_max_positions": 10}
+    cfg = {"strsi_book_path": str(tmp_path / "positions.json"), "strsi_max_positions": 20}
     book = SuperTrendRSIPositionBook(cfg)
     pos = book.open_position(_make_pick(), "2026-07-04")
     assert pos is not None
@@ -53,7 +53,7 @@ def test_skips_sell_signals(tmp_path):
 
 
 def test_save_picks_only_buy(tmp_path):
-    cfg = {"strsi_book_path": str(tmp_path / "positions.json"), "strsi_max_positions": 10}
+    cfg = {"strsi_book_path": str(tmp_path / "positions.json"), "strsi_max_positions": 20}
     book = SuperTrendRSIPositionBook(cfg)
     saved = book.save_picks([
         _make_pick("AAA.NS", "BUY"),
@@ -62,3 +62,31 @@ def test_save_picks_only_buy(tmp_path):
     ])
     assert len(saved) == 2
     assert book.open_count() == 2
+    assert any(s["ticker"] == "BBB.NS" for s in book.sell_signals)
+
+
+def test_open_position_respects_sector_cap(tmp_path):
+    cfg = {
+        "strsi_book_path": str(tmp_path / "positions.json"),
+        "strsi_max_per_sector": 2,
+        "strsi_max_positions": 10,
+    }
+    book = SuperTrendRSIPositionBook(cfg)
+    for i in range(2):
+        assert book.open_position(_make_pick(f"IT{i}.NS"), "2026-07-01") is not None
+    assert book.open_position(_make_pick("IT2.NS"), "2026-07-01") is None
+    assert book.open_count() == 2
+
+
+def test_close_on_sell_signal(tmp_path):
+    cfg = {"strsi_book_path": str(tmp_path / "positions.json"), "strsi_max_positions": 20}
+    book = SuperTrendRSIPositionBook(cfg)
+    assert book.open_position(_make_pick("TEST.NS", "BUY"), "2026-07-01") is not None
+    events = book.close_on_sell_signals(
+        [_make_pick("TEST.NS", "SELL")],
+        as_of="2026-07-04",
+    )
+    assert len(events) == 1
+    assert events[0]["reason"] == "signal_sell"
+    assert book.open_count() == 0
+    assert book.positions[0]["status"] == "closed"

@@ -29,7 +29,7 @@ class TechDeskPaperTradeManager:
         cfg = config or {}
         self.config = cfg
         self.book = TechDeskPositionBook(cfg)
-        self.max_positions = int(cfg.get("tech_desk_max_positions", 10))
+        self.max_positions = int(cfg.get("tech_desk_max_positions", 20))
         desk_dir = Path(
             cfg.get("tech_desk_book_path", os.path.join(_DEFAULT_HOME, "tech_desk", "positions.json"))
         ).parent
@@ -39,6 +39,7 @@ class TechDeskPaperTradeManager:
         self.process_log_dir.mkdir(parents=True, exist_ok=True)
 
     def _weakest_open(self, batch_tickers: set[str]) -> Optional[dict]:
+        """Kept for diagnostics; Tech Desk no longer forecloses to free slots."""
         open_positions = [p for p in self.book.positions if p.get("status") == "open"]
         if not open_positions:
             return None
@@ -59,19 +60,8 @@ class TechDeskPaperTradeManager:
         return min(open_positions, key=score)
 
     def _foreclose_weakest(self, batch_tickers: set[str], as_of: str) -> Optional[str]:
-        weak = self._weakest_open(batch_tickers)
-        if weak is None:
-            return None
-        price = self.book.latest_price(weak["ticker"])
-        if price is None:
-            return None
-        self.book.close_position(
-            weak["ticker"],
-            exit_price=price,
-            exit_date=as_of,
-            reason=ExitReason.FORECLOSURE.value,
-        )
-        return weak["ticker"]
+        """Disabled — Tech Desk exits only via stop / targets (and daily rules)."""
+        return None
 
     def _snapshot_meta(self, ticker: str, snapshots: Dict[str, TechReportSnapshot]) -> dict:
         snap = snapshots.get(ticker.upper()) or snapshots.get(ticker)
@@ -147,21 +137,9 @@ class TechDeskPaperTradeManager:
                 continue
 
             if self.book.open_count() >= self.max_positions:
-                weak = self._weakest_open(batch_tickers)
-                if weak is None:
-                    report["skipped"].append({"ticker": plan.ticker, "reason": "portfolio full"})
-                    continue
-                report["pending_replacements"].append({
-                    "id": f"{weak['ticker']}->{plan.ticker}",
-                    "foreclose": weak["ticker"],
-                    "open": plan.ticker,
-                    "plan": plan.model_dump(),
-                    "foreclose_entry": weak.get("entry_price"),
-                    "foreclose_confidence": weak.get("confidence"),
-                })
                 report["skipped"].append({
                     "ticker": plan.ticker,
-                    "reason": f"portfolio full — replacement queued (foreclose {weak['ticker']})",
+                    "reason": "portfolio full — wait for stop/target exit (no foreclosure)",
                 })
                 continue
 
@@ -231,93 +209,38 @@ class TechDeskPaperTradeManager:
         prices: Optional[Dict[str, float]] = None,
         selected_ids: Optional[List[str]] = None,
     ) -> dict:
-        """Execute queued portfolio replacements from a process log (explicit approval)."""
+        """Disabled — Tech Desk does not foreclose; exits are stop / targets only."""
         process_date = process_date or datetime.now().strftime("%Y-%m-%d")
         log_path = self.process_log_dir / f"{process_date}.json"
-        if not log_path.exists():
-            return {"applied": [], "skipped": [], "error": f"no process log for {process_date}"}
-
-        log = json.loads(log_path.read_text(encoding="utf-8"))
-        pending = log.get("pending_replacements") or []
-        if not pending:
-            return {"applied": [], "skipped": [], "message": "no pending replacements"}
-
-        selected = set(selected_ids) if selected_ids else None
-        from .schemas import EntryType, TechTradePlan
-
-        applied: List[dict] = []
-        skipped: List[dict] = []
-        remaining: List[dict] = []
-
-        for item in pending:
-            item_id = self.replacement_id(item)
-            if selected is not None and item_id not in selected:
-                remaining.append(item)
-                continue
-            foreclose = item.get("foreclose")
-            plan_data = item.get("plan")
-            if not foreclose or not plan_data:
-                skipped.append({"item": item, "reason": "malformed replacement entry"})
-                continue
-
-            plan = TechTradePlan.model_validate(plan_data)
-            if not self.book.has_open_position(foreclose):
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "foreclose not open"})
-                continue
-            if self.book.has_open_position(plan.ticker):
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "open already held"})
-                continue
-
-            exit_price = (prices or {}).get(foreclose) or self.book.latest_price(foreclose)
-            if exit_price is None:
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "no exit price"})
-                continue
-
-            if not self.book.close_position(
-                foreclose, exit_price, process_date, ExitReason.FORECLOSURE.value
-            ):
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "foreclose failed"})
-                continue
-
-            if plan.entry_type == EntryType.LIMIT_ZONE:
-                err = self.book.validate_pending_plan(plan, (prices or {}).get(plan.ticker))
-                if err:
-                    skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": err})
-                    continue
-                row = self.book.add_pending_entry(
-                    plan,
-                    process_date,
-                    current_price=(prices or {}).get(plan.ticker),
+        cleared = 0
+        if log_path.exists():
+            try:
+                log = json.loads(log_path.read_text(encoding="utf-8"))
+                pending = log.get("pending_replacements") or []
+                if pending:
+                    cleared = len(pending)
+                    log["pending_replacements"] = []
+                    log["replacements_applied"] = []
+                    log["replacements_skipped"] = [
+                        {"reason": "foreclosure disabled — exits via stop/target only"}
+                    ]
+                    log_path.write_text(
+                        json.dumps(log, indent=2, default=str), encoding="utf-8"
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Could not clear stale replacements in %s (%s)", log_path, e
                 )
-                if row:
-                    applied.append({"foreclosed": foreclose, "queued": plan.ticker, "type": "limit_zone"})
-                else:
-                    skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "pending rejected"})
-                continue
-
-            entry_price = (prices or {}).get(plan.ticker) or self.book.latest_price(plan.ticker)
-            if entry_price is None:
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "no entry price"})
-                continue
-            pos = self.book.open_from_plan(plan, entry_price, process_date)
-            if pos:
-                applied.append({
-                    "foreclosed": foreclose,
-                    "opened": plan.ticker,
-                    "entry_price": entry_price,
-                })
-            else:
-                skipped.append({"foreclose": foreclose, "open": plan.ticker, "reason": "open rejected"})
-
-        if selected is None:
-            log["pending_replacements"] = []
-        else:
-            log["pending_replacements"] = remaining
-        log["replacements_applied"] = applied
-        log["replacements_skipped"] = skipped
-        log_path.write_text(json.dumps(log, indent=2, default=str), encoding="utf-8")
-
-        return {"applied": applied, "skipped": skipped, "date": process_date}
+        return {
+            "applied": [],
+            "skipped": [],
+            "cleared": cleared,
+            "message": (
+                "Tech Desk foreclosure is disabled. "
+                "Positions exit on stop loss or targets only."
+            ),
+            "date": process_date,
+        }
 
     def apply_review(
         self,
@@ -392,11 +315,11 @@ class TechDeskPaperTradeManager:
         exit_summary = self.book.evaluate_and_close_exits(as_of=as_of)
         report["exits"] = exit_summary.get("closed", [])
 
-        lifecycle = self.book.evaluate_pending_lifecycle(as_of=as_of)
-        report["pending_removed"] = lifecycle.get("removed", [])
-
         fills = self.book.evaluate_pending_fills(as_of=as_of)
         report["zone_fills"] = fills
+
+        lifecycle = self.book.evaluate_pending_lifecycle(as_of=as_of)
+        report["pending_removed"] = lifecycle.get("removed", [])
 
         report["open_positions"] = self.book.open_count()
         report["pending_entries"] = len(self.book.pending_entries())

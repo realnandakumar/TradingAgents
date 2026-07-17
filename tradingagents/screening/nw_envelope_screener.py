@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
@@ -62,7 +63,7 @@ def screen_nw_envelope(
     metadata = load_universe_metadata(
         csv_path=config.get("screen_universe_csv"),
         cache_dir=config.get("data_cache_dir"),
-        allow_download=False,
+        allow_download=True,
     )
 
     period = config.get("nwe_history_period", "2y")
@@ -72,7 +73,8 @@ def screen_nw_envelope(
 
     max_age = int(config.get("nwe_cross_max_age", 3))
     top_n = int(config.get("nwe_top_n", 20))
-    directions = str(config.get("nwe_directions", "BUY")).upper()
+    max_per_sector = int(config.get("nwe_max_per_sector", 4))
+    directions = str(config.get("nwe_directions", "BUY,SELL")).upper()
     allow_buy = "BUY" in directions
     allow_sell = "SELL" in directions
 
@@ -102,11 +104,31 @@ def screen_nw_envelope(
         picks.append(NwEnvelopePick(signal=sig, stock_name=name, sector=sector))
 
     picks.sort(key=lambda p: (p.cross_age, -abs(p.signal.dist_pct)))
+
+    sells = [p for p in picks if p.direction == "SELL"]
+    buys = [p for p in picks if p.direction == "BUY"]
+    if max_per_sector > 0:
+        sector_counts: Counter[str] = Counter()
+        capped_buys: List[NwEnvelopePick] = []
+        for pick in buys:
+            sector = pick.sector or "—"
+            if sector_counts[sector] >= max_per_sector:
+                continue
+            capped_buys.append(pick)
+            sector_counts[sector] += 1
+            if len(capped_buys) >= top_n:
+                break
+        buys = capped_buys
+    else:
+        buys = buys[:top_n]
+
+    result = buys + sells
+    result.sort(key=lambda p: (p.cross_age, -abs(p.signal.dist_pct)))
     _log(
-        f"{STRATEGY_NAME}: {len(picks)} crossover(s) in last {max_age} days "
-        f"(checked {n_checked}, rejected {n_reject})"
+        f"{STRATEGY_NAME}: {len(buys)} BUY (max {max_per_sector}/sector) + {len(sells)} SELL "
+        f"in last {max_age} days (checked {n_checked}, rejected {n_reject})"
     )
-    return picks[:top_n]
+    return result
 
 
 __all__ = ["NwEnvelopePick", "screen_nw_envelope", "STRATEGY_ID", "STRATEGY_NAME"]

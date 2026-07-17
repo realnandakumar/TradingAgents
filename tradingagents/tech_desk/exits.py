@@ -14,7 +14,7 @@ from tradingagents.swing.exits import trading_days_between
 class ExitReason(str, Enum):
     STOP = "stop_loss"
     TARGET_1 = "target_1"
-    TARGET_2 = "target_2"
+    TARGET_2 = "target_2"  # Legacy closed-trade reason; no longer emitted.
     TIME = "time_exit"
     FORECLOSURE = "foreclosure"
     REVIEW_CLOSE = "review_close"
@@ -37,7 +37,7 @@ def evaluate_bar_exits(
     holding_days: int,
     history: pd.DataFrame,
 ) -> List[ExitAction]:
-    """Stop, stretch target, primary target, then time exit."""
+    """Stop, primary target, then time exit."""
     actions: List[ExitAction] = []
     remaining = float(position.get("remaining_pct", 100.0))
     if remaining <= 0:
@@ -46,8 +46,6 @@ def evaluate_bar_exits(
     entry = float(position.get("entry_price") or 0)
     stop = float(position.get("trailing_stop") or position.get("stop_loss") or 0)
     target_1 = float(position.get("target_1") or 0)
-    target_2 = position.get("target_2")
-    target_2 = float(target_2) if target_2 is not None else 0.0
     low = float(bar["Low"])
     high = float(bar["High"])
     close = float(bar["Close"])
@@ -59,18 +57,6 @@ def evaluate_bar_exits(
                 ticker=position["ticker"],
                 reason=ExitReason.STOP,
                 exit_price=round(stop, 2),
-                exit_date=bar_date,
-                exit_pct=remaining,
-            )
-        )
-        return actions
-
-    if target_2 > 0 and high >= target_2:
-        actions.append(
-            ExitAction(
-                ticker=position["ticker"],
-                reason=ExitReason.TARGET_2,
-                exit_price=round(target_2, 2),
                 exit_date=bar_date,
                 exit_pct=remaining,
             )

@@ -143,7 +143,7 @@ export function ChartWorkspace() {
       }),
       ...merged.segments,
     ];
-    return { ...data, lines, patternHighlight: merged.patternHighlight, ...merged };
+    return { ...data, lines, ...merged };
   }, [data, enabledDesks, showSma50, showSma200]);
 
   const pushUrl = (

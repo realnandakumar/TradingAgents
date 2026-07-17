@@ -9,6 +9,15 @@ import { gapFillBookPath, readGapFillBook } from "@/lib/gap-fill-server";
 import { readGapScreenerSnapshot } from "@/lib/gap-screener-server";
 import { listRecentJobs } from "@/lib/desk-cli-server";
 import { getLatestPaper, getLatestScreen, paperSnapshotPath, screensPath } from "@/lib/paper-server";
+import {
+  countStaleSymbols,
+  describeSyncGap,
+  expectedCompletedSessionIst,
+  maxLastBarFromManifest,
+  pricesDbPath,
+  readLatestEodReport,
+  readManifest,
+} from "@/lib/price-sync-status";
 import { swingBookPath } from "@/lib/swing-server";
 import { techDeskBookPath } from "@/lib/tech-desk-server";
 
@@ -42,29 +51,14 @@ function fileMtime(filePath: string): string | null {
 export function getDataHealthRows(): DataHealthRow[] {
   const home = process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
   const cacheDir = process.env.TRADINGAGENTS_CACHE_DIR ?? path.join(home, "cache");
-  const pricesDb =
-    process.env.TRADINGAGENTS_PRICES_DB_PATH ?? path.join(home, "prices.db");
+  const pricesDb = pricesDbPath();
   const manifestPath = path.join(cacheDir, "manifest.json");
-  let manifest: {
-    last_eod_run?: string;
-    symbols?: Record<string, { last_bar?: string }>;
-  } = {};
-  if (fs.existsSync(manifestPath)) {
-    try {
-      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as typeof manifest;
-    } catch {
-      manifest = {};
-    }
-  }
-  const today = new Date();
-  const staleCutoff = new Date(today);
-  staleCutoff.setDate(staleCutoff.getDate() - 2);
-  const staleCut = staleCutoff.toISOString().slice(0, 10);
-  let staleCount = 0;
-  for (const entry of Object.values(manifest.symbols ?? {})) {
-    const last = entry?.last_bar;
-    if (!last || last < staleCut) staleCount += 1;
-  }
+  const manifest = readManifest();
+  const expectedSession = expectedCompletedSessionIst();
+  const staleCount = countStaleSymbols(manifest);
+  const maxLastBar = maxLastBarFromManifest(manifest);
+  const latestEod = readLatestEodReport();
+  const syncWarning = describeSyncGap(maxLastBar, expectedSession, latestEod?.sync);
   const customTickers = readCustomTickers();
 
   const paper = getLatestPaper();
@@ -132,7 +126,9 @@ export function getDataHealthRows(): DataHealthRow[] {
       path: pricesDb,
       exists: fs.existsSync(pricesDb),
       updatedAt: fileMtime(pricesDb),
-      detail: `${Object.keys(manifest.symbols ?? {}).length} symbols in manifest`,
+      detail: maxLastBar
+        ? `Latest bar ${maxLastBar} · ${Object.keys(manifest.symbols ?? {}).length} symbols in manifest`
+        : `${Object.keys(manifest.symbols ?? {}).length} symbols in manifest`,
     },
     {
       id: "eod-run",
@@ -140,7 +136,11 @@ export function getDataHealthRows(): DataHealthRow[] {
       path: manifestPath,
       exists: Boolean(manifest.last_eod_run),
       updatedAt: manifest.last_eod_run ?? null,
-      detail: manifest.last_eod_run ? `Ran ${manifest.last_eod_run}` : "Not run today",
+      detail: manifest.last_eod_run
+        ? latestEod?.sync && typeof latestEod.sync.synced === "number"
+          ? `Ran ${manifest.last_eod_run} · sync ${latestEod.sync.synced} ok / ${latestEod.sync.skipped} skip / ${latestEod.sync.failed ?? 0} fail`
+          : `Ran ${manifest.last_eod_run}`
+        : "Not run today",
     },
     {
       id: "custom-tickers",
@@ -158,6 +158,18 @@ export function getDataHealthRows(): DataHealthRow[] {
       updatedAt: fileMtime(manifestPath),
       detail: `${staleCount} symbol(s) >2 days behind`,
     },
+    ...(syncWarning
+      ? [
+          {
+            id: "price-sync-gap",
+            label: "Price sync gap",
+            path: latestEod?.path ?? manifestPath,
+            exists: true,
+            updatedAt: latestEod?.completed_at ?? null,
+            detail: syncWarning,
+          } satisfies DataHealthRow,
+        ]
+      : []),
   ];
 
   return rows;

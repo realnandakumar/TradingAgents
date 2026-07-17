@@ -12,9 +12,12 @@ from tradingagents.dataflows.ohlcv_store import (
     _merge_bars,
     _needs_sync,
     canonical_csv_path,
+    expected_completed_session,
+    manifest_eod_ran_today,
     migrate_legacy_cache,
     read_bars,
     read_history,
+    set_manifest_eod_run,
     sync_price_cache,
     write_bars,
 )
@@ -99,6 +102,74 @@ def test_needs_sync_respects_manifest_freshness(tmp_path):
         "synced_at": "",
     }
     assert _needs_sync("STALE.NS", manifest, str(tmp_path), mode="incremental") is True
+
+
+def test_needs_sync_require_through_forces_eod_refresh(tmp_path):
+    """15 Jul bar must not count as fresh on 16 Jul when EOD requests through today."""
+    today = pd.Timestamp.today().normalize()
+    yesterday = today - pd.Timedelta(days=1)
+    manifest = {
+        "version": 1,
+        "symbols": {
+            "YDAY.NS": {
+                "last_bar": yesterday.strftime("%Y-%m-%d"),
+                "rows": 10,
+                "synced_at": "",
+            },
+        },
+    }
+    # Default 2-day stale window: yesterday is still "fresh"
+    assert _needs_sync("YDAY.NS", manifest, str(tmp_path), mode="incremental") is False
+    # EOD require_through=today: must sync
+    assert (
+        _needs_sync(
+            "YDAY.NS",
+            manifest,
+            str(tmp_path),
+            mode="incremental",
+            require_through=today,
+        )
+        is True
+    )
+    # Already have today's bar
+    manifest["symbols"]["TODAY.NS"] = {
+        "last_bar": today.strftime("%Y-%m-%d"),
+        "rows": 10,
+        "synced_at": "",
+    }
+    assert (
+        _needs_sync(
+            "TODAY.NS",
+            manifest,
+            str(tmp_path),
+            mode="incremental",
+            require_through=today,
+        )
+        is False
+    )
+
+
+def test_expected_completed_session_skips_open_session_and_weekend():
+    friday_morning = pd.Timestamp("2026-07-17 11:00", tz="Asia/Kolkata")
+    assert expected_completed_session(friday_morning) == pd.Timestamp("2026-07-16")
+
+    saturday = pd.Timestamp("2026-07-18 18:00", tz="Asia/Kolkata")
+    assert expected_completed_session(saturday) == pd.Timestamp("2026-07-17")
+
+
+def test_set_manifest_eod_run_stamps_expected_session(tmp_path, monkeypatch):
+    set_config({
+        "data_cache_dir": str(tmp_path),
+        "prices_db_path": str(tmp_path / "prices.db"),
+    })
+    saturday = pd.Timestamp("2026-07-18 18:00", tz="Asia/Kolkata")
+    monkeypatch.setattr(
+        "tradingagents.dataflows.ohlcv_store.pd.Timestamp.now",
+        lambda tz=None: saturday if tz else saturday.tz_localize(None),
+    )
+    stamped = set_manifest_eod_run(str(tmp_path))
+    assert stamped == "2026-07-17"
+    assert manifest_eod_ran_today(str(tmp_path)) is True
 
 
 def test_sync_updates_manifest(monkeypatch, tmp_path):

@@ -87,6 +87,11 @@ def main() -> None:
     gap_fill = run_gap_fill_daily(config, price_data=price_data)
     _summary("gap_fill", gap_fill)
 
+    from tradingagents.rs_desk import run_rs_desk_daily
+
+    rs_desk = run_rs_desk_daily(config)
+    _summary("rs_desk", rs_desk)
+
     tech_desk = run_tech_desk_daily(config)
     if tech_desk.get("skipped"):
         print(f"  {'tech_desk':<16} skipped ({tech_desk.get('reason')})")

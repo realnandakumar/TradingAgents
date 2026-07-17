@@ -52,6 +52,8 @@ class NSSSnapshot:
     range_pct: float
     atr_ratio: float
     avg_traded_value_inr: float
+    breakout_ok: bool = False
+    volume_ok: bool = False
     extra: Dict[str, float] = field(default_factory=dict)
 
 
@@ -314,6 +316,8 @@ def evaluate_nss(df: pd.DataFrame, config: dict) -> Optional[NSSSnapshot]:
         range_pct=round(range_pct, 2),
         atr_ratio=round(atr_ratio, 3),
         risk_pct=round(risk_pct, 2),
+        breakout_ok=bool(broke or recent_break),
+        volume_ok=bool(vol_meets_ref),
         **levels,
         extra={"extension_break_pct": round(extension, 2)},
     )

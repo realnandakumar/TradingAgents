@@ -42,13 +42,15 @@ class PatternForecastPositionBook:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.holding_days = int(cfg.get("pattern_forecast_holding_days", 5))
-        self.max_positions = int(cfg.get("pattern_forecast_max_positions", 10))
+        self.max_positions = int(cfg.get("pattern_forecast_max_positions", 20))
+        self.max_per_sector = int(cfg.get("pattern_forecast_max_per_sector", 4))
         self.desk_capital = float(cfg.get("desk_capital", 100_000.0))
         self.benchmark = cfg.get("paper_benchmark", "^NSEI")
         self.stop_on_close_only = bool(cfg.get("pattern_forecast_stop_on_close_only", False))
         self.breakeven_trigger_pct = float(cfg.get("pattern_forecast_breakeven_trigger_pct", 0.0))
         self._state = self._load()
         self._migrate_positions()
+        self._backfill_sectors()
 
     def _migrate_positions(self) -> None:
         changed = False
@@ -73,6 +75,36 @@ class PatternForecastPositionBook:
         if ensure_sizing_fields(p, self.desk_capital, self.max_positions):
             changed = True
         return changed
+
+    def _backfill_sectors(self) -> None:
+        need = [
+            p for p in self.positions
+            if p.get("status") == "open" and (not p.get("sector") or p.get("sector") == "—")
+        ]
+        if not need:
+            return
+        try:
+            from tradingagents.screening.universe import load_universe_metadata
+
+            metadata = load_universe_metadata(
+                csv_path=self.config.get("screen_universe_csv"),
+                cache_dir=self.config.get("data_cache_dir"),
+                allow_download=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not backfill Pattern Forecast sectors (%s)", e)
+            return
+        changed = False
+        for p in need:
+            meta = metadata.get(p["ticker"], {})
+            sector = meta.get("sector")
+            if sector and sector != "—":
+                p["sector"] = sector
+                if meta.get("name"):
+                    p["stock_name"] = meta["name"]
+                changed = True
+        if changed:
+            self._save()
 
     def _load(self) -> dict:
         if self.path.exists():
@@ -105,12 +137,23 @@ class PatternForecastPositionBook:
                 p["last_screen_date"] = screen_date
         self._save()
 
+    def sector_open_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for p in self.positions:
+            if p.get("status") == "open":
+                sector = p.get("sector") or ""
+                counts[sector] = counts.get(sector, 0) + 1
+        return counts
+
     def open_position(self, pick: "PatternForecastPick", screen_date: str) -> Optional[dict]:
         if pick.direction != "UP":
             return None
         if self.has_open_position(pick.symbol):
             return None
         if self.open_count() >= self.max_positions:
+            return None
+        sector = pick.sector or (pick.signal.sector if pick.signal else None) or ""
+        if self.sector_open_counts().get(sector, 0) >= self.max_per_sector:
             return None
         row = self._pick_to_position(pick, screen_date)
         if row is None:
@@ -154,6 +197,9 @@ class PatternForecastPositionBook:
         proj_close_pct = round(float(sig.projected_move_pct), 2)
         entry_price = round(entry, 2)
         sizing = compute_position_size(self.desk_capital, self.max_positions, entry_price)
+        if int(sizing["shares"] or 0) < 1:
+            logger.warning("Skip %s — cannot fit in INR %.0f slot at entry %.2f", pick.symbol, sizing["alloc"], entry_price)
+            return None
 
         return {
             "strategy": STRATEGY_NAME,
@@ -230,20 +276,25 @@ class PatternForecastPositionBook:
             if hist is None or hist.empty:
                 continue
 
-            last = hist.iloc[-1]
-            bar_date = hist.index[-1].strftime("%Y-%m-%d")
-
-            actions = evaluate_bar_exits(
-                p,
-                last,
-                bar_date,
-                self.holding_days,
-                hist,
-                stop_on_close_only=self.stop_on_close_only,
-                breakeven_trigger_pct=self.breakeven_trigger_pct,
-            )
-            for action in actions:
-                events.append(self._apply_action(p, action, hist))
+            for i in range(len(hist)):
+                bar_date = hist.index[i].strftime("%Y-%m-%d")
+                if bar_date <= p["screen_date"]:
+                    continue
+                if bar_date > as_of:
+                    break
+                history_to_bar = hist.iloc[: i + 1]
+                actions = evaluate_bar_exits(
+                    p,
+                    hist.iloc[i],
+                    bar_date,
+                    self.holding_days,
+                    history_to_bar,
+                    stop_on_close_only=self.stop_on_close_only,
+                    breakeven_trigger_pct=self.breakeven_trigger_pct,
+                )
+                if actions:
+                    events.append(self._apply_action(p, actions[0], history_to_bar))
+                    break
 
         self._save()
         return {"closed": events, "open_positions": self.open_count()}

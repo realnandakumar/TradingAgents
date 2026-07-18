@@ -39,7 +39,10 @@ const NAV_GROUPS = [
   },
   {
     label: "Screeners",
-    links: [{ href: "/chart-patterns", label: "Chart patterns" }],
+    links: [
+      { href: "/chart-patterns", label: "Chart patterns" },
+      { href: "/candlesticks", label: "Candlesticks" },
+    ],
   },
 ] as const;
 

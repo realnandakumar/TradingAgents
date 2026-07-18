@@ -356,7 +356,9 @@ export function ChartWorkspace() {
     if (preset === "all") return setEnabledDesks(new Set(ids));
     if (preset === "none") return setEnabledDesks(new Set());
     if (preset === "patterns") {
-      return setEnabledDesks(new Set(ids.filter((id) => id === "chart-patterns")));
+      return setEnabledDesks(
+        new Set(ids.filter((id) => id === "chart-patterns" || id === "candlesticks")),
+      );
     }
     if (preset === "positions") {
       return setEnabledDesks(new Set(ids.filter((id) => id !== "chart-patterns")));

@@ -87,6 +87,12 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_CHART_PATTERN_MIN_POSITION_PCT": "chart_pattern_min_position_pct",
     "TRADINGAGENTS_CHART_PATTERN_MAX_POSITION_PCT": "chart_pattern_max_position_pct",
     "TRADINGAGENTS_CHART_PATTERN_EXCLUDE_TODAY": "chart_pattern_exclude_today",
+    # Candlestick screener
+    "TRADINGAGENTS_CANDLE_HISTORY_PERIOD": "candle_history_period",
+    "TRADINGAGENTS_CANDLE_TOP_N": "candle_top_n",
+    "TRADINGAGENTS_CANDLE_ENABLED": "candle_enabled",
+    "TRADINGAGENTS_CANDLE_MIN_CONFIDENCE": "candle_min_confidence",
+    "TRADINGAGENTS_CANDLE_MAX_AGE_DAYS": "candle_max_age_days",
     # NW Envelope screener
     "TRADINGAGENTS_NWE_BANDWIDTH": "nwe_bandwidth",
     "TRADINGAGENTS_NWE_MULT": "nwe_mult",
@@ -518,6 +524,15 @@ DEFAULT_CONFIG = _apply_env_overrides({
     ),
     "chart_pattern_backtest_path": os.path.join(
         _TRADINGAGENTS_HOME, "backtests", "chart_pattern_backtest_latest.json"
+    ),
+    # Japanese candlesticks — confirm bar required, daily only, no paper book
+    "candle_history_period": "1y",
+    "candle_top_n": 40,
+    "candle_enabled": "all",
+    "candle_min_confidence": 55,
+    "candle_max_age_days": 1,
+    "candle_screener_snapshot_path": os.path.join(
+        _TRADINGAGENTS_HOME, "candlesticks", "screener.json"
     ),
     # Nadaraya-Watson Envelope [LuxAlgo] — contrarian band crosses
     "nwe_history_period": "2y",

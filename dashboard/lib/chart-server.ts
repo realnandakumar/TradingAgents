@@ -443,7 +443,7 @@ export async function loadChartPayload(
     },
   ];
 
-  const deskOverlays = collectDeskOverlays(ticker, patternId);
+  const deskOverlays = collectDeskOverlays(ticker, patternId, bars);
   const merged = mergeDeskOverlays(deskOverlays, enabledDesks);
 
   return {

@@ -4478,6 +4478,127 @@ def chart_patterns_explain(
         console.print(f"\n[green]Exported to {export}[/green]")
 
 
+@app.command("candlesticks")
+def candlesticks(
+    universe: Optional[str] = typer.Option(None, "--universe", help="CSV of NSE tickers."),
+    top: Optional[int] = typer.Option(None, "--top", help="Max rows per pattern table."),
+    pattern: Optional[str] = typer.Option(
+        None,
+        "--pattern",
+        help="Comma-separated pattern ids (hammer,shooting_star,bullish_engulfing,bearish_engulfing,doji).",
+    ),
+    min_confidence: Optional[float] = typer.Option(
+        None, "--min-confidence", help="Minimum detection confidence (default 55).",
+    ),
+    bullish_only: bool = typer.Option(False, "--bullish-only", help="Show bullish patterns only."),
+    bearish_only: bool = typer.Option(False, "--bearish-only", help="Show bearish patterns only."),
+    max_age: Optional[int] = typer.Option(
+        None, "--max-age", help="Max age of confirm bar in sessions (default 1).",
+    ),
+):
+    """Screen for confirmed Japanese candlesticks (daily, pure screener, no paper book).
+
+    Patterns require a confirmation bar after the signal candle. Also runs inside Sync now.
+    """
+    from tradingagents.screening.candle_engine import STRATEGY_NAME, STRATEGY_VERSION
+    from tradingagents.screening.candle_screener import group_candle_picks, screen_candlesticks
+
+    config = DEFAULT_CONFIG.copy()
+    if universe is not None:
+        config["screen_universe_csv"] = universe
+    if top is not None:
+        config["candle_top_n"] = top
+    if pattern is not None:
+        config["candle_enabled"] = pattern
+    if min_confidence is not None:
+        config["candle_min_confidence"] = min_confidence
+    if bullish_only:
+        config["candle_bullish_only"] = True
+    if bearish_only:
+        config["candle_bearish_only"] = True
+    if max_age is not None:
+        config["candle_max_age_days"] = max_age
+
+    console.print(
+        f"[bold]{STRATEGY_NAME}[/bold] v{STRATEGY_VERSION} · [cyan]candlesticks[/cyan]\n"
+        "[dim]Confirm bar required · daily only · no paper book[/dim]\n"
+    )
+
+    with console.status("[bold green]Scanning candlesticks...", spinner="dots"):
+        picks = screen_candlesticks(config)
+
+    if not picks:
+        console.print("[yellow]No confirmed candlestick setups found.[/yellow]")
+        return
+
+    for pattern_id, group in group_candle_picks(picks):
+        table = Table(show_header=True, header_style="bold", title=group[0].signal.pattern_name)
+        table.add_column("#", justify="right", style="dim", width=3)
+        table.add_column("Symbol", style="cyan", no_wrap=True)
+        table.add_column("Bias", justify="center", width=8)
+        table.add_column("Age", justify="right", width=4)
+        table.add_column("Entry", justify="right")
+        table.add_column("Stop", justify="right")
+        table.add_column("T1", justify="right")
+        table.add_column("R:R", justify="right")
+        table.add_column("Conf", justify="right")
+        for i, p in enumerate(group, 1):
+            s = p.signal
+            bias_style = "green" if s.bias == "BULLISH" else ("red" if s.bias == "BEARISH" else "yellow")
+            table.add_row(
+                str(i),
+                s.symbol.replace(".NS", ""),
+                f"[{bias_style}]{s.bias}[/{bias_style}]",
+                str(s.pattern_age),
+                f"{s.entry_level:,.2f}",
+                f"{s.stop_loss:,.2f}",
+                f"{s.target_1:,.2f}",
+                f"{s.risk_reward_ratio:.1f}",
+                f"{s.confidence:.0f}",
+            )
+        console.print(table)
+        console.print()
+
+
+@app.command("candlesticks-explain")
+def candlesticks_explain(
+    ticker: str = typer.Argument(..., help="NSE ticker (e.g. RELIANCE)."),
+    pattern: Optional[str] = typer.Option(
+        None, "--pattern", help="Comma-separated pattern ids to check.",
+    ),
+    min_confidence: Optional[float] = typer.Option(
+        None, "--min-confidence", help="Minimum detection confidence.",
+    ),
+):
+    """Detailed candlestick analysis for one ticker (confirm bar required)."""
+    from tradingagents.screening.candle_engine import explain_candlesticks
+
+    config = DEFAULT_CONFIG.copy()
+    if pattern is not None:
+        config["candle_enabled"] = pattern
+    if min_confidence is not None:
+        config["candle_min_confidence"] = min_confidence
+
+    with console.status(f"[bold green]Analyzing {ticker}...", spinner="dots"):
+        signals = explain_candlesticks(ticker, config)
+
+    if not signals:
+        console.print(f"[yellow]No confirmed candlesticks for {ticker}.[/yellow]")
+        return
+
+    for s in signals:
+        style = "green" if s.bias == "BULLISH" else ("red" if s.bias == "BEARISH" else "yellow")
+        console.print(
+            Panel.fit(
+                f"[bold {style}]{s.bias}[/bold {style}]  {s.pattern_name}\n"
+                f"{s.detail}\n"
+                f"Entry {s.entry_level:.2f} · Stop {s.stop_loss:.2f} · "
+                f"T1 {s.target_1:.2f} · R:R {s.risk_reward_ratio:.1f} · conf {s.confidence:.0f}",
+                title=s.symbol,
+            )
+        )
+
+
 def _render_nw_envelope_picks(picks) -> None:
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", justify="right", style="dim", width=3)

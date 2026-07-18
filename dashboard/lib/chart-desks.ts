@@ -15,6 +15,7 @@ export const CHART_DESK_META: ChartDeskMeta[] = [
   { id: "nw-envelope", label: "NW Env", color: "#e879f9", href: "/nw-envelope" },
   { id: "pattern-forecast", label: "Pattern", color: "#94a3b8", href: "/pattern-forecast" },
   { id: "chart-patterns", label: "Patterns", color: "#fbbf24", href: "/chart-patterns" },
+  { id: "candlesticks", label: "Candles", color: "#f472b6", href: "/candlesticks" },
   { id: "positions", label: "RS Desk", color: "#14b8a6", href: "/positions" },
   { id: "tech-desk", label: "Tech Desk", color: "#818cf8", href: "/tech-desk" },
 ];

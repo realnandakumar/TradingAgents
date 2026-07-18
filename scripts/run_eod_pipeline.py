@@ -23,6 +23,7 @@ from tradingagents.dataflows.ohlcv_store import (
 from tradingagents.dataflows.sync_symbols import collect_sync_symbols
 from tradingagents.nw_envelope import run_nw_envelope_daily
 from tradingagents.pattern_forecast import run_pattern_forecast_daily
+from tradingagents.screening.candle_screener import screen_candlesticks
 from tradingagents.screening.chart_pattern_screener import screen_chart_patterns
 from tradingagents.screening.gap_fill_screener import screen_gap_fill
 from tradingagents.screening.momentum_screener import screen_momentum
@@ -185,6 +186,7 @@ def main() -> None:
             "trama": len(screen_trama(config, price_data=price_data)),
             "gap_fill": len(screen_gap_fill(config, price_data=price_data)),
             "chart_patterns": len(screen_chart_patterns(config, price_data=price_data)),
+            "candlesticks": len(screen_candlesticks(config, price_data=price_data)),
             "nw_envelope": len(screen_nw_envelope(config, price_data=price_data)),
             "pattern_forecast": len(screen_pattern_forecast(config, price_data=price_data)),
         }

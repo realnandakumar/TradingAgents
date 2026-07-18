@@ -16,6 +16,7 @@ from tradingagents.screening.momentum_screener import screen_momentum
 from tradingagents.screening.nss_screener import screen_nss
 from tradingagents.screening.prices import read_history
 from tradingagents.screening.gap_fill_screener import screen_gap_fill
+from tradingagents.screening.candle_screener import screen_candlesticks
 from tradingagents.screening.chart_pattern_screener import screen_chart_patterns
 from tradingagents.screening.nw_envelope_screener import screen_nw_envelope
 from tradingagents.screening.pattern_forecast_screener import screen_pattern_forecast
@@ -109,6 +110,9 @@ def main() -> None:
     chart_patterns = screen_chart_patterns(config, price_data=price_data)
     _print_picks("CHART PATTERNS", chart_patterns, kind="signal")
 
+    candles = screen_candlesticks(config, price_data=price_data)
+    _print_picks("CANDLESTICKS", candles, kind="signal")
+
     nwe = screen_nw_envelope(config, price_data=price_data)
     _print_picks("NW ENVELOPE", nwe, kind="signal")
 
@@ -119,6 +123,7 @@ def main() -> None:
     print(f"TOTAL: swing={len(swing)} momentum={len(momentum)} "
           f"nss={len(nss)} supertrend_rsi={len(strsi)} trama={len(trama)} "
           f"gap_fill={len(gap_fill)} chart_patterns={len(chart_patterns)} "
+          f"candlesticks={len(candles)} "
           f"nw_envelope={len(nwe)} pattern_forecast={len(pf)}")
     print("=" * 72)
 

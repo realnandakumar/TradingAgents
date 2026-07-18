@@ -13,9 +13,18 @@ import {
   type ChartPatternScreenerPick,
 } from "@/lib/chart-patterns-server";
 import { pickTradeLevels } from "@/lib/chart-pattern-levels";
+import { scanCandlesticksFromBars } from "@/lib/candle-engine";
+import { readCandleScreenerSnapshot } from "@/lib/candlesticks-server";
 
 import { CHART_DESK_META, type ChartDeskMeta } from "./chart-desks";
-import type { ChartHLine, ChartLineSeries, ChartMarker, ChartPatternHighlight, ChartZone } from "./chart-types";
+import type {
+  ChartBar,
+  ChartHLine,
+  ChartLineSeries,
+  ChartMarker,
+  ChartPatternHighlight,
+  ChartZone,
+} from "./chart-types";
 
 export { CHART_DESK_META, type ChartDeskMeta };
 
@@ -281,6 +290,68 @@ function chartPatternOverlay(norm: string, patternId?: string | null): DeskChart
   return out;
 }
 
+function candleOverlayFromBars(bars: ChartBar[]): DeskChartOverlay {
+  const out = emptyOverlay("candlesticks");
+  const hits = scanCandlesticksFromBars(bars);
+  for (const hit of hits) {
+    const color =
+      hit.bias === "BULLISH" ? "#2ecc71" : hit.bias === "BEARISH" ? "#ff5470" : out.color;
+    out.markers.push({
+      deskId: out.deskId,
+      time: hit.pattern_window_end,
+      text: hit.pattern_name,
+      color,
+      position: hit.bias === "BEARISH" ? "aboveBar" : "belowBar",
+    });
+    pushHline(out, `${hit.pattern_id}_entry`, hit.entry_level, `${hit.pattern_name} entry`, "solid");
+    pushHline(out, `${hit.pattern_id}_stop`, hit.stop_loss, `${hit.pattern_name} stop`);
+    pushHline(out, `${hit.pattern_id}_t1`, hit.target_1, `${hit.pattern_name} T1`);
+    if (hit.pattern_window_start && hit.pattern_window_end) {
+      out.patternHighlight = {
+        windowStart: hit.pattern_window_start,
+        windowEnd: hit.pattern_window_end,
+        label: `${hit.pattern_name} · ${hit.bias}`,
+        color,
+      };
+    }
+  }
+  return out;
+}
+
+function candleOverlayFromSnapshot(norm: string, patternId?: string | null): DeskChartOverlay {
+  const out = emptyOverlay("candlesticks");
+  const snapshot = readCandleScreenerSnapshot();
+  if (!snapshot) return out;
+  for (const group of snapshot.groups) {
+    for (const pick of group.picks) {
+      if (!matchesTicker(pick.symbol || pick.ticker, norm)) continue;
+      if (patternId?.trim() && pick.pattern_id !== patternId) continue;
+      const color =
+        pick.bias === "BULLISH" ? "#2ecc71" : pick.bias === "BEARISH" ? "#ff5470" : out.color;
+      out.markers.push({
+        deskId: out.deskId,
+        time: pick.pattern_window_end ?? pick.pattern_window_start ?? "",
+        text: pick.pattern_name,
+        color,
+        position: pick.bias === "BEARISH" ? "aboveBar" : "belowBar",
+      });
+      pushHline(out, `${pick.pattern_id}_entry`, pick.entry_level, `${pick.pattern_name} entry`, "solid");
+      pushHline(out, `${pick.pattern_id}_stop`, pick.stop_loss, `${pick.pattern_name} stop`);
+      pushHline(out, `${pick.pattern_id}_t1`, pick.target_1, `${pick.pattern_name} T1`);
+      if (pick.pattern_window_start && pick.pattern_window_end) {
+        out.patternHighlight = {
+          windowStart: pick.pattern_window_start,
+          windowEnd: pick.pattern_window_end,
+          label: `${pick.pattern_name} · ${pick.setup_status}`,
+          color,
+        };
+      }
+      return out;
+    }
+  }
+  return out;
+}
+
 type BookReader = () => { positions: unknown[] } | null;
 
 const SWING_BOOK_READERS: Record<string, BookReader> = {
@@ -304,6 +375,7 @@ function appendBundle(target: DeskChartOverlay, row: DeskChartOverlay): void {
 export function collectDeskOverlays(
   ticker: string,
   patternId?: string | null,
+  bars?: ChartBar[],
 ): DeskChartOverlay[] {
   const norm = normalizeChartTicker(ticker);
   if (!norm) return [];
@@ -339,6 +411,15 @@ export function collectDeskOverlays(
     patterns.segments.length
   ) {
     overlays.push(patterns);
+  }
+
+  // Prefer live detection from loaded bars; fall back to screener snapshot.
+  const candles =
+    bars && bars.length > 0
+      ? candleOverlayFromBars(bars)
+      : candleOverlayFromSnapshot(norm, patternId);
+  if (candles.hlines.length || candles.markers.length) {
+    overlays.push(candles);
   }
 
   return overlays;

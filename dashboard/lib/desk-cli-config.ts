@@ -191,6 +191,20 @@ const DESK_CONFIGS: DeskConfig[] = [
     actions: [],
   },
   {
+    id: "candlesticks",
+    label: "Candlesticks",
+    actions: [
+      {
+        id: "screen",
+        label: "Screen candlesticks",
+        cliArgs: ["candlesticks"],
+        variant: "primary",
+        description:
+          "Scan NSE universe for confirmed daily candlesticks (hammer, engulfing, doji). Also runs inside Sync now.",
+      },
+    ],
+  },
+  {
     id: "positions",
     label: "RS Desk",
     actions: [

@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { isNseHolidayIso } from "@/lib/nse-holidays";
+
 const TRADINGAGENTS_HOME =
   process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
 
@@ -37,7 +39,10 @@ export function expectedCompletedSessionIst(now = new Date()): string {
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
   const istDate = new Date(Date.UTC(get("year"), get("month") - 1, get("day")));
   if (get("hour") < 16) istDate.setUTCDate(istDate.getUTCDate() - 1);
-  while (istDate.getUTCDay() === 0 || istDate.getUTCDay() === 6) {
+  while (true) {
+    const iso = istDate.toISOString().slice(0, 10);
+    const dow = istDate.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !isNseHolidayIso(iso)) break;
     istDate.setUTCDate(istDate.getUTCDate() - 1);
   }
   return istDate.toISOString().slice(0, 10);

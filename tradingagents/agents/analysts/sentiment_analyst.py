@@ -54,8 +54,8 @@ def create_sentiment_analyst(llm):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         config = get_config()
-        reddit_market = config.get("reddit_market", "us")
-        stocktwits_market = config.get("stocktwits_market", "us")
+        reddit_market = config.get("reddit_market", "india")
+        stocktwits_market = config.get("stocktwits_market", "india")
         reddit_subreddits = get_subreddits_for_market(reddit_market)
         news_block = get_news.func(ticker, start_date, end_date)
         stocktwits_block = fetch_stocktwits_messages(

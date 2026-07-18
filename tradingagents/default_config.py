@@ -109,6 +109,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_PATTERN_FORECAST_MAX_POSITIONS": "pattern_forecast_max_positions",
     "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
     "TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS": "tech_desk_max_report_age_days",
+    "TRADINGAGENTS_EOD_TECH_ANALYZE_MAX": "eod_tech_analyze_max",
     "TRADINGAGENTS_RS_DESK_MAX_REPORT_AGE_DAYS": "rs_desk_max_report_age_days",
     "TRADINGAGENTS_RS_DESK_BOOK_PATH": "rs_desk_book_path",
     "TRADINGAGENTS_CUSTOM_TICKERS_PATH": "custom_tickers_path",
@@ -155,6 +156,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "daily"),
     "tech_desk_process_log_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "process"),
     "tech_desk_max_report_age_days": 14,
+    # Cap LLM tech-analyze calls inside the overnight EOD pipeline.
+    "eod_tech_analyze_max": 5,
     "tech_desk_zone_proximity_pct": 1.5,
     "tech_desk_min_reward_to_zone_ratio": 2.5,
     "tech_desk_proximity_min_confidence": 65,
@@ -238,12 +241,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "ECB Bank of England BOJ central bank policy",
         "oil commodities supply chain energy",
     ],
-    # Reddit market mode for sentiment analysis. "us" preserves the original
-    # subreddit set; "india" targets India-focused stock market communities.
-    "reddit_market": "us",
-    # StockTwits market mode for sentiment analysis. "india" maps Yahoo-style
-    # NSE tickers such as TCS.NS to StockTwits cashtags such as TCS.NSE.
-    "stocktwits_market": "us",
+    # Reddit market mode for sentiment analysis. Default "india" for NSE desk;
+    # set "us" (or TRADINGAGENTS_REDDIT_MARKET) for the original subreddit set.
+    "reddit_market": "india",
+    # StockTwits market mode. Default "india" maps Yahoo-style NSE tickers
+    # such as TCS.NS to StockTwits cashtags such as TCS.NSE.
+    "stocktwits_market": "india",
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {

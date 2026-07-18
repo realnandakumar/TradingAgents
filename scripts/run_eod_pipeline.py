@@ -85,6 +85,15 @@ def _run_tech_analyze_stale(config: dict) -> dict:
         print("Tech analyze: no stale or missing watchlist tickers")
         return {"skipped": True, "reason": "nothing_stale", "analyzed": 0}
 
+    max_batch = int(config.get("eod_tech_analyze_max", 5))
+    deferred = max(0, len(tickers) - max_batch)
+    tickers = tickers[:max_batch]
+    if deferred:
+        print(
+            f"Tech analyze: capping batch to {max_batch} "
+            f"({deferred} deferred to a later EOD)"
+        )
+
     try:
         ensure_api_key(config.get("llm_provider", "openai"))
     except Exception as e:  # noqa: BLE001
@@ -113,7 +122,13 @@ def _run_tech_analyze_stale(config: dict) -> dict:
             errors.append(f"{sym}: {e}")
             print(f"  tech-analyze     {sym} FAILED ({e})")
 
-    return {"analyzed": analyzed, "errors": errors, "tickers": tickers}
+    return {
+        "analyzed": analyzed,
+        "errors": errors,
+        "tickers": tickers,
+        "deferred": deferred,
+        "max_batch": max_batch,
+    }
 
 
 def main() -> None:
@@ -232,9 +247,21 @@ def main() -> None:
         print("Step 7: tech-analyze skipped")
         report["steps"]["tech_analyze"] = {"skipped": True}
 
-    last_eod = set_manifest_eod_run(cache_dir)
-    print(f"Step 8: manifest last_eod_run = {last_eod}")
-    report["last_eod_run"] = last_eod
+    sync_step = report["steps"].get("sync") or {}
+    sync_failed = int(sync_step.get("failed") or 0)
+    if sync_failed > 0:
+        print(
+            f"Step 8: SKIPPED manifest stamp "
+            f"(sync failed={sync_failed}; fix prices then re-run EOD)"
+        )
+        report["last_eod_run"] = None
+        report["manifest_stamp_skipped"] = True
+        report["manifest_stamp_reason"] = f"sync_failed_{sync_failed}"
+    else:
+        last_eod = set_manifest_eod_run(cache_dir)
+        print(f"Step 8: manifest last_eod_run = {last_eod}")
+        report["last_eod_run"] = last_eod
+        report["manifest_stamp_skipped"] = False
     report["manifest"] = get_manifest_eod_status(cache_dir)
     report["completed_at"] = datetime.now().isoformat(timespec="seconds")
 

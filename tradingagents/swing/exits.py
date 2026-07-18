@@ -4,6 +4,7 @@ Rules:
 - Dynamic trailing stop = Supertrend buy line, ratcheted up daily only
 - Stop hit → exit remaining position
 - Target 1 → exit 100% of the position
+- Same-bar stop+T1 → close-aware with conservative default (stop)
 - 20 trading days → close whatever remains
 """
 
@@ -15,6 +16,8 @@ from enum import Enum
 from typing import List, Optional
 
 import pandas as pd
+
+from tradingagents.dataflows.nse_calendar import is_nse_trading_day
 
 
 class ExitReason(str, Enum):
@@ -50,6 +53,33 @@ def trading_days_between(start: str, end: str, history: pd.DataFrame) -> int:
     return int(mask.sum())
 
 
+def resolve_same_bar_stop_t1(
+    *,
+    stop_hit: bool,
+    t1_hit: bool,
+    close: float,
+    stop: float,
+    target_1: float,
+) -> Optional[str]:
+    """When stop and T1 both print on one daily bar, use close as path proxy.
+
+    - Close at/through T1 → credit target (finished in profit zone)
+    - Close at/through stop → credit stop
+    - Otherwise → stop (conservative when path is ambiguous)
+    """
+    if stop_hit and t1_hit:
+        if target_1 > 0 and close >= target_1:
+            return "t1"
+        if stop > 0 and close <= stop:
+            return "stop"
+        return "stop"
+    if stop_hit:
+        return "stop"
+    if t1_hit:
+        return "t1"
+    return None
+
+
 def evaluate_bar_exits(
     position: dict,
     bar: pd.Series,
@@ -57,7 +87,7 @@ def evaluate_bar_exits(
     holding_days: int,
     history: pd.DataFrame,
 ) -> List[ExitAction]:
-    """Return zero or more exit actions for today's bar (stop before target on same bar)."""
+    """Return zero or more exit actions for today's bar."""
     actions: List[ExitAction] = []
     remaining = float(position.get("remaining_pct", 100.0))
     if remaining <= 0:
@@ -70,8 +100,17 @@ def evaluate_bar_exits(
     close = float(bar["Close"])
     entry_date = position["screen_date"]
 
-    # 1) Trailing / initial stop on remaining size
-    if stop > 0 and low <= stop:
+    stop_hit = stop > 0 and low <= stop
+    t1_hit = target_1 > 0 and high >= target_1
+    winner = resolve_same_bar_stop_t1(
+        stop_hit=stop_hit,
+        t1_hit=t1_hit,
+        close=close,
+        stop=stop,
+        target_1=target_1,
+    )
+
+    if winner == "stop":
         actions.append(
             ExitAction(
                 ticker=position["ticker"],
@@ -84,8 +123,7 @@ def evaluate_bar_exits(
         )
         return actions
 
-    # 2) T1 full exit
-    if target_1 > 0 and high >= target_1:
+    if winner == "t1":
         actions.append(
             ExitAction(
                 ticker=position["ticker"],
@@ -98,7 +136,6 @@ def evaluate_bar_exits(
         )
         return actions
 
-    # 3) Time exit on whatever remains
     days_held = trading_days_between(entry_date, bar_date, history)
     if days_held >= holding_days:
         actions.append(
@@ -115,12 +152,18 @@ def evaluate_bar_exits(
     return actions
 
 
-def is_nse_trading_day(dt: Optional[datetime] = None) -> bool:
-    dt = dt or datetime.now()
-    return dt.weekday() < 5
-
-
 def risk_pct(entry: float, stop: float) -> Optional[float]:
     if entry <= 0 or stop <= 0 or stop >= entry:
         return None
     return round(100.0 * (entry - stop) / entry, 2)
+
+
+__all__ = [
+    "ExitReason",
+    "ExitAction",
+    "trading_days_between",
+    "resolve_same_bar_stop_t1",
+    "evaluate_bar_exits",
+    "is_nse_trading_day",
+    "risk_pct",
+]

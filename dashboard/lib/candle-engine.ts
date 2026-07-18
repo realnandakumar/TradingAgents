@@ -1,6 +1,7 @@
 /** Client/server candle detectors mirroring tradingagents/screening/candle_engine.py */
 
 import type { ChartBar } from "@/lib/chart-types";
+import candleRules from "@/lib/candle_rules.json";
 
 export type CandleBias = "BULLISH" | "BEARISH" | "NEUTRAL";
 
@@ -26,6 +27,27 @@ const CATALOG: Record<string, { label: string; bias: CandleBias }> = {
   bullish_engulfing: { label: "Bullish Engulfing", bias: "BULLISH" },
   bearish_engulfing: { label: "Bearish Engulfing", bias: "BEARISH" },
   doji: { label: "Doji", bias: "NEUTRAL" },
+};
+
+const RULES = candleRules as {
+  min_confidence: number;
+  max_age_days: number;
+  hammer: {
+    max_body_to_range: number;
+    min_lower_wick_to_body: number;
+    strong_lower_wick_to_body: number;
+    confidence: number;
+    strong_confidence: number;
+  };
+  shooting_star: {
+    max_body_to_range: number;
+    min_upper_wick_to_body: number;
+    strong_upper_wick_to_body: number;
+    confidence: number;
+    strong_confidence: number;
+  };
+  engulfing: { confidence: number };
+  doji: { max_body_to_range: number; confidence: number };
 };
 
 function dateKey(time: ChartBar["time"]): string {
@@ -109,10 +131,14 @@ export function scanCandlesticksFromBars(
   opts?: { minConfidence?: number; maxAgeDays?: number },
 ): CandleHit[] {
   if (bars.length < 4) return [];
-  const minConfidence = opts?.minConfidence ?? 55;
-  const maxAge = opts?.maxAgeDays ?? 1;
+  const minConfidence = opts?.minConfidence ?? RULES.min_confidence;
+  const maxAge = opts?.maxAgeDays ?? RULES.max_age_days;
   const hits: CandleHit[] = [];
   const last = bars.length - 1;
+  const hammer = RULES.hammer;
+  const star = RULES.shooting_star;
+  const engulf = RULES.engulfing;
+  const doji = RULES.doji;
 
   for (let age = 0; age <= maxAge; age += 1) {
     const confirmI = last - age;
@@ -131,8 +157,8 @@ export function scanCandlesticksFromBars(
     const priorD = dateKey(prior.time);
 
     if (
-      body / rng <= 0.35 &&
-      lower >= 2 * Math.max(body, rng * 0.05) &&
+      body / rng <= hammer.max_body_to_range &&
+      lower >= hammer.min_lower_wick_to_body * Math.max(body, rng * 0.05) &&
       upper <= body &&
       confirm.close > (pattern.low + pattern.high) / 2 &&
       confirm.close > pattern.close
@@ -141,7 +167,9 @@ export function scanCandlesticksFromBars(
         hits,
         "hammer",
         "BULLISH",
-        lower >= 2.5 * body ? 72 : 62,
+        lower >= hammer.strong_lower_wick_to_body * body
+          ? hammer.strong_confidence
+          : hammer.confidence,
         confirm.close,
         pattern.low,
         atrVal,
@@ -153,8 +181,8 @@ export function scanCandlesticksFromBars(
     }
 
     if (
-      body / rng <= 0.35 &&
-      upper >= 2 * Math.max(body, rng * 0.05) &&
+      body / rng <= star.max_body_to_range &&
+      upper >= star.min_upper_wick_to_body * Math.max(body, rng * 0.05) &&
       lower <= body &&
       confirm.close < (pattern.low + pattern.high) / 2 &&
       confirm.close < pattern.close
@@ -163,7 +191,9 @@ export function scanCandlesticksFromBars(
         hits,
         "shooting_star",
         "BEARISH",
-        upper >= 2.5 * body ? 72 : 62,
+        upper >= star.strong_upper_wick_to_body * body
+          ? star.strong_confidence
+          : star.confidence,
         confirm.close,
         pattern.high,
         atrVal,
@@ -192,7 +222,7 @@ export function scanCandlesticksFromBars(
         hits,
         "bullish_engulfing",
         "BULLISH",
-        78,
+        engulf.confidence,
         confirm.close,
         Math.min(pattern.low, Math.min(prior.open, prior.close)),
         atrVal,
@@ -215,7 +245,7 @@ export function scanCandlesticksFromBars(
         hits,
         "bearish_engulfing",
         "BEARISH",
-        78,
+        engulf.confidence,
         confirm.close,
         Math.max(pattern.high, Math.max(prior.open, prior.close)),
         atrVal,
@@ -226,13 +256,13 @@ export function scanCandlesticksFromBars(
       );
     }
 
-    if (body / rng <= 0.1) {
+    if (body / rng <= doji.max_body_to_range) {
       if (confirm.close > pattern.high) {
         pushHit(
           hits,
           "doji",
           "BULLISH",
-          58,
+          doji.confidence,
           confirm.close,
           pattern.low,
           atrVal,
@@ -246,7 +276,7 @@ export function scanCandlesticksFromBars(
           hits,
           "doji",
           "BEARISH",
-          58,
+          doji.confidence,
           confirm.close,
           pattern.high,
           atrVal,

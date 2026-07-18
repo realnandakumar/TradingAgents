@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -18,6 +21,13 @@ PATTERN_CATALOG: Dict[str, dict] = {
     "bearish_engulfing": {"label": "Bearish Engulfing", "stars": 5, "bias": "BEARISH"},
     "doji": {"label": "Doji", "stars": 3, "bias": "NEUTRAL"},
 }
+
+
+@lru_cache(maxsize=1)
+def load_candle_rules() -> dict:
+    """Shared thresholds — keep in sync with dashboard/lib/candle_rules.json."""
+    path = Path(__file__).with_name("candle_rules.json")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @dataclass
@@ -182,10 +192,17 @@ def _detect_at(
     confirm_i: int,
     symbol: str,
     enabled: set[str],
+    rules: Optional[dict] = None,
 ) -> List[CandleSignal]:
     """Detect patterns that complete on pattern_i and are confirmed on confirm_i."""
     if pattern_i < 1 or confirm_i <= pattern_i:
         return []
+    rules = rules or load_candle_rules()
+    hammer = rules.get("hammer", {})
+    star = rules.get("shooting_star", {})
+    engulf = rules.get("engulfing", {})
+    doji = rules.get("doji", {})
+
     atr = _atr(df.iloc[: confirm_i + 1])
     po, ph, pl, pc, pd_ = _row(df, pattern_i)
     _co, ch, cl, cc, cd = _row(df, confirm_i)
@@ -197,14 +214,24 @@ def _detect_at(
     lower = min(po, pc) - pl
     hits: List[CandleSignal] = []
 
-    # Hammer: long lower wick, small upper wick, confirmed by next close above mid/high
-    if "hammer" in enabled and rng > 0 and body / rng <= 0.35 and lower >= 2 * max(body, rng * 0.05) and upper <= body:
+    if (
+        "hammer" in enabled
+        and rng > 0
+        and body / rng <= float(hammer.get("max_body_to_range", 0.35))
+        and lower >= float(hammer.get("min_lower_wick_to_body", 2.0)) * max(body, rng * 0.05)
+        and upper <= body
+    ):
         if cc > (pl + ph) / 2 and cc > pc:
+            strong = float(hammer.get("strong_lower_wick_to_body", 2.5))
             sig = _make_signal(
                 symbol=symbol,
                 pattern_id="hammer",
                 bias="BULLISH",
-                confidence=72 if lower >= 2.5 * body else 62,
+                confidence=float(
+                    hammer.get("strong_confidence", 72)
+                    if lower >= strong * body
+                    else hammer.get("confidence", 62)
+                ),
                 close=cc,
                 entry=cc,
                 stop=pl,
@@ -216,14 +243,24 @@ def _detect_at(
             if sig:
                 hits.append(sig)
 
-    # Shooting star
-    if "shooting_star" in enabled and rng > 0 and body / rng <= 0.35 and upper >= 2 * max(body, rng * 0.05) and lower <= body:
+    if (
+        "shooting_star" in enabled
+        and rng > 0
+        and body / rng <= float(star.get("max_body_to_range", 0.35))
+        and upper >= float(star.get("min_upper_wick_to_body", 2.0)) * max(body, rng * 0.05)
+        and lower <= body
+    ):
         if cc < (pl + ph) / 2 and cc < pc:
+            strong = float(star.get("strong_upper_wick_to_body", 2.5))
             sig = _make_signal(
                 symbol=symbol,
                 pattern_id="shooting_star",
                 bias="BEARISH",
-                confidence=72 if upper >= 2.5 * body else 62,
+                confidence=float(
+                    star.get("strong_confidence", 72)
+                    if upper >= strong * body
+                    else star.get("confidence", 62)
+                ),
                 close=cc,
                 entry=cc,
                 stop=ph,
@@ -235,7 +272,6 @@ def _detect_at(
             if sig:
                 hits.append(sig)
 
-    # Bullish engulfing: prior bearish, pattern bullish engulfs prior body; confirm above high
     if "bullish_engulfing" in enabled and _is_bear(prior_o, prior_c) and _is_bull(po, pc):
         if pc >= prior_o and po <= prior_c and _body(po, pc) > _body(prior_o, prior_c):
             if cc > ph:
@@ -243,7 +279,7 @@ def _detect_at(
                     symbol=symbol,
                     pattern_id="bullish_engulfing",
                     bias="BULLISH",
-                    confidence=78,
+                    confidence=float(engulf.get("confidence", 78)),
                     close=cc,
                     entry=cc,
                     stop=min(pl, prior_c if prior_c < prior_o else prior_o),
@@ -255,7 +291,6 @@ def _detect_at(
                 if sig:
                     hits.append(sig)
 
-    # Bearish engulfing
     if "bearish_engulfing" in enabled and _is_bull(prior_o, prior_c) and _is_bear(po, pc):
         if po >= prior_c and pc <= prior_o and _body(po, pc) > _body(prior_o, prior_c):
             if cc < pl:
@@ -263,7 +298,7 @@ def _detect_at(
                     symbol=symbol,
                     pattern_id="bearish_engulfing",
                     bias="BEARISH",
-                    confidence=78,
+                    confidence=float(engulf.get("confidence", 78)),
                     close=cc,
                     entry=cc,
                     stop=max(ph, prior_c if prior_c > prior_o else prior_o),
@@ -275,14 +310,13 @@ def _detect_at(
                 if sig:
                     hits.append(sig)
 
-    # Doji + directional confirm
-    if "doji" in enabled and rng > 0 and body / rng <= 0.1:
+    if "doji" in enabled and rng > 0 and body / rng <= float(doji.get("max_body_to_range", 0.1)):
         if cc > ph:
             sig = _make_signal(
                 symbol=symbol,
                 pattern_id="doji",
                 bias="BULLISH",
-                confidence=58,
+                confidence=float(doji.get("confidence", 58)),
                 close=cc,
                 entry=cc,
                 stop=pl,
@@ -298,7 +332,7 @@ def _detect_at(
                 symbol=symbol,
                 pattern_id="doji",
                 bias="BEARISH",
-                confidence=58,
+                confidence=float(doji.get("confidence", 58)),
                 close=cc,
                 entry=cc,
                 stop=ph,
@@ -338,16 +372,15 @@ def scan_candlesticks(
         if col not in work.columns:
             return []
 
+    rules = load_candle_rules()
     enabled_raw = str(cfg.get("candle_enabled", "all")).strip().lower()
     if enabled_raw in {"", "all"}:
         enabled = set(PATTERN_CATALOG.keys())
     else:
         enabled = {p.strip() for p in enabled_raw.split(",") if p.strip() in PATTERN_CATALOG}
 
-    min_conf = float(cfg.get("candle_min_confidence", 55))
-    max_age = int(cfg.get("candle_max_age_days", 1))
-    # Fresh: confirm bar is last bar; pattern bar is last-1 (age 0)
-    # Optionally allow slightly older confirms within max_age
+    min_conf = float(cfg.get("candle_min_confidence", rules.get("min_confidence", 55)))
+    max_age = int(cfg.get("candle_max_age_days", rules.get("max_age_days", 1)))
     hits: List[CandleSignal] = []
     last_i = len(work) - 1
     for age in range(0, max(0, max_age) + 1):
@@ -355,12 +388,11 @@ def scan_candlesticks(
         pattern_i = confirm_i - 1
         if pattern_i < 1:
             break
-        for sig in _detect_at(work, pattern_i, confirm_i, symbol or "", enabled):
+        for sig in _detect_at(work, pattern_i, confirm_i, symbol or "", enabled, rules):
             sig.pattern_age = age
             if sig.confidence >= min_conf:
                 hits.append(sig)
 
-    # Prefer highest actionability per pattern_id
     best: Dict[str, CandleSignal] = {}
     for sig in hits:
         key = f"{sig.pattern_id}:{sig.bias}"
@@ -386,6 +418,7 @@ __all__ = [
     "STRATEGY_VERSION",
     "PATTERN_CATALOG",
     "CandleSignal",
+    "load_candle_rules",
     "scan_candlesticks",
     "explain_candlesticks",
 ]

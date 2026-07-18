@@ -53,12 +53,23 @@ def test_t1_full_exit():
 
 
 def test_stop_wins_over_t1_same_bar():
+    """Ambiguous close (between stop and T1) → conservative stop."""
     hist = _hist([100, 110, 108], lows=[100, 110, 94], highs=[100, 110, 116])
     bar = hist.iloc[-1]
     bd = hist.index[-1].strftime("%Y-%m-%d")
     acts = evaluate_bar_exits(_pos(), bar, bd, 20, hist)
     assert len(acts) == 1
     assert acts[0].reason == ExitReason.STOP
+
+
+def test_t1_wins_same_bar_when_close_at_target():
+    """Same-bar stop+T1 with close at/through T1 → credit target."""
+    hist = _hist([100, 110, 116], lows=[100, 110, 94], highs=[100, 110, 116])
+    bar = hist.iloc[-1]
+    bd = hist.index[-1].strftime("%Y-%m-%d")
+    acts = evaluate_bar_exits(_pos(), bar, bd, 20, hist)
+    assert len(acts) == 1
+    assert acts[0].reason == ExitReason.TARGET_1
 
 
 def test_risk_pct():

@@ -1033,7 +1033,7 @@ def run_analysis(checkpoint: bool = False, reddit_market: Optional[str] = None):
         )
         if "social" in selected_analyst_keys:
             message_buffer.add_message(
-                "System", f"Reddit market mode: {config.get('reddit_market', 'us')}"
+                "System", f"Reddit market mode: {config.get('reddit_market', 'india')}"
             )
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 

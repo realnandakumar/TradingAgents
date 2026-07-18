@@ -1,15 +1,21 @@
-/** IST calendar helpers for Tech Desk daily ops (weekday = trading day, same as Python is_nse_trading_day). */
+/** IST calendar helpers for Tech Desk daily ops — weekends + NSE holidays. */
+
+import { isNseHolidayIso } from "@/lib/nse-holidays";
 
 export function todayIstIso(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-export function isTradingDayIst(): boolean {
-  const wd = new Date().toLocaleDateString("en-US", {
+export function isTradingDayIst(isoDate?: string): boolean {
+  const iso =
+    isoDate ??
+    new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const wd = new Date(`${iso}T12:00:00+05:30`).toLocaleDateString("en-US", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
   });
-  return wd !== "Sat" && wd !== "Sun";
+  if (wd === "Sat" || wd === "Sun") return false;
+  return !isNseHolidayIso(iso);
 }
 
 export function formatIstWhen(iso: string | null): string {

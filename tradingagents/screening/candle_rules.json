@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "require_confirm_bar": true,
+  "min_confidence": 55,
+  "max_age_days": 1,
+  "hammer": {
+    "max_body_to_range": 0.35,
+    "min_lower_wick_to_body": 2.0,
+    "strong_lower_wick_to_body": 2.5,
+    "confidence": 62,
+    "strong_confidence": 72
+  },
+  "shooting_star": {
+    "max_body_to_range": 0.35,
+    "min_upper_wick_to_body": 2.0,
+    "strong_upper_wick_to_body": 2.5,
+    "confidence": 62,
+    "strong_confidence": 72
+  },
+  "engulfing": {
+    "confidence": 78
+  },
+  "doji": {
+    "max_body_to_range": 0.1,
+    "confidence": 58
+  }
+}

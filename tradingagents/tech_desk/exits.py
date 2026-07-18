@@ -8,7 +8,7 @@ from typing import List
 
 import pandas as pd
 
-from tradingagents.swing.exits import trading_days_between
+from tradingagents.swing.exits import resolve_same_bar_stop_t1, trading_days_between
 
 
 class ExitReason(str, Enum):
@@ -37,13 +37,12 @@ def evaluate_bar_exits(
     holding_days: int,
     history: pd.DataFrame,
 ) -> List[ExitAction]:
-    """Stop, primary target, then time exit."""
+    """Stop, primary target, then time exit (close-aware same-bar stop/T1)."""
     actions: List[ExitAction] = []
     remaining = float(position.get("remaining_pct", 100.0))
     if remaining <= 0:
         return actions
 
-    entry = float(position.get("entry_price") or 0)
     stop = float(position.get("trailing_stop") or position.get("stop_loss") or 0)
     target_1 = float(position.get("target_1") or 0)
     low = float(bar["Low"])
@@ -51,7 +50,17 @@ def evaluate_bar_exits(
     close = float(bar["Close"])
     entry_date = position["screen_date"]
 
-    if stop > 0 and low <= stop:
+    stop_hit = stop > 0 and low <= stop
+    t1_hit = target_1 > 0 and high >= target_1
+    winner = resolve_same_bar_stop_t1(
+        stop_hit=stop_hit,
+        t1_hit=t1_hit,
+        close=close,
+        stop=stop,
+        target_1=target_1,
+    )
+
+    if winner == "stop":
         actions.append(
             ExitAction(
                 ticker=position["ticker"],
@@ -63,7 +72,7 @@ def evaluate_bar_exits(
         )
         return actions
 
-    if target_1 > 0 and high >= target_1:
+    if winner == "t1":
         actions.append(
             ExitAction(
                 ticker=position["ticker"],

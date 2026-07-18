@@ -157,6 +157,12 @@ def test_expected_completed_session_skips_open_session_and_weekend():
     assert expected_completed_session(saturday) == pd.Timestamp("2026-07-17")
 
 
+def test_expected_completed_session_skips_nse_holiday():
+    # 2026-01-26 Republic Day (Mon). Morning of Tue 27 → prior session Fri 23.
+    tuesday_morning = pd.Timestamp("2026-01-27 11:00", tz="Asia/Kolkata")
+    assert expected_completed_session(tuesday_morning) == pd.Timestamp("2026-01-23")
+
+
 def test_set_manifest_eod_run_stamps_expected_session(tmp_path, monkeypatch):
     set_config({
         "data_cache_dir": str(tmp_path),

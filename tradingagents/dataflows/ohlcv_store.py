@@ -22,6 +22,7 @@ import pandas as pd
 import yfinance as yf
 
 from tradingagents.dataflows.config import get_config
+from tradingagents.dataflows.nse_calendar import is_nse_trading_day
 from tradingagents.dataflows.utils import symbol_cache_filename
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,10 @@ def _today_iso() -> str:
 
 
 def expected_completed_session(now: Optional[pd.Timestamp] = None) -> pd.Timestamp:
-    """Latest completed weekday session in IST (market close buffer: 16:00)."""
+    """Latest completed NSE session in IST (market close buffer: 16:00).
+
+    Skips weekends and known NSE holidays from ``nse_calendar``.
+    """
     current = now if now is not None else pd.Timestamp.now(tz="Asia/Kolkata")
     if current.tzinfo is None:
         current = current.tz_localize("Asia/Kolkata")
@@ -111,7 +115,11 @@ def expected_completed_session(now: Optional[pd.Timestamp] = None) -> pd.Timesta
     session = current.normalize()
     if current.hour < 16:
         session -= pd.Timedelta(days=1)
-    while session.weekday() >= 5:
+    # Walk back until we land on a real NSE cash session.
+    while True:
+        day = session.date() if hasattr(session, "date") else session
+        if is_nse_trading_day(day):
+            break
         session -= pd.Timedelta(days=1)
     return session.tz_localize(None)
 

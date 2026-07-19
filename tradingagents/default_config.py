@@ -151,6 +151,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_max_positions": 20,
     "tech_desk_holding_days": 20,
     "tech_desk_min_confidence": 60,
+    # Tech Desk Trader: min reward:risk from zone midpoint (T1-mid)/(mid-stop)
+    "tech_desk_min_rr": 1.5,
     "tech_desk_book_path": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "positions.json"),
     "tech_desk_pending_path": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "pending_entries.json"),
     "tech_desk_daily_dir": os.path.join(_TRADINGAGENTS_HOME, "tech_desk", "daily"),
@@ -164,6 +166,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_proximity_stop_at_zone_low": True,
     "tech_desk_pending_max_days": 10,
     "tech_desk_target_path_skip_pct": 0.80,
+    # Days before report/plan date used to detect prior T1 hits (then zone pullback).
+    "tech_desk_t1_lookback_days": 45,
     "tech_desk_invalidate_on_stop_break": True,
     "tech_desk_pending_dismissed_path": os.path.join(
         _TRADINGAGENTS_HOME, "tech_desk", "pending_dismissed.json"
@@ -189,6 +193,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "rs_desk_proximity_stop_at_zone_low": True,
     "rs_desk_pending_max_days": 10,
     "rs_desk_target_path_skip_pct": 0.80,
+    "rs_desk_t1_lookback_days": 45,
+    "rs_desk_min_rr": 1.5,
     "rs_desk_invalidate_on_stop_break": True,
     # Per-run directory for full tool response logs (StockTwits, Reddit,
     # yfinance news, technical indicators). None disables this logging; the

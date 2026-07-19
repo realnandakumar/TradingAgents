@@ -9,8 +9,13 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "TradingAgents — India RS Screener",
-  description: "Relative-strength + pattern screener with paper-trading reliability tracking.",
+  title: {
+    default: "Trading Bulls",
+    template: "%s · Trading Bulls",
+  },
+  description:
+    "Trading Bulls — India equity desks: screeners, paper books, charts, and AI research.",
+  applicationName: "Trading Bulls",
 };
 
 export default function RootLayout({
@@ -25,7 +30,7 @@ export default function RootLayout({
           <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-8">{children}</main>
         </DeskJobProvider>
         <footer className="text-muted text-xs text-center py-6 border-t border-border">
-          Paper-trading simulation · research only, not financial advice
+          Trading Bulls · paper-trading simulation · research only, not financial advice
         </footer>
       </body>
     </html>

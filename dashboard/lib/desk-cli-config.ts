@@ -142,7 +142,7 @@ const DESK_CONFIGS: DeskConfig[] = [
         requiresApiKey: true,
         group: "desk",
         description:
-          "Read latest shared tech_reports for watchlist ∪ open/pending (reports may come from RS Desk MA), run the AI portfolio manager, open or queue zones on the Tech Desk book only.",
+          "Read latest shared tech_reports for the current watchlist. Path 5: Tech Desk Trader (R:R) then script assemble opens/waits — no daily LLM PM. Weekly review manages opens. New entries watchlist-only; pending on Tech Desk book.",
       },
       {
         id: "daily",
@@ -224,7 +224,7 @@ const DESK_CONFIGS: DeskConfig[] = [
         variant: "secondary",
         requiresApiKey: true,
         description:
-          "Re-run RS Desk PM on latest shared reports for last screen ∪ open/pending (no new MA). Same agent as Tech Desk; separate book.",
+          "Re-run RS Path 5 (Trader + script assemble) on latest shared reports for last screen ∪ open/pending (no new MA). No daily LLM PM. Pending on RS Desk book only.",
       },
       {
         id: "daily",

@@ -43,14 +43,97 @@ _ATR_INLINE_RE = re.compile(
     r"\bATR[^~\d]{0,20}~?\s*([\d,.]+)",
     re.IGNORECASE,
 )
+# Accept both ``FINAL …: **HOLD**`` and ``**FINAL …: HOLD**``.
 _PROPOSAL_RE = re.compile(
-    r"FINAL TRANSACTION PROPOSAL:\s*\*\*([A-Z]+)\*\*",
+    r"(?:\*\*)?FINAL TRANSACTION PROPOSAL:\s*\*?\*?([A-Z]+)\*?\*?",
     re.IGNORECASE,
 )
 _PM_SUMMARY_FENCE_RE = re.compile(
     r"```(?:yaml|json)?\s*pm_summary\s*\n(.*?)```",
     re.IGNORECASE | re.DOTALL,
 )
+_ACTIONABLE_PROPOSALS = frozenset({"BUY", "WAIT", "HOLD"})
+_STAND_ASIDE_PROPOSALS = frozenset({"WAIT", "HOLD", "SELL"})
+
+
+def _num_level(v: Any) -> Optional[float]:
+    try:
+        if v is None or v == "":
+            return None
+        f = float(v)
+        if f == 0.0:
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+def pm_summary_thin_reason(summary: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return a skip reason when summary lacks usable stop/T1 (and zone for WAIT/HOLD).
+
+    Returns ``None`` when the summary is actionable enough for Process / plan_from_ma.
+    Stand-aside WAIT/HOLD/SELL with an explicit proposal but no long levels returns a
+    ``stand_aside:`` reason (not a re-analyze defect).
+    """
+    if not summary:
+        return "no pm_summary"
+    proposal = str(summary.get("proposal") or "").upper().strip()
+    stop = _num_level(summary.get("stop"))
+    target_1 = _num_level(summary.get("target_1")) or _num_level(summary.get("target"))
+    zone_low = _num_level(summary.get("entry_zone_low"))
+    zone_high = _num_level(summary.get("entry_zone_high"))
+
+    if stop is None or target_1 is None:
+        # Structured fence with proposal but no long levels = intentional stand-aside
+        if proposal in _STAND_ASIDE_PROPOSALS and (
+            summary.get("atr") is not None
+            or summary.get("sma_50") is not None
+            or summary.get("bias")
+        ):
+            return f"stand_aside: {proposal} without long stop/T1"
+        return "missing stop or target_1"
+    if proposal in _ACTIONABLE_PROPOSALS:
+        # WAIT/HOLD always need a buying zone; BUY without zone is still usable.
+        if proposal in ("WAIT", "HOLD") and (
+            zone_low is None or zone_high is None or zone_high <= zone_low
+        ):
+            return f"stand_aside: {proposal} without entry zone"
+    return None
+
+
+def is_actionable_pm_summary(summary: Optional[Dict[str, Any]]) -> bool:
+    """True when Process should feed this report to the entry PM."""
+    return pm_summary_thin_reason(summary) is None
+
+
+def is_stand_aside_pm_summary(summary: Optional[Dict[str, Any]]) -> bool:
+    """True when MA explicitly stands aside (no long setup) — not a thin/broken report."""
+    reason = pm_summary_thin_reason(summary)
+    return bool(reason and reason.startswith("stand_aside:"))
+
+
+def needs_reanalyze_pm_summary(summary: Optional[Dict[str, Any]]) -> bool:
+    """True when levels are missing in a way that looks like a broken/old report."""
+    reason = pm_summary_thin_reason(summary)
+    return bool(reason) and not is_stand_aside_pm_summary(summary)
+
+
+def render_pm_summary_fence(summary: Dict[str, Any]) -> str:
+    """Markdown fence matching the tech MA prompt contract."""
+    payload = {"pm_summary": summary}
+    return "```json pm_summary\n" + json.dumps(payload, indent=2) + "\n```"
+
+
+def ensure_pm_summary_fence(market_text: str, summary: Dict[str, Any]) -> str:
+    """Replace or append a ``pm_summary`` fence so markdown and JSON stay aligned."""
+    fence = render_pm_summary_fence(summary)
+    text = market_text or ""
+    if _PM_SUMMARY_FENCE_RE.search(text):
+        return _PM_SUMMARY_FENCE_RE.sub(fence, text, count=1)
+    text = text.rstrip()
+    if text:
+        return text + "\n\n" + fence + "\n"
+    return fence + "\n"
 _ANCHOR_PATTERNS = (
     re.compile(r"^##\s+8[\.)]\s+", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^##\s+Summary\s+table", re.MULTILINE | re.IGNORECASE),

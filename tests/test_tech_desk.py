@@ -149,6 +149,8 @@ class TechDeskBookTests(unittest.TestCase):
             "tech_desk_holding_days": 20,
             "tech_desk_book_path": str(base / "positions.json"),
             "tech_desk_pending_path": str(base / "pending.json"),
+            "tech_desk_pending_dismissed_path": str(base / "dismissed.json"),
+            "tech_desk_t1_lookback_days": 0,
         }
 
     def test_open_whole_share_sizing(self):
@@ -408,8 +410,10 @@ class ZoneFillTests(unittest.TestCase):
                 "desk_capital": 100_000.0,
                 "tech_desk_max_positions": 10,
                 "tech_desk_min_confidence": 60,
+                "tech_desk_t1_lookback_days": 0,
                 "tech_desk_book_path": str(Path(tmp) / "positions.json"),
                 "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+                "tech_desk_pending_dismissed_path": str(Path(tmp) / "dismissed.json"),
             }
             book = TechDeskPositionBook(cfg)
             plan = _sample_plan("TCS.NS", entry=100.0)
@@ -422,15 +426,14 @@ class ZoneFillTests(unittest.TestCase):
                     "target_1": 110.0,
                 }
             )
-            book.add_pending_entry(plan, "2026-07-10", current_price=100.0)
+            # Controlled hist — no prior T1 (avoid live yfinance in add_pending)
+            quiet = pd.DataFrame(
+                [{"Low": 99.0, "High": 101.0, "Close": 100.0}],
+                index=pd.to_datetime(["2026-07-10"]),
+            )
+            book.add_pending_entry(plan, "2026-07-10", current_price=100.0, hist=quiet)
 
-            bar = pd.Series({"Low": 99.0, "High": 101.0, "Close": 100.0})
-
-            with patch.object(TechDeskPositionBook, "_history") as mock_hist:
-                mock_hist.return_value = pd.DataFrame(
-                    [bar],
-                    index=pd.to_datetime(["2026-07-10"]),
-                )
+            with patch.object(TechDeskPositionBook, "_history", return_value=quiet):
                 fills = book.evaluate_pending_fills(as_of="2026-07-10")
 
             self.assertEqual(len(fills), 1)
@@ -443,8 +446,10 @@ class ZoneFillTests(unittest.TestCase):
                 "desk_capital": 100_000.0,
                 "tech_desk_max_positions": 10,
                 "tech_desk_min_confidence": 60,
+                "tech_desk_t1_lookback_days": 0,
                 "tech_desk_book_path": str(Path(tmp) / "positions.json"),
                 "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+                "tech_desk_pending_dismissed_path": str(Path(tmp) / "dismissed.json"),
             }
             book = TechDeskPositionBook(cfg)
             plan = _sample_plan("TCS.NS", entry=100.0).model_copy(
@@ -456,19 +461,76 @@ class ZoneFillTests(unittest.TestCase):
                     "target_1": 110.0,
                 }
             )
-            book.add_pending_entry(plan, "2026-07-10", current_price=105.0)
+            quiet = pd.DataFrame(
+                [{"Low": 103.0, "High": 105.0, "Close": 105.0}],
+                index=pd.to_datetime(["2026-07-09"]),
+            )
+            book.add_pending_entry(plan, "2026-07-10", current_price=105.0, hist=quiet)
+            # Day-1 tags zone (fill); day-2 runs higher but stays below T1.
             hist = pd.DataFrame(
                 [
                     {"Low": 99.0, "High": 104.0, "Close": 101.0},
-                    {"Low": 106.0, "High": 110.0, "Close": 108.0},
+                    {"Low": 106.0, "High": 109.0, "Close": 108.0},
                 ],
                 index=pd.to_datetime(["2026-07-10", "2026-07-11"]),
             )
-            with patch.object(TechDeskPositionBook, "_history", return_value=hist):
+
+            def _hist(_symbol, start, end):
+                end_ts = pd.Timestamp(end)
+                return hist.loc[hist.index < end_ts]
+
+            with patch.object(TechDeskPositionBook, "_history", side_effect=_hist):
                 fills = book.evaluate_pending_fills(as_of="2026-07-11")
 
             self.assertEqual(fills[0]["fill_price"], 101.0)
             self.assertEqual(fills[0]["position"]["screen_date"], "2026-07-10")
+
+    def test_pending_fill_blocked_after_t1_then_pullback(self):
+        """Hard rule: peak tagged T1 → do not fill on later zone touch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "desk_capital": 100_000.0,
+                "tech_desk_max_positions": 10,
+                "tech_desk_min_confidence": 60,
+                "tech_desk_t1_lookback_days": 0,
+                "tech_desk_book_path": str(Path(tmp) / "positions.json"),
+                "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+                "tech_desk_pending_dismissed_path": str(Path(tmp) / "dismissed.json"),
+            }
+            book = TechDeskPositionBook(cfg)
+            plan = _sample_plan("TCS.NS", entry=100.0).model_copy(
+                update={
+                    "entry_type": EntryType.LIMIT_ZONE,
+                    "zone_low": 98.0,
+                    "zone_high": 102.0,
+                    "stop_loss": 95.0,
+                    "target_1": 110.0,
+                }
+            )
+            quiet = pd.DataFrame(
+                [{"Low": 103.0, "High": 105.0, "Close": 105.0}],
+                index=pd.to_datetime(["2026-07-09"]),
+            )
+            book.add_pending_entry(plan, "2026-07-10", current_price=105.0, hist=quiet)
+            hist = pd.DataFrame(
+                [
+                    {"Low": 108.0, "High": 111.0, "Close": 110.0},  # T1 tagged
+                    {"Low": 99.0, "High": 101.0, "Close": 100.0},  # pullback into zone
+                ],
+                index=pd.to_datetime(["2026-07-10", "2026-07-11"]),
+            )
+
+            def _hist(_symbol, start, end):
+                end_ts = pd.Timestamp(end)
+                return hist.loc[hist.index < end_ts]
+
+            with patch.object(TechDeskPositionBook, "_history", side_effect=_hist):
+                fills = book.evaluate_pending_fills(as_of="2026-07-11")
+
+            self.assertEqual(fills, [])
+            self.assertFalse(book.has_open_position("TCS.NS"))
+            self.assertEqual(book.pending_entries(), [])
+            self.assertEqual(book.is_pending_dismissed("TCS.NS"), "post_target_pullback")
 
 
 class ProcessBatchTests(unittest.TestCase):
@@ -477,8 +539,10 @@ class ProcessBatchTests(unittest.TestCase):
             "desk_capital": 100_000.0,
             "tech_desk_max_positions": max_positions,
             "tech_desk_min_confidence": 60,
+            "tech_desk_t1_lookback_days": 0,
             "tech_desk_book_path": str(Path(tmp) / "positions.json"),
             "tech_desk_pending_path": str(Path(tmp) / "pending.json"),
+            "tech_desk_pending_dismissed_path": str(Path(tmp) / "dismissed.json"),
             "tech_desk_process_log_dir": str(Path(tmp) / "process"),
         }
 
@@ -501,7 +565,12 @@ class ProcessBatchTests(unittest.TestCase):
                 closes=[],
             )
             prices = {"RELIANCE.NS": 2500.0, "TCS.NS": 3600.0}
-            report = manager.process_batch(decision, prices, process_date="2026-07-10")
+            quiet = pd.DataFrame(
+                [{"Low": 3500.0, "High": 3600.0, "Close": 3600.0}],
+                index=pd.to_datetime(["2026-07-10"]),
+            )
+            with patch.object(TechDeskPositionBook, "_history", return_value=quiet):
+                report = manager.process_batch(decision, prices, process_date="2026-07-10")
 
             self.assertIn("RELIANCE.NS", report["opened"])
             self.assertIn("TCS.NS", report["waits"])
@@ -523,9 +592,14 @@ class ProcessBatchTests(unittest.TestCase):
                 }
             )
             decision = TechDeskBatchDecision(opens=[], waits=[wait_plan], skips=[], closes=[])
-            report = manager.process_batch(
-                decision, {"INFY.NS": 1520.0}, process_date="2026-07-10"
+            quiet = pd.DataFrame(
+                [{"Low": 1500.0, "High": 1520.0, "Close": 1520.0}],
+                index=pd.to_datetime(["2026-07-10"]),
             )
+            with patch.object(TechDeskPositionBook, "_history", return_value=quiet):
+                report = manager.process_batch(
+                    decision, {"INFY.NS": 1520.0}, process_date="2026-07-10"
+                )
             self.assertIn("INFY.NS", report["waits"])
             self.assertEqual(len(manager.book.pending_entries()), 1)
 
@@ -792,6 +866,50 @@ class PendingLifecycleTests(unittest.TestCase):
         )
         exhausted, _ = is_setup_exhausted(entry, hist, {"tech_desk_target_path_skip_pct": 0.80})
         self.assertFalse(exhausted)
+
+    def test_t1_achieved_blocks_even_before_zone_return(self):
+        """Once peak tags T1, pending must exhaust — do not wait for a later zone fill."""
+        from tradingagents.tech_desk.pending_lifecycle import is_setup_exhausted
+
+        entry = {
+            "zone_low": 98.0,
+            "zone_high": 100.0,
+            "target_1": 110.0,
+            "plan_date": "2026-07-10",
+        }
+        # Peak hit T1; last bar still above zone (not a fill day yet).
+        hist = pd.DataFrame(
+            {
+                "High": [110.5, 106.0],
+                "Low": [108.0, 104.0],
+                "Close": [109.0, 105.0],
+            },
+            index=pd.to_datetime(["2026-07-11", "2026-07-12"]),
+        )
+        exhausted, reason = is_setup_exhausted(entry, hist, {"tech_desk_target_path_skip_pct": 0.80})
+        self.assertTrue(exhausted)
+        self.assertEqual(reason, "post_target_pullback")
+
+    def test_t1_then_pullback_blocks_new_pending(self):
+        from tradingagents.tech_desk.pending_lifecycle import post_target_entry_block_reason
+
+        hist = pd.DataFrame(
+            {
+                "High": [112.0, 99.5],
+                "Low": [108.0, 98.0],
+                "Close": [110.0, 99.0],
+            },
+            index=pd.to_datetime(["2026-07-11", "2026-07-15"]),
+        )
+        reason = post_target_entry_block_reason(
+            zone_low=98.0,
+            zone_high=100.0,
+            target_1=110.0,
+            current_price=99.0,
+            hist=hist,
+            config={"tech_desk_target_path_skip_pct": 0.80},
+        )
+        self.assertEqual(reason, "post_target_pullback")
 
     def test_dismissed_pending_not_requeued(self):
         with tempfile.TemporaryDirectory() as tmp:

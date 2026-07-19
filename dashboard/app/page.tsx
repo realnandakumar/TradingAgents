@@ -25,7 +25,7 @@ export default async function OverviewPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
           <p className="text-muted text-sm">
-            High relative-strength NSE stocks, AI-vetted, paper-traded for reliability.
+            Trading Bulls desk overview — NSE relative strength, AI-vetted picks, paper books.
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted">

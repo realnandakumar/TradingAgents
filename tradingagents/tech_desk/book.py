@@ -186,12 +186,38 @@ class TechDeskPositionBook:
     def pending_entries(self) -> List[dict]:
         return self._load_pending()
 
+    def history_for_setup_check(
+        self,
+        ticker: str,
+        *,
+        report_date: Optional[str] = None,
+        plan_date: Optional[str] = None,
+        as_of: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """OHLC window used to detect prior T1 achievement before park/fill."""
+        as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+        from .pending_lifecycle import peak_history_start
+
+        start = peak_history_start(
+            {"report_date": report_date, "plan_date": plan_date or as_of},
+            self.config,
+        )
+        if not start:
+            start = (datetime.strptime(as_of, "%Y-%m-%d") - timedelta(days=45)).strftime(
+                "%Y-%m-%d"
+            )
+        end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        return self._history(ticker, start, end)
+
     def validate_pending_plan(
         self,
         plan: "TechTradePlan",
         current_price: Optional[float] = None,
+        hist: Optional[pd.DataFrame] = None,
     ) -> Optional[str]:
         """Return an error string if the pending plan fails validation."""
+        from .pending_lifecycle import post_target_entry_block_reason
+
         if plan.confidence < self.min_confidence:
             return f"confidence {plan.confidence} < min {self.min_confidence}"
         if plan.stop_loss <= 0:
@@ -216,6 +242,17 @@ class TechDeskPositionBook:
             if zone_high < current_price * 0.85:
                 return "zone too far below current price"
 
+        blocked = post_target_entry_block_reason(
+            zone_low=float(zone_low),
+            zone_high=float(zone_high),
+            target_1=float(plan.target_1),
+            current_price=current_price,
+            hist=hist,
+            config=self.config,
+        )
+        if blocked:
+            return blocked
+
         return None
 
     def add_pending_entry(
@@ -226,14 +263,29 @@ class TechDeskPositionBook:
         report_path: Optional[str] = None,
         report_date: Optional[str] = None,
         current_price: Optional[float] = None,
+        hist: Optional[pd.DataFrame] = None,
     ) -> Optional[dict]:
         blocked = self.is_pending_dismissed(plan.ticker, report_date)
         if blocked:
             logger.info("Reject pending %s — dismissed (%s)", plan.ticker, blocked)
             return None
-        err = self.validate_pending_plan(plan, current_price)
+        if hist is None:
+            hist = self.history_for_setup_check(
+                plan.ticker,
+                report_date=report_date,
+                plan_date=plan_date,
+                as_of=plan_date,
+            )
+        err = self.validate_pending_plan(plan, current_price, hist=hist)
         if err:
             logger.info("Reject pending %s — %s", plan.ticker, err)
+            if err == "post_target_pullback":
+                self.record_pending_dismissal(
+                    plan.ticker,
+                    err,
+                    report_date=report_date,
+                    plan_date=plan_date,
+                )
             return None
         pending = self._load_pending()
         pending = [p for p in pending if p.get("ticker") != plan.ticker]
@@ -286,8 +338,30 @@ class TechDeskPositionBook:
             logger.warning("Invalid levels for %s entry=%s stop=%s", plan.ticker, entry_price, plan.stop_loss)
             return None
         if plan.target_1 <= entry_price:
-            logger.warning("Invalid target_1 for %s", plan.ticker)
+            logger.warning("Invalid target_1 for %s — price already at/above T1", plan.ticker)
             return None
+
+        # Zone / pullback opens: refuse if hist shows T1 already achieved.
+        if plan.zone_low is not None and plan.zone_high is not None:
+            from .pending_lifecycle import post_target_entry_block_reason
+
+            hist = self.history_for_setup_check(
+                plan.ticker,
+                report_date=report_date,
+                plan_date=screen_date,
+                as_of=screen_date,
+            )
+            blocked = post_target_entry_block_reason(
+                zone_low=float(plan.zone_low),
+                zone_high=float(plan.zone_high),
+                target_1=float(plan.target_1),
+                current_price=entry_price,
+                hist=hist,
+                config=self.config,
+            )
+            if blocked:
+                logger.info("Skip open %s — %s", plan.ticker, blocked)
+                return None
 
         sizing = compute_position_size(self.desk_capital, self.max_positions, entry_price)
         if int(sizing["shares"] or 0) < 1:
@@ -399,6 +473,7 @@ class TechDeskPositionBook:
             is_pending_expired,
             is_pending_invalidated,
             is_setup_exhausted,
+            peak_history_start,
             update_pending_peak,
         )
 
@@ -413,7 +488,7 @@ class TechDeskPositionBook:
         for entry in pending:
             ticker = entry["ticker"]
             plan_date = entry.get("plan_date") or as_of
-            start = plan_date
+            start = peak_history_start(entry, self.config) or plan_date
             end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
             hist = self._history(ticker, start, end)
             if hist is not None and not hist.empty:
@@ -429,11 +504,13 @@ class TechDeskPositionBook:
                 )
                 continue
 
-            hist_slice = history_from_plan_date(hist, plan_date, as_of)
-            hist_for_rules = hist_slice if hist_slice is not None else hist
-            if hist_for_rules is None:
-                hist_for_rules = pd.DataFrame()
-            invalidated, inv_reason = is_pending_invalidated(entry, hist_for_rules, self.config)
+            # Stop invalidation only from plan_date; T1 exhaustion uses full lookback.
+            hist_since_plan = history_from_plan_date(hist, plan_date, as_of)
+            hist_for_stop = hist_since_plan if hist_since_plan is not None else hist
+            if hist_for_stop is None:
+                hist_for_stop = pd.DataFrame()
+            hist_for_exhaust = hist if hist is not None else pd.DataFrame()
+            invalidated, inv_reason = is_pending_invalidated(entry, hist_for_stop, self.config)
             if invalidated:
                 removed.append({"ticker": ticker, "reason": inv_reason})
                 self.record_pending_dismissal(
@@ -444,7 +521,7 @@ class TechDeskPositionBook:
                 )
                 continue
 
-            exhausted, ex_reason = is_setup_exhausted(entry, hist_for_rules, self.config)
+            exhausted, ex_reason = is_setup_exhausted(entry, hist_for_exhaust, self.config)
             if exhausted:
                 removed.append({"ticker": ticker, "reason": ex_reason})
                 self.record_pending_dismissal(
@@ -476,6 +553,7 @@ class TechDeskPositionBook:
             is_pending_expired,
             is_pending_invalidated,
             is_setup_exhausted,
+            peak_history_start,
         )
 
         remaining_pending: List[dict] = []
@@ -493,7 +571,7 @@ class TechDeskPositionBook:
                 continue
 
             plan_date = entry.get("plan_date") or as_of
-            start = plan_date
+            start = peak_history_start(entry, self.config) or plan_date
             end = (datetime.strptime(as_of, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
             hist = self._history(ticker, start, end)
             if hist is None or hist.empty:
@@ -509,7 +587,9 @@ class TechDeskPositionBook:
                     continue
                 if bar_date > as_of:
                     break
+                # Stops: since plan_date. T1 peak: full lookback through this bar.
                 history_to_bar = history_from_plan_date(hist.iloc[: i + 1], plan_date, bar_date)
+                history_for_exhaust = history_from_plan_date(hist.iloc[: i + 1], start, bar_date)
                 if is_pending_expired(entry, bar_date, self.config):
                     dismissed_reason = "expired"
                     break
@@ -520,7 +600,7 @@ class TechDeskPositionBook:
                     dismissed_reason = invalid_reason
                     break
                 exhausted, exhausted_reason = is_setup_exhausted(
-                    entry, history_to_bar, self.config
+                    entry, history_for_exhaust, self.config
                 )
                 if exhausted:
                     dismissed_reason = exhausted_reason

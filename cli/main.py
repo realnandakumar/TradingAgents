@@ -1363,9 +1363,16 @@ def tech_analyze(
             save_path = reports_base / sym / trade_date
             try:
                 report_file = save_tech_report(result, save_path)
+                thin = result.get("pm_summary_thin_reason")
+                summary_note = (
+                    f"  [yellow]pm_summary thin:[/yellow] {thin}"
+                    if thin
+                    else "  [dim]pm_summary:[/dim] actionable"
+                )
                 console.print(
                     f"[green]Report saved:[/green] {save_path.resolve()}\n"
-                    f"  [dim]Complete report:[/dim] {report_file.name}"
+                    f"  [dim]Complete report:[/dim] {report_file.name}\n"
+                    f"{summary_note}"
                 )
             except Exception as e:
                 console.print(f"[red]Error saving report for {sym}: {e}[/red]")
@@ -1398,12 +1405,14 @@ def tech_desk_process(
     ensure_api_key(config.get("llm_provider", "openai"))
 
     console.print(Panel.fit(
-        f"[bold]Tech Desk batch process[/bold]\n"
+        f"[bold]Tech Desk batch process[/bold] (Path 5: MA → Trader → script)\n"
         f"Reports: {reports_dir or config['tech_analyze_reports_dir']}\n"
         f"Watchlist: {config.get('tech_watchlist_path', '~/.tradingagents/watchlist.txt')}\n"
         f"Max slots: {config.get('tech_desk_max_positions', 10)} · "
         f"Min confidence: {config.get('tech_desk_min_confidence', 60)} · "
-        f"Max report age: {config.get('tech_desk_max_report_age_days', 14)}d",
+        f"Min R:R: {config.get('tech_desk_min_rr', 1.5)} · "
+        f"Max report age: {config.get('tech_desk_max_report_age_days', 14)}d\n"
+        f"[dim]Daily LLM PM off — weekly review handles open-position management[/dim]",
         title="tech-desk-process",
     ))
 

@@ -26,6 +26,60 @@ class Bias(str, Enum):
     NEUTRAL = "neutral"
 
 
+class PmSummary(BaseModel):
+    """Structured levels block written by tech-analyze for the Tech Desk PM."""
+
+    proposal: str = Field(
+        description="Exactly one of BUY, HOLD, WAIT, or SELL (uppercase).",
+    )
+    bias: str = Field(
+        description="Directional bias: bullish, bearish, or neutral.",
+    )
+    confidence: int = Field(
+        ge=0,
+        le=100,
+        description="Conviction 0-100 from the technical analysis.",
+    )
+    entry_zone_low: float = Field(
+        description=(
+            "Pullback / buy-zone lower price. Required (>0) for BUY/WAIT/HOLD "
+            "when a zone is described; use 0 only for SELL or no zone."
+        ),
+    )
+    entry_zone_high: float = Field(
+        description=(
+            "Pullback / buy-zone upper price. Must be > entry_zone_low when both >0."
+        ),
+    )
+    stop: float = Field(
+        description=(
+            "Hard stop-loss price. Must be >0 whenever proposal is BUY, WAIT, or HOLD "
+            "with an actionable setup."
+        ),
+    )
+    target_1: float = Field(
+        description="Primary profit target. Must be >0 for BUY/WAIT/HOLD setups.",
+    )
+    target_2: float = Field(
+        default=0.0,
+        description="Optional stretch target; 0 if none.",
+    )
+    atr: float = Field(default=0.0, description="ATR value from the report (0 if unknown).")
+    sma_50: float = Field(default=0.0, description="50 SMA (0 if unknown).")
+    sma_200: float = Field(default=0.0, description="200 SMA (0 if unknown).")
+    key_support: str = Field(default="", description="Nearest support level or description.")
+    key_resistance: str = Field(
+        default="", description="Nearest resistance level or description."
+    )
+    invalidation: str = Field(
+        default="",
+        description="One sentence: what price action invalidates the thesis.",
+    )
+
+    def as_dict(self) -> dict:
+        return self.model_dump()
+
+
 class TechTradePlan(BaseModel):
     """Trade plan for one ticker from the Tech Desk PM."""
 
@@ -66,6 +120,55 @@ class TechTradePlan(BaseModel):
     )
     rationale: str = Field(
         description="Why this action — grounded in the saved technical report (2-4 sentences)",
+    )
+
+
+class TechDeskTraderDisposition(str, Enum):
+    OPEN = "open"
+    WAIT = "wait"
+    SKIP = "skip"
+
+
+class TechDeskTraderDecision(BaseModel):
+    """Per-ticker Tech Desk Trader output — owns R:R and entry type (Path 5).
+
+    Market Analyst supplies candidate levels; this agent decides whether the
+    desk should trade and with what geometry.
+    """
+
+    ticker: str = Field(description="NSE ticker symbol, e.g. RELIANCE.NS")
+    disposition: TechDeskTraderDisposition = Field(
+        description="open / wait / skip — skip when no edge or R:R too weak",
+    )
+    entry_type: Optional[EntryType] = Field(
+        default=None,
+        description="Required for open/wait. Omit when disposition is skip.",
+    )
+    zone_low: Optional[float] = Field(default=None)
+    zone_high: Optional[float] = Field(default=None)
+    stop_loss: Optional[float] = Field(
+        default=None,
+        description="Required for open/wait.",
+    )
+    target_1: Optional[float] = Field(
+        default=None,
+        description="Required for open/wait. Must clear min reward:risk vs zone mid.",
+    )
+    target_2: Optional[float] = Field(default=None)
+    confidence: int = Field(
+        default=50,
+        ge=0,
+        le=100,
+        description="Trader conviction 0-100 after geometry check",
+    )
+    bias: Bias = Field(default=Bias.NEUTRAL)
+    invalidation: str = Field(default="")
+    rationale: str = Field(
+        description="Why this disposition — cite MA levels and R:R (2-4 sentences)",
+    )
+    skip_reason: Optional[str] = Field(
+        default=None,
+        description="When disposition is skip, short reason for the desk log",
     )
 
 
@@ -159,9 +262,12 @@ def _dist_to_tgt_pct(price: Optional[float], target: Optional[float]) -> str:
 
 
 def render_batch_decision(
-    decision: TechDeskBatchDecision,
+    decision: Optional[TechDeskBatchDecision],
     prices: Optional[dict[str, float]] = None,
 ) -> str:
+    if decision is None:
+        return "# Tech Desk Batch Decision\n\n_(no decision returned)_"
+
     lines = ["# Tech Desk Batch Decision", ""]
 
     if prices:

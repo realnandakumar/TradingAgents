@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { readTechReportMarkdown } from "@/lib/tech-reports-server";
+import { readTechDeskReportBundle } from "@/lib/tech-reports-server";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +10,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "ticker query param required" }, { status: 400 });
   }
 
-  const markdown = readTechReportMarkdown(ticker);
-  if (markdown == null) {
-    return NextResponse.json({ error: "Report not found" }, { status: 404 });
+  const reportDate = req.nextUrl.searchParams.get("date")?.trim() || null;
+  const reportPath = req.nextUrl.searchParams.get("path")?.trim() || null;
+
+  const bundle = readTechDeskReportBundle(ticker, { reportDate, reportPath });
+  if (bundle == null) {
+    return NextResponse.json(
+      {
+        error: "Report not found",
+        ticker: ticker.toUpperCase(),
+        date: reportDate,
+      },
+      { status: 404 },
+    );
   }
 
-  return NextResponse.json({ ticker: ticker.toUpperCase(), markdown });
+  return NextResponse.json(bundle);
 }

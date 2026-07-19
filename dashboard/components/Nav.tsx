@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+import { TradingBullsMark } from "@/components/TradingBullsMark";
+
 const NAV_GROUPS = [
   {
     label: "Home",
@@ -57,9 +59,19 @@ export function Nav() {
   return (
     <header className="border-b border-border bg-surface/60 backdrop-blur sticky top-0 z-30">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
-        <Link href="/" className="font-semibold tracking-tight shrink-0">
-          <span className="text-accent">RS</span>Screener
-          <span className="text-muted font-normal"> · India</span>
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 font-semibold tracking-tight shrink-0 group"
+        >
+          <TradingBullsMark className="h-7 w-7 shrink-0" />
+          <span className="leading-tight">
+            <span className="text-foreground group-hover:text-bull transition-colors">
+              Trading Bulls
+            </span>
+            <span className="block text-[10px] font-normal uppercase tracking-wider text-muted">
+              India desks
+            </span>
+          </span>
         </Link>
 
         <nav className="hidden lg:flex items-center gap-1 text-sm flex-1 min-w-0 overflow-x-auto">

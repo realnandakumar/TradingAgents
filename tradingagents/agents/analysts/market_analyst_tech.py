@@ -64,24 +64,36 @@ Then append this JSON block (fill from your analysis):
 ```json pm_summary
 {
   "pm_summary": {
-    "proposal": "HOLD",
+    "proposal": "WAIT",
     "bias": "bullish",
     "confidence": 65,
-    "entry_zone_low": 0,
-    "entry_zone_high": 0,
-    "stop": 0,
-    "target_1": 0,
-    "target_2": 0,
-    "atr": 0,
-    "sma_50": 0,
-    "sma_200": 0,
-    "key_support": "",
-    "key_resistance": "",
-    "invalidation": ""
+    "entry_zone_low": 2050.0,
+    "entry_zone_high": 2100.0,
+    "stop": 1965.0,
+    "target_1": 2213.0,
+    "target_2": 2300.0,
+    "atr": 42.5,
+    "sma_50": 2080.0,
+    "sma_200": 2150.0,
+    "key_support": "2050",
+    "key_resistance": "2213",
+    "invalidation": "Close below 1965"
   }
 }
 ```
-Use real numbers and zones; set entry_zone_low/high to 0 only if not applicable."""
+Fill with **candidate levels from your analysis** (support/resistance, ATR-based
+context, pullback zones you observe). You are the Market Analyst — describe
+scenarios and levels honestly. A downstream **Tech Desk Trader** owns final
+entry type, reward:risk, and whether to trade.
+
+Rules for candidate levels:
+- For a possible long setup: fill entry_zone_low/high, stop, and target_1 with
+  real numbers from the chart (zone_high > zone_low; stop below zone; target above).
+- Use 0 for entry zones / stop / target_1 only when there is truly no long setup
+  (stand aside / bearish — prefer proposal WAIT or SELL).
+- Do NOT stretch targets or invent edge to make a trade look good; prefer honest
+  stand-aside over a weak long.
+- proposal is your directional lean (BUY/WAIT/HOLD/SELL), not a final desk order."""
             + """ When you deliver the final report (no more tool calls), begin immediately with a markdown heading such as ## Technical Analysis — do NOT preface with meta narration ("Now I have all the data", "Let me analyze", "I will now write", etc.). Jump straight into the report content."""
             + get_language_instruction()
         )

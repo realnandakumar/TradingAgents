@@ -3,11 +3,11 @@
 import { useState } from "react";
 
 import { ChartTickerLink } from "@/components/ChartTickerLink";
-import { MarkdownViewer } from "@/components/MarkdownViewer";
+import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
+import { DeskReportModal, type DeskReportTarget } from "@/components/DeskReportModal";
 import { inr, pct, shortSymbol } from "@/lib/format";
 import { useQuotes } from "@/lib/useQuotes";
 import type { TechDeskPendingEntry, TechDeskPosition } from "@/lib/tech-desk-server";
-import { DeskOpenMetaCells, deskOpenMetaHeaders } from "@/components/DeskOpenMetaCells";
 
 function cushionPct(last: number | null, stop: number): number | null {
   if (last == null || last <= 0) return null;
@@ -28,26 +28,17 @@ export function TechDeskBlotter({
   const { quotes, loading } = useQuotes(positions.map((p) => p.ticker));
   const open = positions.filter((p) => p.status === "open");
   const closedCount = positions.filter((p) => p.status === "closed").length;
-  const [reportTicker, setReportTicker] = useState<string | null>(null);
-  const [reportMd, setReportMd] = useState<string | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
+  const [reportTarget, setReportTarget] = useState<DeskReportTarget | null>(null);
 
-  const openReport = async (ticker: string) => {
-    setReportTicker(ticker);
-    setReportLoading(true);
-    setReportMd(null);
-    try {
-      const res = await fetch(
-        `/api/tech-desk/report?ticker=${encodeURIComponent(ticker)}`,
-      );
-      const data = await res.json();
-      if (res.ok) setReportMd(data.markdown);
-      else setReportMd(`Report not found for ${ticker}. Run analyze first.`);
-    } catch {
-      setReportMd("Failed to load report.");
-    } finally {
-      setReportLoading(false);
-    }
+  const openReport = (
+    ticker: string,
+    opts?: { reportDate?: string | null; reportPath?: string | null },
+  ) => {
+    setReportTarget({
+      ticker,
+      reportDate: opts?.reportDate,
+      reportPath: opts?.reportPath,
+    });
   };
 
   const rows = open.map((p) => {
@@ -139,17 +130,18 @@ export function TechDeskBlotter({
                 <td className="py-2 px-2 text-right tabular-nums text-bull">{inr(p.target_1)}</td>
                 <td className="py-2 px-2 text-muted">{p.bias ?? "—"}</td>
                 <td className="py-2 px-3">
-                  {p.report_date ? (
-                    <button
-                      type="button"
-                      onClick={() => openReport(p.ticker)}
-                      className="text-accent hover:underline text-[11px]"
-                    >
-                      {p.report_date}
-                    </button>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openReport(p.ticker, {
+                        reportDate: p.report_date,
+                        reportPath: p.report_path,
+                      })
+                    }
+                    className="text-accent hover:underline text-[11px]"
+                  >
+                    {p.report_date ?? "view"}
+                  </button>
                 </td>
               </tr>
             ))}
@@ -161,39 +153,28 @@ export function TechDeskBlotter({
         <div className="px-4 py-3 border-t border-border bg-surface-2/20 text-xs font-mono">
           <div className="text-[10px] uppercase text-muted mb-2">Pending pullback zones</div>
           {pending.map((pe) => (
-            <div key={pe.ticker} className="text-muted">
-              {shortSymbol(pe.ticker)} · {pe.zone_low}–{pe.zone_high} · conf {pe.confidence ?? "—"}
+            <div key={pe.ticker} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted py-0.5">
+              <span>
+                {shortSymbol(pe.ticker)} · {pe.zone_low}–{pe.zone_high} · conf {pe.confidence ?? "—"}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  openReport(pe.ticker, {
+                    reportDate: pe.report_date,
+                    reportPath: pe.report_path,
+                  })
+                }
+                className="text-accent hover:underline text-[11px]"
+              >
+                MA / Trader
+              </button>
             </div>
           ))}
         </div>
       )}
 
-      {reportTicker ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="card max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-medium font-mono">{shortSymbol(reportTicker)} report</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setReportTicker(null);
-                  setReportMd(null);
-                }}
-                className="text-muted hover:text-foreground text-lg leading-none"
-              >
-                ×
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {reportLoading ? (
-                <p className="text-sm text-muted">Loading…</p>
-              ) : reportMd ? (
-                <MarkdownViewer text={reportMd} />
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DeskReportModal target={reportTarget} onClose={() => setReportTarget(null)} />
     </div>
   );
 }

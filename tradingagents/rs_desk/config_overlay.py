@@ -1,7 +1,7 @@
-"""Map RS Desk config keys onto Tech Desk keys so book/manager/PM/rules are reused.
+"""Map RS Desk config keys onto Tech Desk keys so book/manager/trader/rules are reused.
 
 Reports stay on the shared ``tech_analyze_reports_dir``. Only book / pending /
-daily / process paths differ.
+daily / process paths differ. Path 5 = Trader + script assemble (no daily LLM PM).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 _DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
 
-# RS desk key → Tech Desk key consumed by TechDeskPositionBook / manager / rules / PM
+# RS desk key → Tech Desk key consumed by TechDeskPositionBook / manager / trader / rules
 _RS_TO_TECH = {
     "rs_desk_book_path": "tech_desk_book_path",
     "rs_desk_pending_path": "tech_desk_pending_path",
@@ -29,6 +29,8 @@ _RS_TO_TECH = {
     "rs_desk_proximity_stop_at_zone_low": "tech_desk_proximity_stop_at_zone_low",
     "rs_desk_pending_max_days": "tech_desk_pending_max_days",
     "rs_desk_target_path_skip_pct": "tech_desk_target_path_skip_pct",
+    "rs_desk_t1_lookback_days": "tech_desk_t1_lookback_days",
+    "rs_desk_min_rr": "tech_desk_min_rr",
     "rs_desk_invalidate_on_stop_break": "tech_desk_invalidate_on_stop_break",
 }
 
@@ -53,6 +55,8 @@ _RS_DEFAULTS = {
     "rs_desk_proximity_stop_at_zone_low": True,
     "rs_desk_pending_max_days": 10,
     "rs_desk_target_path_skip_pct": 0.80,
+    "rs_desk_t1_lookback_days": 45,
+    "rs_desk_min_rr": 1.5,
     "rs_desk_invalidate_on_stop_break": True,
 }
 
@@ -73,4 +77,15 @@ def as_tech_desk_config(config: Optional[dict] = None) -> Dict[str, Any]:
     # Shared reports — never remap
     if not out.get("tech_analyze_reports_dir"):
         out["tech_analyze_reports_dir"] = os.path.join(_DEFAULT_HOME, "tech_reports")
+
+    # Hard guarantee: RS pending/book never alias onto Tech Desk defaults
+    tech_pending = os.path.join(_DEFAULT_HOME, "tech_desk", "pending_entries.json")
+    rs_pending = out.get("tech_desk_pending_path") or out.get("rs_desk_pending_path")
+    if rs_pending and os.path.normcase(os.path.abspath(str(rs_pending))) == os.path.normcase(
+        os.path.abspath(tech_pending)
+    ):
+        raise ValueError(
+            "RS Desk pending path collides with Tech Desk pending; "
+            "check rs_desk_pending_path / tech_desk_pending_path"
+        )
     return out

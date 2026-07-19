@@ -67,7 +67,10 @@ export interface TechDeskPendingEntry {
   stop_loss: number;
   target_1: number;
   confidence?: number;
+  bias?: string | null;
   report_date?: string | null;
+  report_path?: string | null;
+  rationale?: string | null;
 }
 
 export interface TechDeskBook {

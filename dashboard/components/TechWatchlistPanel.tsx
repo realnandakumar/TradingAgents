@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { MarkdownViewer } from "@/components/MarkdownViewer";
+import { DeskReportModal, type DeskReportTarget } from "@/components/DeskReportModal";
 import type { TickerReportMeta } from "@/lib/tech-reports-server";
 
 interface WatchlistResponse {
@@ -53,9 +53,7 @@ export function TechWatchlistPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [previewTicker, setPreviewTicker] = useState<string | null>(null);
-  const [previewMd, setPreviewMd] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [reportTarget, setReportTarget] = useState<DeskReportTarget | null>(null);
 
   const loadReports = useCallback(async () => {
     const stRes = await fetch("/api/tech-desk/status");
@@ -169,19 +167,8 @@ export function TechWatchlistPanel() {
     }
   };
 
-  const openReport = async (sym: string) => {
-    setPreviewTicker(sym);
-    setPreviewLoading(true);
-    setPreviewMd(null);
-    try {
-      const res = await fetch(`/api/tech-desk/report?ticker=${encodeURIComponent(sym)}`);
-      const data = await res.json();
-      setPreviewMd(res.ok ? data.markdown : "No saved report found. Run Analyze first.");
-    } catch {
-      setPreviewMd("Failed to load report.");
-    } finally {
-      setPreviewLoading(false);
-    }
+  const openReport = (sym: string, reportDate?: string | null) => {
+    setReportTarget({ ticker: sym, reportDate: reportDate ?? null });
   };
 
   return (
@@ -286,7 +273,7 @@ export function TechWatchlistPanel() {
                       {meta && meta.status !== "missing" ? (
                         <button
                           type="button"
-                          onClick={() => openReport(sym)}
+                          onClick={() => openReport(sym, meta.reportDate)}
                           className="hover:text-accent hover:underline text-left"
                         >
                           {savedReportLabel(meta, maxAgeDays)} · view report
@@ -331,32 +318,7 @@ export function TechWatchlistPanel() {
         </>
       )}
 
-      {previewTicker ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="card max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-medium font-mono">{previewTicker} — saved report</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setPreviewTicker(null);
-                  setPreviewMd(null);
-                }}
-                className="text-muted hover:text-foreground text-lg leading-none"
-              >
-                ×
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {previewLoading ? (
-                <p className="text-sm text-muted">Loading…</p>
-              ) : previewMd ? (
-                <MarkdownViewer text={previewMd} />
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DeskReportModal target={reportTarget} onClose={() => setReportTarget(null)} />
     </section>
   );
 }

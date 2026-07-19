@@ -113,6 +113,14 @@ class TechDeskPaperTradeManager:
             err = self.book.validate_pending_plan(plan, prices.get(plan.ticker))
             if err:
                 report["skipped"].append({"ticker": plan.ticker, "reason": err})
+                if err == "post_target_pullback":
+                    meta = self._snapshot_meta(plan.ticker, snapshots)
+                    self.book.record_pending_dismissal(
+                        plan.ticker,
+                        err,
+                        report_date=meta.get("report_date"),
+                        plan_date=process_date,
+                    )
                 continue
             meta = self._snapshot_meta(plan.ticker, snapshots)
             row = self.book.add_pending_entry(
@@ -147,6 +155,14 @@ class TechDeskPaperTradeManager:
                 err = self.book.validate_pending_plan(plan, prices.get(plan.ticker))
                 if err:
                     report["skipped"].append({"ticker": plan.ticker, "reason": err})
+                    if err == "post_target_pullback":
+                        meta = self._snapshot_meta(plan.ticker, snapshots)
+                        self.book.record_pending_dismissal(
+                            plan.ticker,
+                            err,
+                            report_date=meta.get("report_date"),
+                            plan_date=process_date,
+                        )
                     continue
                 meta = self._snapshot_meta(plan.ticker, snapshots)
                 row = self.book.add_pending_entry(
@@ -175,6 +191,17 @@ class TechDeskPaperTradeManager:
                 continue
 
             meta = self._snapshot_meta(plan.ticker, snapshots)
+            # Fetch hist for T1 check inside open_from_plan; also block if price >= T1.
+            if entry_price >= float(plan.target_1):
+                report["skipped"].append({"ticker": plan.ticker, "reason": "post_target_pullback"})
+                self.book.record_pending_dismissal(
+                    plan.ticker,
+                    "post_target_pullback",
+                    report_date=meta.get("report_date"),
+                    plan_date=process_date,
+                )
+                continue
+
             pos = self.book.open_from_plan(plan, entry_price, process_date, **meta)
             if pos:
                 report["opened"].append(plan.ticker)

@@ -254,7 +254,7 @@ export function TechDeskActionsPanel() {
               <button
                 type="button"
                 onClick={() => runAction(analyzeWatchlist)}
-                disabled={running || apiWarning || watchlistCount === 0}
+                disabled={running || isJobRunning || apiWarning || watchlistCount === 0}
                 className="w-full px-3 py-2 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 hover:opacity-90"
               >
                 {running && activeAction?.id === "analyze-watchlist"
@@ -282,7 +282,7 @@ export function TechDeskActionsPanel() {
               <button
                 type="button"
                 onClick={() => runAction(analyzeTicker)}
-                disabled={running || apiWarning || !ticker.trim()}
+                disabled={running || isJobRunning || apiWarning || !ticker.trim()}
                 className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-xs font-medium disabled:opacity-50 hover:bg-surface-2/80"
               >
                 {running && activeAction?.id === "analyze-ticker" ? "Running…" : "Analyze this ticker"}
@@ -303,7 +303,7 @@ export function TechDeskActionsPanel() {
             <button
               type="button"
               onClick={() => runAction(analyzeStale)}
-              disabled={running || apiWarning || staleCount === 0}
+              disabled={running || isJobRunning || apiWarning || staleCount === 0}
               className="w-full sm:w-auto px-4 py-2 rounded-lg bg-surface-2 border border-border text-xs font-medium disabled:opacity-50 hover:bg-surface-2/80"
             >
               {running && activeAction?.id === "analyze-stale"
@@ -332,7 +332,7 @@ export function TechDeskActionsPanel() {
               key={action.id}
               action={action}
               ticker={ticker}
-              running={running}
+              running={running || isJobRunning}
               apiBlocked={Boolean(apiWarning)}
               onRun={runAction}
             />

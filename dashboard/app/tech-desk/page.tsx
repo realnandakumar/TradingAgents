@@ -34,7 +34,7 @@ export default function TechDeskPage() {
         <div>
           <div className="text-sm font-semibold tracking-tight">Tech Desk</div>
           <div className="text-[10px] font-mono text-muted uppercase">
-            TECH_DESK · LLM PM · shared tech_reports
+            TECH_DESK · Trader + script · shared tech_reports
           </div>
         </div>
         <div className="flex gap-1.5 text-[10px] font-mono uppercase">

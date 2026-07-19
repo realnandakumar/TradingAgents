@@ -121,6 +121,8 @@ export function DeskReportModal({
   const [levels, setLevels] = useState<PmLevels | null>(null);
   const [trader, setTrader] = useState<TraderReport | null>(null);
   const [date, setDate] = useState<string | null>(null);
+  const [levelsFromDate, setLevelsFromDate] = useState<string | null>(null);
+  const [traderFromDate, setTraderFromDate] = useState<string | null>(null);
 
   useEffect(() => {
     if (!target) return;
@@ -131,6 +133,8 @@ export function DeskReportModal({
     setLevels(null);
     setTrader(null);
     setDate(null);
+    setLevelsFromDate(null);
+    setTraderFromDate(null);
 
     const params = new URLSearchParams({ ticker: target.ticker });
     if (target.reportDate) params.set("date", target.reportDate);
@@ -150,6 +154,12 @@ export function DeskReportModal({
         setLevels(data.levels ?? null);
         setTrader(data.trader ?? null);
         setDate(data.date ?? target.reportDate ?? null);
+        setLevelsFromDate(
+          typeof data.levels_from_date === "string" ? data.levels_from_date : null,
+        );
+        setTraderFromDate(
+          typeof data.trader_from_date === "string" ? data.trader_from_date : null,
+        );
         // Prefer trader tab when MA missing but trader exists
         if (!data.narrative && !data.markdown && data.trader) {
           setTab("trader");
@@ -168,10 +178,10 @@ export function DeskReportModal({
 
   if (!target) return null;
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "ma", label: "MA" },
-    { id: "trader", label: "Trader" },
-    { id: "levels", label: "Levels" },
+  const tabs: { id: TabId; label: string; ready: boolean }[] = [
+    { id: "ma", label: "MA", ready: Boolean(narrative) },
+    { id: "trader", label: "Trader", ready: Boolean(trader) },
+    { id: "levels", label: "Levels", ready: Boolean(levels) },
   ];
 
   return (
@@ -196,6 +206,7 @@ export function DeskReportModal({
                   }`}
                 >
                   {t.label}
+                  {!loading && !t.ready ? " · —" : ""}
                 </button>
               ))}
             </div>
@@ -221,16 +232,34 @@ export function DeskReportModal({
             )
           ) : tab === "trader" ? (
             trader ? (
-              <TraderPanel trader={trader} />
+              <div className="space-y-2">
+                {traderFromDate && date && traderFromDate !== date ? (
+                  <p className="text-[10px] font-mono text-muted">
+                    Trader saved with report {traderFromDate} (newer than MA {date}).
+                  </p>
+                ) : null}
+                <TraderPanel trader={trader} />
+              </div>
             ) : (
               <p className="text-sm text-muted">
-                No trader report yet. Run Process zones to save trader.json.
+                No trader report yet. Run Tech/RS <strong>Process zones</strong> (Path 5) to
+                write trader.json beside the MA folder.
               </p>
             )
           ) : levels ? (
-            <LevelsTable levels={levels} />
+            <div className="space-y-2">
+              {levelsFromDate && date && levelsFromDate !== date ? (
+                <p className="text-[10px] font-mono text-muted">
+                  Levels from report {levelsFromDate} (newer than MA {date}).
+                </p>
+              ) : null}
+              <LevelsTable levels={levels} />
+            </div>
           ) : (
-            <p className="text-sm text-muted">No structured levels (pm_summary) found.</p>
+            <p className="text-sm text-muted">
+              No structured levels (pm_summary.json). Re-run Market Analyst / tech-analyze for
+              this ticker.
+            </p>
           )}
         </div>
       </div>

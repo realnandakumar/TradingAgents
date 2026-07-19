@@ -160,10 +160,8 @@ export function TechDeskBlotter({
               <button
                 type="button"
                 onClick={() =>
-                  openReport(pe.ticker, {
-                    reportDate: pe.report_date,
-                    reportPath: pe.report_path,
-                  })
+                  // Prefer latest report folder so Trader/Levels resolve after re-analyze.
+                  openReport(pe.ticker)
                 }
                 className="text-accent hover:underline text-[11px]"
               >

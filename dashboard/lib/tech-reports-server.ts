@@ -343,13 +343,32 @@ function readJsonFile(filePath: string): unknown | null {
   }
 }
 
-export function readPmSummaryLevels(
+function readTraderFromDir(
+  reportDir: string,
   ticker: string,
-  opts?: { reportDate?: string | null; reportPath?: string | null },
-): PmLevels | null {
-  const resolved = resolveTechReportDir(ticker, opts);
-  if (!resolved) return null;
-  const fromFile = readJsonFile(path.join(resolved.reportDir, "pm_summary.json"));
+  reportDate: string | null,
+): TraderReport | null {
+  const raw = readJsonFile(path.join(reportDir, "trader.json"));
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as TraderReport;
+  let markdown: string | null = null;
+  const mdPath = path.join(reportDir, "trader.md");
+  try {
+    if (fs.existsSync(mdPath)) markdown = fs.readFileSync(mdPath, "utf-8");
+  } catch {
+    markdown = null;
+  }
+  return {
+    ...obj,
+    ticker: (obj.ticker || ticker).toUpperCase(),
+    report_date: obj.report_date ?? reportDate,
+    source: "trader.json",
+    markdown,
+  };
+}
+
+function readLevelsFromDir(reportDir: string): PmLevels | null {
+  const fromFile = readJsonFile(path.join(reportDir, "pm_summary.json"));
   if (fromFile && typeof fromFile === "object") {
     const obj = fromFile as Record<string, unknown>;
     if (obj.pm_summary && typeof obj.pm_summary === "object") {
@@ -357,9 +376,25 @@ export function readPmSummaryLevels(
     }
     return obj as PmLevels;
   }
-  const md = readTechReportMarkdown(ticker, opts);
-  if (!md) return null;
-  return stripPmSummaryFence(md).levelsFromFence;
+  for (const name of ["market.md", "complete_report.md"] as const) {
+    const mdPath = path.join(reportDir, name);
+    try {
+      if (!fs.existsSync(mdPath)) continue;
+      const md = fs.readFileSync(mdPath, "utf-8");
+      const fromFence = stripPmSummaryFence(md).levelsFromFence;
+      if (fromFence) return fromFence;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+/** Latest report dir for ticker (ignores date pin). */
+function resolveLatestTechReportDir(
+  ticker: string,
+): { reportDir: string; reportDate: string | null; sourceFile: string | null } | null {
+  return resolveTechReportDir(ticker, {});
 }
 
 function techDeskHome(): string {
@@ -445,30 +480,41 @@ function traderFromProcessLog(ticker: string): TraderReport | null {
   return null;
 }
 
+export function readPmSummaryLevels(
+  ticker: string,
+  opts?: { reportDate?: string | null; reportPath?: string | null },
+): PmLevels | null {
+  const resolved = resolveTechReportDir(ticker, opts);
+  if (resolved) {
+    const levels = readLevelsFromDir(resolved.reportDir);
+    if (levels) return levels;
+  }
+  // Date-pinned folders (pre–pm_summary MA) often lack levels; use latest sibling.
+  if (opts?.reportDate || opts?.reportPath) {
+    const latest = resolveLatestTechReportDir(ticker);
+    if (latest && latest.reportDir !== resolved?.reportDir) {
+      const levels = readLevelsFromDir(latest.reportDir);
+      if (levels) return levels;
+    }
+  }
+  return null;
+}
+
 export function readTraderReport(
   ticker: string,
   opts?: { reportDate?: string | null; reportPath?: string | null },
 ): TraderReport | null {
   const resolved = resolveTechReportDir(ticker, opts);
   if (resolved) {
-    const jsonPath = path.join(resolved.reportDir, "trader.json");
-    const raw = readJsonFile(jsonPath);
-    if (raw && typeof raw === "object") {
-      const obj = raw as TraderReport;
-      let markdown: string | null = null;
-      const mdPath = path.join(resolved.reportDir, "trader.md");
-      try {
-        if (fs.existsSync(mdPath)) markdown = fs.readFileSync(mdPath, "utf-8");
-      } catch {
-        markdown = null;
-      }
-      return {
-        ...obj,
-        ticker: (obj.ticker || ticker).toUpperCase(),
-        report_date: obj.report_date ?? resolved.reportDate,
-        source: "trader.json",
-        markdown,
-      };
+    const fromDir = readTraderFromDir(resolved.reportDir, ticker, resolved.reportDate);
+    if (fromDir) return fromDir;
+  }
+  // Path-5 trader.json is written beside the MA folder Process used (usually latest).
+  if (opts?.reportDate || opts?.reportPath) {
+    const latest = resolveLatestTechReportDir(ticker);
+    if (latest && latest.reportDir !== resolved?.reportDir) {
+      const fromLatest = readTraderFromDir(latest.reportDir, ticker, latest.reportDate);
+      if (fromLatest) return fromLatest;
     }
   }
   return traderFromProcessLog(ticker);
@@ -484,6 +530,8 @@ export function readTechDeskReportBundle(
   markdown: string | null;
   levels: PmLevels | null;
   trader: TraderReport | null;
+  levels_from_date?: string | null;
+  trader_from_date?: string | null;
 } | null {
   const raw = readTechReportMarkdown(ticker, opts);
   const resolved = resolveTechReportDir(ticker, opts);
@@ -497,12 +545,27 @@ export function readTechDeskReportBundle(
       markdown: null,
       levels: null,
       trader: traderOnly,
+      trader_from_date: traderOnly.report_date ?? traderOnly.process_date ?? null,
     };
   }
 
   const { narrative, levelsFromFence } = stripPmSummaryFence(raw ?? "");
-  const levels = readPmSummaryLevels(ticker, opts) ?? levelsFromFence;
+  let levels = resolved ? readLevelsFromDir(resolved.reportDir) : null;
+  let levelsFromDate: string | null = levels ? resolved?.reportDate ?? null : null;
+  if (!levels) {
+    levels = levelsFromFence;
+    levelsFromDate = levels ? resolved?.reportDate ?? null : null;
+  }
+  if (!levels && (opts?.reportDate || opts?.reportPath)) {
+    const latest = resolveLatestTechReportDir(ticker);
+    if (latest && latest.reportDir !== resolved?.reportDir) {
+      levels = readLevelsFromDir(latest.reportDir);
+      if (levels) levelsFromDate = latest.reportDate;
+    }
+  }
+
   const trader = readTraderReport(ticker, opts);
+  const traderFromDate = trader?.report_date ?? trader?.process_date ?? null;
 
   return {
     ticker: ticker.toUpperCase(),
@@ -511,6 +574,8 @@ export function readTechDeskReportBundle(
     markdown: narrative || null,
     levels,
     trader,
+    levels_from_date: levelsFromDate,
+    trader_from_date: traderFromDate,
   };
 }
 

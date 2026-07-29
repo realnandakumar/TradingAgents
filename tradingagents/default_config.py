@@ -110,6 +110,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_TECH_WATCHLIST_PATH": "tech_watchlist_path",
     "TRADINGAGENTS_TECH_DESK_MAX_REPORT_AGE_DAYS": "tech_desk_max_report_age_days",
     "TRADINGAGENTS_EOD_TECH_ANALYZE_MAX": "eod_tech_analyze_max",
+    "TRADINGAGENTS_EOD_SYNC_FAILURE_TOLERANCE": "eod_sync_failure_tolerance",
     "TRADINGAGENTS_RS_DESK_MAX_REPORT_AGE_DAYS": "rs_desk_max_report_age_days",
     "TRADINGAGENTS_RS_DESK_BOOK_PATH": "rs_desk_book_path",
     "TRADINGAGENTS_CUSTOM_TICKERS_PATH": "custom_tickers_path",
@@ -160,6 +161,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "tech_desk_max_report_age_days": 14,
     # Cap LLM tech-analyze calls inside the overnight EOD pipeline.
     "eod_tech_analyze_max": 5,
+    # How many symbols may fail to sync before EOD refuses to stamp the manifest.
+    # Suspended tickers and Yahoo rate limits cost a few names on any evening;
+    # a missing benchmark still blocks the stamp regardless of this value.
+    "eod_sync_failure_tolerance": 5,
     "tech_desk_zone_proximity_pct": 1.5,
     "tech_desk_min_reward_to_zone_ratio": 2.5,
     "tech_desk_proximity_min_confidence": 65,

@@ -20,7 +20,7 @@ from tradingagents.dataflows.ohlcv_store import (
     set_manifest_eod_run,
     sync_price_cache,
 )
-from tradingagents.dataflows.sync_symbols import collect_sync_symbols
+from tradingagents.dataflows.sync_symbols import collect_sync_symbols, resolve_benchmark
 from tradingagents.nw_envelope import run_nw_envelope_daily
 from tradingagents.pattern_forecast import run_pattern_forecast_daily
 from tradingagents.screening.candle_screener import screen_candlesticks
@@ -42,6 +42,30 @@ from tradingagents.rs_desk import run_rs_desk_daily
 from tradingagents.trama import run_trama_daily
 
 SHARED_PERIOD = "2y"
+
+
+def _stamp_blockers(sync_step: dict, config: dict) -> list[str]:
+    """Reasons to withhold the EOD manifest stamp.
+
+    Suspended tickers and Yahoo rate limits cost a few symbols on most
+    evenings. Withholding the stamp for those leaves the dashboard reporting
+    that EOD never ran, so only a missing benchmark — which would silently
+    skew relative strength and alpha — or a broad outage blocks it.
+    """
+    failed = int(sync_step.get("failed") or 0)
+    if failed == 0:
+        return []
+
+    blockers: list[str] = []
+    failed_symbols = {str(s) for s in (sync_step.get("failed_symbols") or [])}
+    benchmark = resolve_benchmark(config)
+    if benchmark and benchmark in failed_symbols:
+        blockers.append(f"benchmark {benchmark} did not sync")
+
+    tolerance = int(config.get("eod_sync_failure_tolerance", 5))
+    if failed > tolerance:
+        blockers.append(f"{failed} symbols failed to sync (tolerance {tolerance})")
+    return blockers
 
 
 def _summary(name: str, report: dict) -> None:
@@ -182,6 +206,7 @@ def main() -> None:
             "synced": sync_report.synced,
             "skipped": sync_report.skipped,
             "failed": sync_report.failed,
+            "failed_symbols": sync_report.failed_symbols[:50],
             "errors": sync_report.errors[:50],
         }
 
@@ -249,19 +274,24 @@ def main() -> None:
 
     sync_step = report["steps"].get("sync") or {}
     sync_failed = int(sync_step.get("failed") or 0)
-    if sync_failed > 0:
-        print(
-            f"Step 8: SKIPPED manifest stamp "
-            f"(sync failed={sync_failed}; fix prices then re-run EOD)"
-        )
+    blockers = _stamp_blockers(sync_step, config)
+    if blockers:
+        reason = "; ".join(blockers)
+        print(f"Step 8: SKIPPED manifest stamp ({reason}; fix prices then re-run EOD)")
         report["last_eod_run"] = None
         report["manifest_stamp_skipped"] = True
-        report["manifest_stamp_reason"] = f"sync_failed_{sync_failed}"
+        report["manifest_stamp_reason"] = reason
     else:
         last_eod = set_manifest_eod_run(cache_dir)
         print(f"Step 8: manifest last_eod_run = {last_eod}")
+        if sync_failed:
+            print(
+                f"  note: {sync_failed} symbol(s) failed to sync but stayed within "
+                f"tolerance — {', '.join(sync_step.get('failed_symbols') or [])}"
+            )
         report["last_eod_run"] = last_eod
         report["manifest_stamp_skipped"] = False
+    report["sync_failures_tolerated"] = 0 if blockers else sync_failed
     report["manifest"] = get_manifest_eod_status(cache_dir)
     report["completed_at"] = datetime.now().isoformat(timespec="seconds")
 

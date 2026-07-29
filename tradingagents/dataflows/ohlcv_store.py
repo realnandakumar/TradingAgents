@@ -41,6 +41,7 @@ class SyncReport:
     skipped: int = 0
     failed: int = 0
     errors: List[str] = field(default_factory=list)
+    failed_symbols: List[str] = field(default_factory=list)
 
 
 def _default_cache_dir(cache_dir: Optional[str] = None) -> str:
@@ -462,6 +463,10 @@ def _extract_yf(raw: pd.DataFrame, symbol: str) -> Optional[pd.DataFrame]:
     return df.reset_index()
 
 
+def _is_blank(bars: Optional[pd.DataFrame]) -> bool:
+    return bars is None or bars.empty
+
+
 def _download_batch(
     symbols: List[str],
     *,
@@ -535,6 +540,7 @@ def sync_price_cache(
             symbol_cache_filename(sym)
         except ValueError as e:
             report.failed += 1
+            report.failed_symbols.append(sym)
             report.errors.append(f"{sym}: {e}")
             continue
         if _needs_sync(sym, manifest, cache_dir, mode=mode, require_through=through_ts):
@@ -548,7 +554,7 @@ def sync_price_cache(
     for start_idx in range(0, len(to_sync), batch_size):
         batch = to_sync[start_idx : start_idx + batch_size]
         if mode == "full":
-            fetched = _download_batch(batch, period=period)
+            fetch_kwargs: dict = {"period": period}
         else:
             # Incremental: fetch a short tail window per symbol batch.
             # Use the earliest last_bar in the batch minus a small buffer.
@@ -560,13 +566,27 @@ def sync_price_cache(
                     starts.append(last - pd.Timedelta(days=5))
                 else:
                     starts.append(_period_to_start(period))
-            batch_start = min(starts).strftime("%Y-%m-%d")
-            fetched = _download_batch(batch, start=batch_start, end=end_str)
+            fetch_kwargs = {
+                "start": min(starts).strftime("%Y-%m-%d"),
+                "end": end_str,
+            }
+
+        fetched = _download_batch(batch, **fetch_kwargs)
+
+        # Symbols drop out of a multi-ticker download for transient reasons
+        # (rate limits, crumb errors) and indices such as ^NSEI do so routinely.
+        # A single-symbol refetch almost always succeeds, and without it one
+        # flaky name marks the whole EOD sync as failed.
+        for sym in [s for s in batch if _is_blank(fetched.get(s))]:
+            retried = _download_batch([sym], **fetch_kwargs).get(sym)
+            if not _is_blank(retried):
+                fetched[sym] = retried
 
         for sym in batch:
             new_bars = fetched.get(sym)
-            if new_bars is None or new_bars.empty:
+            if _is_blank(new_bars):
                 report.failed += 1
+                report.failed_symbols.append(sym)
                 report.errors.append(f"{sym}: no data from Yahoo")
                 continue
             try:
@@ -583,6 +603,7 @@ def sync_price_cache(
                 report.synced += 1
             except Exception as e:  # noqa: BLE001
                 report.failed += 1
+                report.failed_symbols.append(sym)
                 report.errors.append(f"{sym}: {e}")
 
     _save_manifest(manifest, cache_dir)

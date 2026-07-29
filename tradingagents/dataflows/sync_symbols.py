@@ -26,7 +26,7 @@ _BOOK_PATH_KEYS = (
 )
 
 
-def _resolve_benchmark(config: dict) -> Optional[str]:
+def resolve_benchmark(config: dict) -> Optional[str]:
     explicit = config.get("benchmark_ticker")
     if explicit:
         raw = str(explicit).strip().upper()
@@ -106,7 +106,7 @@ def collect_sync_symbols(config: Optional[dict] = None) -> List[str]:
     _add(load_custom_tickers(cfg.get("custom_tickers_path")))
     _add(_open_position_tickers(cfg))
 
-    bench = _resolve_benchmark(cfg)
+    bench = resolve_benchmark(cfg)
     if bench:
         sym = bench.strip().upper()
         if sym and sym not in seen:

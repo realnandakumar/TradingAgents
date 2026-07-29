@@ -208,6 +208,57 @@ def test_sync_updates_manifest(monkeypatch, tmp_path):
     assert len(db_rows) == 2
 
 
+def test_sync_retries_symbols_missing_from_batch(monkeypatch, tmp_path):
+    """A symbol absent from the multi-ticker download is refetched on its own.
+
+    Indices like ^NSEI routinely drop out of batch downloads; without the retry
+    one flaky name marks the whole EOD sync failed.
+    """
+    set_config({
+        "data_cache_dir": str(tmp_path),
+        "prices_db_path": str(tmp_path / "prices.db"),
+    })
+    calls: list[list[str]] = []
+
+    def fake_download(symbols, **kwargs):
+        calls.append(list(symbols))
+        if len(symbols) > 1:
+            # Batch call: the index is missing, mirroring a Yahoo crumb error.
+            return {"SYNC.NS": _bars(["2024-01-01", "2024-01-02"], [10, 11])}
+        return {symbols[0]: _bars(["2024-01-01", "2024-01-02"], [100, 101])}
+
+    monkeypatch.setattr(
+        "tradingagents.dataflows.ohlcv_store._download_batch", fake_download
+    )
+
+    report = sync_price_cache(
+        ["SYNC.NS", "^NSEI"], mode="full", cache_dir=str(tmp_path)
+    )
+
+    assert report.failed == 0
+    assert report.failed_symbols == []
+    assert report.synced == 2
+    assert ["^NSEI"] in calls
+
+
+def test_sync_reports_symbol_that_fails_even_on_retry(monkeypatch, tmp_path):
+    set_config({
+        "data_cache_dir": str(tmp_path),
+        "prices_db_path": str(tmp_path / "prices.db"),
+    })
+    monkeypatch.setattr(
+        "tradingagents.dataflows.ohlcv_store._download_batch",
+        lambda symbols, **k: {"SYNC.NS": _bars(["2024-01-01"], [10])},
+    )
+
+    report = sync_price_cache(
+        ["SYNC.NS", "DEAD.NS"], mode="full", cache_dir=str(tmp_path)
+    )
+
+    assert report.failed == 1
+    assert report.failed_symbols == ["DEAD.NS"]
+
+
 def test_migrate_legacy_cache(tmp_path):
     legacy = tmp_path / "RELIANCE.NS-YFin-data-2020-01-01-2025-01-01.csv"
     df = _bars(["2023-01-01", "2023-01-02"], [100, 101])

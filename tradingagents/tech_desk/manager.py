@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from .book import TechDeskPositionBook
 from .exits import ExitReason
+from tradingagents.paper.json_store import dump_json
 from .report_loader import TechReportSnapshot, load_tech_reports
 from .schemas import (
     EntryType,
@@ -218,8 +219,7 @@ class TechDeskPaperTradeManager:
             "pending_replacements": len(report["pending_replacements"]),
         }
 
-        out = self.process_log_dir / f"{process_date}.json"
-        out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        dump_json(self.process_log_dir / f"{process_date}.json", report, default=str)
         return report
 
     @staticmethod
@@ -352,8 +352,7 @@ class TechDeskPaperTradeManager:
         report["pending_entries"] = len(self.book.pending_entries())
         report["stats"] = self.book.stats()
 
-        out = self.daily_dir / f"{as_of}.json"
-        out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        dump_json(self.daily_dir / f"{as_of}.json", report, default=str)
         return report
 
     def run_review(

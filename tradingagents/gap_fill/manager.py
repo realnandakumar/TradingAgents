@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, TYPE_CHECKING
 
 from .book import GapFillPositionBook
+from tradingagents.paper.json_store import dump_json
 from tradingagents.screening.gap_fill_engine import gap_trade_side, pick_passes_long_entry
 
 if TYPE_CHECKING:
@@ -198,8 +199,7 @@ class GapFillPaperTradeManager:
         report["open_positions"] = self.book.open_count()
         report["stats"] = self.book.stats()
 
-        out = self.daily_dir / f"{screen_date}.json"
-        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        dump_json(self.daily_dir / f"{screen_date}.json", report)
         return report
 
     def latest_daily_report(self) -> Optional[dict]:

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tradingagents.paper.json_store import dump_json
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.gap_fill import run_gap_fill_daily
 from tradingagents.momentum import run_momentum_daily
@@ -295,7 +295,7 @@ def main() -> None:
     report["manifest"] = get_manifest_eod_status(cache_dir)
     report["completed_at"] = datetime.now().isoformat(timespec="seconds")
 
-    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    dump_json(report_path, report)
     print(f"\nEOD report written to {report_path}")
     print("Done.")
 

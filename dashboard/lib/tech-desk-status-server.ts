@@ -12,18 +12,11 @@ import {
 } from "@/lib/tech-desk-server";
 import { readWatchlist } from "@/lib/watchlist-server";
 import { summarizeReportFreshness } from "@/lib/tech-reports-server";
+import { readJsonFile } from "@/lib/parse-book-json";
 
 const TRADINGAGENTS_HOME =
   process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
 const TECH_DESK_DIR = path.join(TRADINGAGENTS_HOME, "tech_desk");
-
-function readJsonFile<T>(filePath: string): T | null {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 function latestJsonIn(dir: string, excludePrefix?: string): Record<string, unknown> | null {
   if (!fs.existsSync(dir)) return null;

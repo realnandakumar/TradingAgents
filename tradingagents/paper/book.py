@@ -18,6 +18,7 @@ import yfinance as yf
 
 from .exits import ExitAction, ExitReason, evaluate_bar_exits
 from .sizing import compute_position_size, leg_rupee_pnl
+from tradingagents.paper.json_store import aggregate_closed_trades, dump_json, finite_number
 from tradingagents.swing.exits import trading_days_between
 
 logger = logging.getLogger(__name__)
@@ -71,9 +72,7 @@ class PaperBook:
         return {"positions": []}
 
     def _save(self) -> None:
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        dump_json(self.path, self._state)
 
     @property
     def positions(self) -> List[dict]:
@@ -308,28 +307,19 @@ class PaperBook:
         open_ = [p for p in self.positions if p.get("status") == "open"]
 
         def _agg(trades: List[dict]) -> dict:
-            n = len(trades)
-            if n == 0:
-                return {"trades": 0, "win_rate": None, "avg_return": None,
-                        "avg_alpha": None, "total_pnl": 0.0}
-            wins = sum(1 for t in trades if (t.get("raw_return") or 0) > 0)
-            avg_ret = sum(t.get("raw_return") or 0 for t in trades) / n
-            alphas = [t["alpha_return"] for t in trades if t.get("alpha_return") is not None]
-            avg_alpha = sum(alphas) / len(alphas) if alphas else None
-            pnl = sum(
-                t.get("rupee_pnl")
-                if t.get("rupee_pnl") is not None
-                else (float(t["exit_price"]) - float(t["entry_price"])) * float(t["shares"])
-                for t in trades
-                if t.get("exit_price") is not None
-            )
-            return {
-                "trades": n,
-                "win_rate": round(100 * wins / n, 1),
-                "avg_return": round(100 * avg_ret, 2),
-                "avg_alpha": round(100 * avg_alpha, 2) if avg_alpha is not None else None,
-                "total_pnl": round(pnl, 2),
-            }
+            stats = aggregate_closed_trades(trades, win_by_outcome=False)
+            pnls = []
+            for t in trades:
+                pnl = finite_number(t.get("rupee_pnl"))
+                if pnl is None and t.get("exit_price") is not None:
+                    try:
+                        pnl = (float(t["exit_price"]) - float(t["entry_price"])) * float(t["shares"])
+                    except (TypeError, ValueError):
+                        pnl = 0.0
+                    pnl = finite_number(pnl) or 0.0
+                pnls.append(pnl or 0.0)
+            stats["total_pnl"] = round(sum(pnls), 2)
+            return stats
 
         per_signal: Dict[str, dict] = {}
         signal_names = {s for p in closed for s in p.get("signals", [])}

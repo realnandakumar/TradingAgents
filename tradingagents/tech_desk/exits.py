@@ -8,6 +8,7 @@ from typing import List
 
 import pandas as pd
 
+from tradingagents.paper.json_store import bar_ohlc_finite
 from tradingagents.swing.exits import resolve_same_bar_stop_t1, trading_days_between
 
 
@@ -43,11 +44,12 @@ def evaluate_bar_exits(
     if remaining <= 0:
         return actions
 
+    ohlc = bar_ohlc_finite(bar)
+    if ohlc is None:
+        return actions
+    low, high, close = ohlc
     stop = float(position.get("trailing_stop") or position.get("stop_loss") or 0)
     target_1 = float(position.get("target_1") or 0)
-    low = float(bar["Low"])
-    high = float(bar["High"])
-    close = float(bar["Close"])
     entry_date = position["screen_date"]
 
     stop_hit = stop > 0 and low <= stop

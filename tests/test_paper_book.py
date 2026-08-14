@@ -125,6 +125,22 @@ def test_evaluate_bar_stop_and_target():
     assert action2.reason == ExitReason.STOP
 
 
+def test_nan_ohlc_does_not_time_exit():
+    import pandas as pd
+
+    pos = {
+        "entry_date": "2026-06-01",
+        "stoploss": 95.0,
+        "target": 110.0,
+    }
+    idx = pd.to_datetime(["2026-06-01", "2026-06-02"])
+    hist = pd.DataFrame(
+        {"Open": [100, float("nan")], "High": [101, float("nan")], "Low": [99, float("nan")], "Close": [100, float("nan")]},
+        index=idx,
+    )
+    assert evaluate_bar_exits(pos, hist.iloc[1], "2026-06-02", 1, hist) is None
+
+
 def test_stats_overall_and_per_signal(tmp_path):
     path = tmp_path / "book.json"
     path.write_text(json.dumps({"positions": [

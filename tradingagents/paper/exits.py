@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import pandas as pd
 
+from tradingagents.paper.json_store import bar_ohlc_finite
 from tradingagents.swing.exits import resolve_same_bar_stop_t1, trading_days_between
 
 
@@ -35,12 +36,13 @@ def evaluate_bar_exits(
 
     Same-bar stop+target uses close as path proxy (see resolve_same_bar_stop_t1).
     """
+    ohlc = bar_ohlc_finite(bar)
+    if ohlc is None:
+        return None
+    low, high, close = ohlc
     entry_date = position["entry_date"]
     stop = float(position.get("stoploss") or position.get("stop_loss") or 0)
     target = float(position.get("target") or 0)
-    low = float(bar["Low"])
-    high = float(bar["High"])
-    close = float(bar["Close"])
 
     stop_hit = stop > 0 and low <= stop
     t1_hit = target > 0 and high >= target

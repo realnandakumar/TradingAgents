@@ -75,3 +75,11 @@ def test_t1_wins_same_bar_when_close_at_target():
 def test_risk_pct():
     assert risk_pct(100, 95) == 5.0
     assert risk_pct(100, 98) == 2.0
+
+
+def test_nan_ohlc_does_not_time_exit():
+    hist = _hist([100, 101, float("nan")])
+    bar = hist.iloc[-1]
+    bd = hist.index[-1].strftime("%Y-%m-%d")
+    acts = evaluate_bar_exits(_pos(), bar, bd, 2, hist)
+    assert acts == []

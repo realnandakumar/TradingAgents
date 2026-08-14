@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 
 import type { SwingBook } from "./swing-types";
+import { parseBookJson } from "./parse-book-json";
 
 const DEFAULT_BOOK = path.join(os.homedir(), ".tradingagents", "swing", "positions.json");
 
@@ -14,7 +15,7 @@ export function readSwingBook(): SwingBook | null {
   const bookPath = swingBookPath();
   try {
     const raw = fs.readFileSync(bookPath, "utf-8");
-    return JSON.parse(raw) as SwingBook;
+    return parseBookJson<SwingBook>(raw);
   } catch {
     return null;
   }

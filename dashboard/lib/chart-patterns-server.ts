@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { parseBookJson } from "@/lib/parse-book-json";
+
 const DEFAULT_SNAPSHOT = path.join(
   os.homedir(),
   ".tradingagents",
@@ -107,7 +109,7 @@ export function chartPatternAuditPath(): string {
 export function readChartPatternAudit(): ChartPatternAuditSummary | null {
   try {
     const raw = fs.readFileSync(chartPatternAuditPath(), "utf-8");
-    return JSON.parse(raw) as ChartPatternAuditSummary;
+    return parseBookJson<ChartPatternAuditSummary>(raw);
   } catch {
     return null;
   }
@@ -117,7 +119,7 @@ export function readChartPatternScreenerSnapshot(): ChartPatternScreenerSnapshot
   const snapshotPath = chartPatternScreenerSnapshotPath();
   try {
     const raw = fs.readFileSync(snapshotPath, "utf-8");
-    return JSON.parse(raw) as ChartPatternScreenerSnapshot;
+    return parseBookJson<ChartPatternScreenerSnapshot>(raw);
   } catch {
     return null;
   }

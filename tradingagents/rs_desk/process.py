@@ -211,10 +211,10 @@ def run_rs_desk_process(
     report["book_path"] = str(manager.book.path)
     # Enrich on-disk process log (manager wrote a thinner copy before decision attached)
     try:
-        import json as _json
+        from tradingagents.paper.json_store import dump_json
 
         log_path = manager.process_log_dir / f"{process_date}.json"
-        log_path.write_text(_json.dumps(report, indent=2, default=str), encoding="utf-8")
+        dump_json(log_path, report, default=str)
     except OSError:
         pass
     return report

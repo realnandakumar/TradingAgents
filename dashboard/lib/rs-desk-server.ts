@@ -8,6 +8,7 @@ import type {
   TechDeskPosition,
 } from "@/lib/tech-desk-server";
 import { computeTechDeskStats } from "@/lib/tech-desk-server";
+import { parseBookJson, readJsonFile } from "@/lib/parse-book-json";
 
 const DEFAULT_BOOK = path.join(os.homedir(), ".tradingagents", "rs_desk", "positions.json");
 const DEFAULT_PENDING = path.join(
@@ -62,7 +63,7 @@ export function readAllRsDeskClosedTrades(): TechDeskPosition[] {
   let archived: TechDeskPosition[] = [];
   try {
     const raw = fs.readFileSync(rsDeskClosedHistoryPath(), "utf-8");
-    const data = JSON.parse(raw) as { trades?: TechDeskPosition[] };
+    const data = parseBookJson<{ trades?: TechDeskPosition[] }>(raw);
     archived = (data.trades ?? []).map((t) => ({ ...t, status: "closed" as const }));
   } catch {
     archived = [];
@@ -79,22 +80,12 @@ export function readAllRsDeskClosedTrades(): TechDeskPosition[] {
 }
 
 export function readRsDeskBook(): TechDeskBook | null {
-  try {
-    const raw = fs.readFileSync(rsDeskBookPath(), "utf-8");
-    return JSON.parse(raw) as TechDeskBook;
-  } catch {
-    return null;
-  }
+  return readJsonFile<TechDeskBook>(rsDeskBookPath());
 }
 
 export function readRsDeskPending(): TechDeskPendingEntry[] {
-  try {
-    const raw = fs.readFileSync(rsDeskPendingPath(), "utf-8");
-    const data = JSON.parse(raw) as { pending?: TechDeskPendingEntry[] };
-    return data.pending ?? [];
-  } catch {
-    return [];
-  }
+  const data = readJsonFile<{ pending?: TechDeskPendingEntry[] }>(rsDeskPendingPath());
+  return data?.pending ?? [];
 }
 
 export { computeTechDeskStats as computeRsDeskStats };

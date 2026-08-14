@@ -13,6 +13,7 @@ import pandas as pd
 import yfinance as yf
 
 from .exits import ExitAction, ExitReason, evaluate_bar_exits, zone_fill_price
+from tradingagents.paper.json_store import aggregate_closed_trades, dump_json, finite_number
 from tradingagents.paper.sizing import (
     compute_position_size,
     ensure_sizing_fields,
@@ -95,9 +96,7 @@ class TechDeskPositionBook:
     def _save(self) -> None:
         self._state["strategy"] = self.strategy_name
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        dump_json(self.path, self._state)
 
     def _load_pending(self) -> List[dict]:
         if not self.pending_path.exists():
@@ -108,9 +107,7 @@ class TechDeskPositionBook:
             return []
 
     def _save_pending(self, pending: List[dict]) -> None:
-        tmp = self.pending_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"pending": pending}, indent=2), encoding="utf-8")
-        tmp.replace(self.pending_path)
+        dump_json(self.pending_path, {"pending": pending})
 
     def _load_dismissed(self) -> List[dict]:
         if not self.dismissed_path.exists():
@@ -121,9 +118,7 @@ class TechDeskPositionBook:
             return []
 
     def _save_dismissed(self, dismissed: List[dict]) -> None:
-        tmp = self.dismissed_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"dismissed": dismissed}, indent=2), encoding="utf-8")
-        tmp.replace(self.dismissed_path)
+        dump_json(self.dismissed_path, {"dismissed": dismissed})
 
     def is_pending_dismissed(self, ticker: str, report_date: Optional[str] = None) -> Optional[str]:
         """Return dismiss reason if ticker must not be re-queued."""
@@ -726,9 +721,7 @@ class TechDeskPositionBook:
         snapshot = dict(position)
         snapshot["archived_at"] = datetime.now().isoformat(timespec="seconds")
         trades.append(snapshot)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        dump_json(path, state)
 
     def close_position(
         self,
@@ -783,29 +776,12 @@ class TechDeskPositionBook:
         open_ = [p for p in self.positions if p.get("status") == "open"]
 
         def _agg(trades: List[dict]) -> dict:
-            n = len(trades)
-            if n == 0:
-                return {
-                    "trades": 0,
-                    "win_rate": None,
-                    "avg_return": None,
-                    "avg_alpha": None,
-                    "avg_r": None,
-                    "total_pnl": 0.0,
-                }
-            wins = sum(1 for t in trades if t.get("outcome") == "success")
-            avg_ret = sum(t.get("raw_return") or 0 for t in trades) / n
-            alphas = [t["alpha_return"] for t in trades if t.get("alpha_return") is not None]
-            pnl = sum(t.get("rupee_pnl") or 0 for t in trades)
-            rs = [r for r in (self._r_multiple(t) for t in trades) if r is not None]
-            return {
-                "trades": n,
-                "win_rate": round(100 * wins / n, 1),
-                "avg_return": round(100 * avg_ret, 2),
-                "avg_alpha": round(100 * sum(alphas) / len(alphas), 2) if alphas else None,
-                "avg_r": round(sum(rs) / len(rs), 2) if rs else None,
-                "total_pnl": round(pnl, 2),
-            }
+            stats = aggregate_closed_trades(trades)
+            rs = [r for r in (self._r_multiple(t) for t in trades) if finite_number(r) is not None]
+            stats["avg_r"] = round(sum(rs) / len(rs), 2) if rs else None
+            if not trades:
+                stats["avg_r"] = None
+            return stats
 
         by_reason: Dict[str, dict] = {}
         for reason in (

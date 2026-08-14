@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 
 import type { SwingBook, SwingPosition } from "./swing-types";
+import { parseBookJson } from "./parse-book-json";
 
 const DEFAULT_BOOK = path.join(os.homedir(), ".tradingagents", "trama", "positions.json");
 
@@ -14,25 +15,11 @@ export function tramaBookPath(): string {
   );
 }
 
-function parseTramaBookJson(raw: string): SwingBook {
-  try {
-    return JSON.parse(raw) as SwingBook;
-  } catch {
-    // Python json.dumps may emit bare NaN tokens; repair for strict JSON.parse.
-    return JSON.parse(
-      raw
-        .replace(/\bNaN\b/g, "null")
-        .replace(/\b-Infinity\b/g, "null")
-        .replace(/\bInfinity\b/g, "null"),
-    ) as SwingBook;
-  }
-}
-
 export function readTramaBook(): SwingBook | null {
   const bookPath = tramaBookPath();
   try {
     const raw = fs.readFileSync(bookPath, "utf-8");
-    return parseTramaBookJson(raw);
+    return parseBookJson<SwingBook>(raw);
   } catch {
     return null;
   }

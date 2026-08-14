@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { parseBookJson, readJsonFile } from "@/lib/parse-book-json";
+
 const DEFAULT_BOOK = path.join(os.homedir(), ".tradingagents", "tech_desk", "positions.json");
 const DEFAULT_PENDING = path.join(os.homedir(), ".tradingagents", "tech_desk", "pending_entries.json");
 const DEFAULT_CLOSED_HISTORY = path.join(
@@ -99,7 +101,7 @@ export function readAllClosedTrades(): TechDeskPosition[] {
   let archived: TechDeskPosition[] = [];
   try {
     const raw = fs.readFileSync(closedHistoryPath(), "utf-8");
-    const data = JSON.parse(raw) as { trades?: TechDeskPosition[] };
+    const data = parseBookJson<{ trades?: TechDeskPosition[] }>(raw);
     archived = (data.trades ?? []).map((t) => ({ ...t, status: "closed" as const }));
   } catch {
     archived = [];
@@ -116,22 +118,12 @@ export function readAllClosedTrades(): TechDeskPosition[] {
 }
 
 export function readTechDeskBook(): TechDeskBook | null {
-  try {
-    const raw = fs.readFileSync(techDeskBookPath(), "utf-8");
-    return JSON.parse(raw) as TechDeskBook;
-  } catch {
-    return null;
-  }
+  return readJsonFile<TechDeskBook>(techDeskBookPath());
 }
 
 export function readTechDeskPending(): TechDeskPendingEntry[] {
-  try {
-    const raw = fs.readFileSync(techDeskPendingPath(), "utf-8");
-    const data = JSON.parse(raw) as { pending?: TechDeskPendingEntry[] };
-    return data.pending ?? [];
-  } catch {
-    return [];
-  }
+  const data = readJsonFile<{ pending?: TechDeskPendingEntry[] }>(techDeskPendingPath());
+  return data?.pending ?? [];
 }
 
 export function computeTechDeskStats(positions: TechDeskPosition[]) {

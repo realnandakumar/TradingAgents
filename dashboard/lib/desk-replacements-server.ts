@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 
 import type { ReplacementCandidate } from "@/lib/desk-replacements-types";
+import { readJsonFile } from "@/lib/parse-book-json";
 
 const TRADINGAGENTS_HOME =
   process.env.TRADINGAGENTS_HOME ?? path.join(os.homedir(), ".tradingagents");
@@ -41,14 +42,6 @@ const PORTFOLIO_PENDING_PATHS: Record<string, string> = {
     "pending_replacements.json",
   ),
 };
-
-function readJsonFile<T>(filePath: string): T | null {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 function mapPortfolioProposal(row: PendingProposalRow): ReplacementCandidate | null {
   if (!row.id || row.approved) return null;

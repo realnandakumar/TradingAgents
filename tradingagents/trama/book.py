@@ -15,6 +15,7 @@ import yfinance as yf
 
 from .exits import evaluate_bar_exits
 from .trailing import latest_trama_line, ratchet_stop
+from tradingagents.paper.json_store import aggregate_closed_trades, dump_json, sanitize_for_json
 from tradingagents.paper.sizing import (
     compute_position_size,
     ensure_sizing_fields,
@@ -45,15 +46,8 @@ def _finite_price(value) -> Optional[float]:
     return price
 
 
-def _sanitize_for_json(value):
-    """Replace non-finite floats so books stay strict JSON for the dashboard."""
-    if isinstance(value, float):
-        return None if not math.isfinite(value) else value
-    if isinstance(value, dict):
-        return {key: _sanitize_for_json(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_for_json(item) for item in value]
-    return value
+# Tests import this name from trama.book.
+_sanitize_for_json = sanitize_for_json
 
 
 class TramaPositionBook:
@@ -155,10 +149,8 @@ class TramaPositionBook:
         self._state["strategy"] = STRATEGY_NAME
         self._state.setdefault("sell_signals", [])
         self._state["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        payload = _sanitize_for_json(self._state)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
-        tmp.replace(self.path)
+        payload = sanitize_for_json(self._state)
+        dump_json(self.path, payload)
 
     @property
     def positions(self) -> List[dict]:
@@ -610,21 +602,7 @@ class TramaPositionBook:
         runners = [p for p in open_ if p.get("phase") == "runner"]
 
         def _agg(trades: List[dict]) -> dict:
-            n = len(trades)
-            if n == 0:
-                return {"trades": 0, "win_rate": None, "avg_return": None,
-                        "avg_alpha": None, "total_pnl": 0.0}
-            wins = sum(1 for t in trades if t.get("outcome") == "success")
-            avg_ret = sum(t.get("raw_return") or 0 for t in trades) / n
-            alphas = [t["alpha_return"] for t in trades if t.get("alpha_return") is not None]
-            pnl = sum(t.get("rupee_pnl") or 0 for t in trades)
-            return {
-                "trades": n,
-                "win_rate": round(100 * wins / n, 1),
-                "avg_return": round(100 * avg_ret, 2),
-                "avg_alpha": round(100 * sum(alphas) / len(alphas), 2) if alphas else None,
-                "total_pnl": round(pnl, 2),
-            }
+            return aggregate_closed_trades(trades)
 
         by_reason: Dict[str, dict] = {}
         for reason in (

@@ -1,8 +1,8 @@
-import fs from "fs";
 import os from "os";
 import path from "path";
 
 import type { PaperSnapshot, ScreenSnapshot, SnapshotRow } from "./types";
+import { readJsonFile } from "@/lib/parse-book-json";
 
 const HOME = path.join(os.homedir(), ".tradingagents", "paper");
 const DEFAULT_PAPER = path.join(HOME, "paper_snapshot.json");
@@ -17,11 +17,7 @@ export function screensPath(): string {
 }
 
 function readJson<T>(filePath: string): T | null {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
+  return readJsonFile<T>(filePath);
 }
 
 export function getLatestPaper(): SnapshotRow<PaperSnapshot> | null {

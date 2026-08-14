@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { parseBookJson } from "@/lib/parse-book-json";
+
 const DEFAULT_SNAPSHOT = path.join(
   os.homedir(),
   ".tradingagents",
@@ -69,7 +71,7 @@ export function readCandleScreenerSnapshot(): CandleScreenerSnapshot | null {
   const filePath = candleScreenerSnapshotPath();
   if (!fs.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as CandleScreenerSnapshot;
+    return parseBookJson<CandleScreenerSnapshot>(fs.readFileSync(filePath, "utf-8"));
   } catch {
     return null;
   }

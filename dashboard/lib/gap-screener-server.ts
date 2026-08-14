@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { parseBookJson } from "@/lib/parse-book-json";
+
 const DEFAULT_SNAPSHOT = path.join(
   os.homedir(),
   ".tradingagents",
@@ -50,7 +52,7 @@ export function readGapScreenerSnapshot(): GapScreenerSnapshot | null {
   const snapshotPath = gapScreenerSnapshotPath();
   try {
     const raw = fs.readFileSync(snapshotPath, "utf-8");
-    const data = JSON.parse(raw) as GapScreenerSnapshot;
+    const data = parseBookJson<GapScreenerSnapshot>(raw);
     const maxFill =
       typeof data.filters?.max_fill_pct === "number"
         ? (data.filters.max_fill_pct as number)
